@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ title }}</title>
+    <style>
+      :root {
+        --bg: #f6f7fb;
+        --card: #ffffff;
+        --text: #1b2330;
+        --accent: #0057d9;
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", sans-serif;
+        background: linear-gradient(135deg, #eef2ff 0%, var(--bg) 45%, #fff2e6 100%);
+        color: var(--text);
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+      }
+      main {
+        width: min(680px, 90vw);
+        background: var(--card);
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 16px 60px rgba(20, 44, 95, 0.14);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 2rem;
+      }
+      p {
+        line-height: 1.7;
+      }
+      code {
+        color: var(--accent);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>{{ framework }}</h1>
+      <p>{{ message }}</p>
+      <p>SSR rendered by <code>Rust + MiniJinja</code>.</p>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["maturin>=1.6,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "higuma"
+version = "0.1.0"
+description = "Flask-like Python web framework with a Rust execution core and SSR support."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "higuma contributors" }
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "Framework :: AsyncIO",
+  "Topic :: Internet :: WWW/HTTP :: WSGI :: Server"
+]
+
+[tool.maturin]
+module-name = "higuma._core"
+python-source = "python"
+features = ["pyo3/extension-module"]
