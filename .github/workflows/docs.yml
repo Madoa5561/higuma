@@ -22,13 +22,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
       - name: Install documentation dependencies
-        run: python -m pip install ".[docs]"
+        run: >-
+          python -m pip install
+          "mkdocs>=1.6,<2.0"
+          "mkdocs-material>=9.6,<10.0"
       - name: Build documentation
         run: mkdocs build --strict
       - uses: actions/configure-pages@v5
