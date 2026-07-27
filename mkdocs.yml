@@ -15,20 +15,9 @@ theme:
     text: Noto Sans JP
     code: JetBrains Mono
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: higuma-light
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/weather-night
-        name: ダークモード
-    - media: "(prefers-color-scheme: dark)"
-      scheme: higuma-dark
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/weather-sunny
-        name: ライトモード
+    scheme: higuma-light
+    primary: custom
+    accent: custom
   features:
     - announce.dismiss
     - content.action.edit
