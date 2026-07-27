@@ -1,6 +1,6 @@
 from higuma import Higuma
 
-app = Higuma(__name__, template_folder="examples/templates")
+app = Higuma(__name__, template_folder="templates")
 
 
 @app.get("/")

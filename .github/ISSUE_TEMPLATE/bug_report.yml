@@ -1,0 +1,27 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    attributes:
+      label: Description
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproduction
+      description: Include the smallest runnable example.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: higuma version
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Python, Rust, and operating system
+    validations:
+      required: true

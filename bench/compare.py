@@ -6,6 +6,7 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from urllib.error import URLError
 
 
 @dataclass
@@ -28,7 +29,7 @@ def wait_ready(url: str, timeout: float = 10.0) -> None:
             with urllib.request.urlopen(url, timeout=0.5) as resp:
                 if resp.status == 200:
                     return
-        except Exception:
+        except (OSError, TimeoutError, URLError):
             time.sleep(0.1)
     raise RuntimeError(f"server not ready: {url}")
 
@@ -44,8 +45,8 @@ def run_load(url: str, concurrency: int, duration: float) -> Result:
                 with urllib.request.urlopen(url, timeout=1.0) as resp:
                     if resp.status == 200:
                         ok += 1
-            except Exception:
-                pass
+            except (OSError, TimeoutError, URLError):
+                continue
         return ok
 
     with ThreadPoolExecutor(max_workers=concurrency) as ex:
@@ -64,7 +65,7 @@ def benchmark(name: str, command: list[str], url: str, concurrency: int, duratio
         proc.terminate()
         try:
             proc.wait(timeout=2)
-        except Exception:
+        except subprocess.TimeoutExpired:
             proc.kill()
 
 

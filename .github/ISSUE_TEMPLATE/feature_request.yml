@@ -1,0 +1,21 @@
+name: Feature request
+description: Propose a focused improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    attributes:
+      label: Use case
+      description: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed API
+      description: Show how you would like to use the feature.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Alternatives
+      description: Describe workarounds or related frameworks you considered.

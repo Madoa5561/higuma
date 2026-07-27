@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="higuma">
+  <path fill="#f7f2e7" d="M11 26a9 9 0 1 1 13-8h16a9 9 0 1 1 13 8v18c0 8-9 14-21 14S11 52 11 44V26Z"/>
+  <path fill="#184c3b" d="M18 27c3-7 9-10 14-10s11 3 14 10v17c0 5-6 9-14 9s-14-4-14-9V27Z"/>
+  <circle cx="26" cy="34" r="2.5" fill="#f7f2e7"/>
+  <circle cx="38" cy="34" r="2.5" fill="#f7f2e7"/>
+  <path fill="#c8592a" d="M27 41c0-3 10-3 10 0 0 2-2 5-5 5s-5-3-5-5Z"/>
+</svg>
