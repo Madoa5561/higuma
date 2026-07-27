@@ -100,6 +100,38 @@ body {
   gap: 0.8rem;
 }
 
+.install-command {
+  align-items: center;
+  background: var(--higuma-ink);
+  border: 1px solid rgba(247, 242, 231, 0.12);
+  border-radius: 0.7rem;
+  box-shadow: 0 1.2rem 3rem rgba(21, 37, 31, 0.18);
+  color: #f7f2e7;
+  display: flex;
+  gap: 0.8rem;
+  margin: -1rem 0 2.5rem;
+  padding: 1rem 1.2rem;
+}
+
+.install-command span {
+  color: #e89852;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.install-command code {
+  background: transparent;
+  color: inherit;
+  flex: 1;
+  font-size: 0.85rem;
+}
+
+.install-command a {
+  color: #8fd5bb;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .feature-grid {
   display: grid;
   gap: 1px;

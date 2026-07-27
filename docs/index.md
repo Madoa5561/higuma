@@ -17,6 +17,12 @@ hide:
   </div>
 </div>
 
+<div class="install-command">
+  <span>$</span>
+  <code>pip install higuma</code>
+  <a href="https://pypi.org/project/higuma/">PyPI 0.1.0</a>
+</div>
+
 <div class="feature-grid">
   <article>
     <strong>01</strong>

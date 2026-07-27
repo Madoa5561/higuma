@@ -8,6 +8,8 @@
 
 **公式ドキュメント: [higuma.moyashi.xyz](https://higuma.moyashi.xyz)**
 
+**PyPI: [pypi.org/project/higuma](https://pypi.org/project/higuma/)**
+
 Rust 製 HTTP コアと Flask に近い Python API を組み合わせた、SSR 対応の軽量 Web
 フレームワークです。
 
@@ -80,8 +82,9 @@ CPython の GIL の影響を受けるため、すべての処理が Rust だけ�
 ## 必要環境
 
 - Python 3.10 以上
-- Rust stable
-- Rust が利用できる C/C++ リンカー
+
+PyPIのwheelを使う通常のインストールではRust toolchainは不要です。ソースからbuildする場合のみ、
+Rust stableと対応するC/C++リンカーが必要です。
 
 Windows では Visual Studio Build Tools の MSVC、Linux では GCC/Clang、macOS では
 Xcode Command Line Tools が利用できます。
@@ -93,6 +96,9 @@ PyPI からインストールします。
 ```bash
 python -m pip install higuma
 ```
+
+Python 3.10以降のWindows x64、Linux x86_64/aarch64、musllinux x86_64、
+macOS Intel/Apple Silicon向けwheelを公開しています。
 
 最新の開発版をリポジトリからインストールする場合:
 

@@ -3,11 +3,9 @@
 ## 必要環境
 
 - Python 3.10以上
-- Rust stable
-- 対応するC/C++リンカー
 
-WindowsではVisual Studio Build ToolsのMSVC、LinuxではGCCまたはClang、macOSでは
-Xcode Command Line Toolsを利用します。
+PyPIからwheelをインストールする場合、RustやC/C++ build toolsは不要です。
+ソースからbuildする場合のみRust stableと対応するリンカーが必要です。
 
 ## インストール
 
@@ -16,6 +14,10 @@ Xcode Command Line Toolsを利用します。
     ```bash
     python -m pip install higuma
     ```
+
+    公開パッケージは
+    [pypi.org/project/higuma](https://pypi.org/project/higuma/)
+    で確認できます。
 
 === "開発版"
 
@@ -37,6 +39,19 @@ WindowsでPythonとRustのarchitectureが異なる場合は、先にtargetを追
 ```powershell
 rustup target add x86_64-pc-windows-msvc
 ```
+
+## 対応プラットフォーム
+
+`0.1.0` はCPython stable ABIを使うため、1つのwheelでPython 3.10以降に対応します。
+
+| OS | Architecture |
+|---|---|
+| Windows | x86_64 |
+| Linux glibc | x86_64、aarch64 |
+| Linux musl / Alpine | x86_64 |
+| macOS | Intel x86_64、Apple Silicon arm64 |
+
+対応wheelがない環境ではsdistからbuildされるため、Rust toolchainが必要です。
 
 ## アプリを作る
 
