@@ -11,6 +11,12 @@ Xcode Command Line Toolsを利用します。
 
 ## インストール
 
+=== "PyPI"
+
+    ```bash
+    python -m pip install higuma
+    ```
+
 === "開発版"
 
     ```bash

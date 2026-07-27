@@ -32,3 +32,4 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - In-process test client
 - CLI for running applications and listing routes
 - GitHub Actions CI and release wheel workflow
+- PyPI Trusted Publishing with multi-platform wheels

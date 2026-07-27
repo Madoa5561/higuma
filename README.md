@@ -1,6 +1,7 @@
 # higuma
 
 [![CI](https://github.com/Madoa5561/higuma/actions/workflows/ci.yml/badge.svg)](https://github.com/Madoa5561/higuma/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/higuma)](https://pypi.org/project/higuma/)
 [![Documentation](https://img.shields.io/badge/docs-higuma.moyashi.xyz-0f766e)](https://higuma.moyashi.xyz)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-eab308)](LICENSE)
@@ -87,7 +88,13 @@ Xcode Command Line Tools が利用できます。
 
 ## インストール
 
-リポジトリから開発用にインストールします。
+PyPI からインストールします。
+
+```bash
+python -m pip install higuma
+```
+
+最新の開発版をリポジトリからインストールする場合:
 
 ```bash
 git clone https://github.com/Madoa5561/higuma.git
