@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -48,9 +49,7 @@ class SessionMiddleware:
     ) -> None:
         if not secret_key:
             raise ValueError("secret_key must not be empty")
-        self.secret_key = (
-            secret_key.encode("utf-8") if isinstance(secret_key, str) else secret_key
-        )
+        self.secret_key = secret_key.encode("utf-8") if isinstance(secret_key, str) else secret_key
         self.cookie_name = cookie_name
         self.max_age = max_age
         self.secure = secure
@@ -82,7 +81,7 @@ class SessionMiddleware:
 
     def _dump(self, session: Session) -> str:
         payload = json.dumps(
-            dict(session),
+            {"data": dict(session), "iat": int(time.time())},
             ensure_ascii=False,
             separators=(",", ":"),
             default=str,
@@ -93,7 +92,7 @@ class SessionMiddleware:
         return f"{encoded.decode()}.{encoded_signature.decode()}"
 
     def _load(self, value: str | None) -> Session:
-        if not value or "." not in value:
+        if not value or len(value) > 16 * 1024 or "." not in value:
             return Session()
         encoded, encoded_signature = value.rsplit(".", 1)
         expected = hmac.new(
@@ -108,10 +107,18 @@ class SessionMiddleware:
         if not hmac.compare_digest(expected, actual):
             return Session()
         try:
-            data = json.loads(_decode_base64(encoded).decode("utf-8"))
+            payload = json.loads(_decode_base64(encoded).decode("utf-8"))
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
             return Session()
-        return Session(data) if isinstance(data, dict) else Session()
+        if not isinstance(payload, dict):
+            return Session()
+        issued_at = payload.get("iat")
+        data = payload.get("data")
+        if not isinstance(issued_at, int) or not isinstance(data, dict):
+            return Session()
+        if issued_at > int(time.time()) + 60 or time.time() - issued_at > self.max_age:
+            return Session()
+        return Session(data)
 
 
 def _decode_base64(value: str) -> bytes:

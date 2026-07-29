@@ -17,6 +17,8 @@ from ._core import HigumaCore
 from .blueprint import Blueprint
 from .config import Config
 from .exceptions import HTTPException, MethodNotAllowed, NotFound
+from .mounts import asgi_view, wsgi_view
+from .openapi import generate_openapi, swagger_ui_html
 from .request import LocalProxy, Request, _pop_request, _push_request
 from .response import (
     FileResponse,
@@ -28,8 +30,9 @@ from .response import (
     make_response,
 )
 from .routing import Rule, normalize_rule
+from .websocket import WebSocket
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -58,14 +61,14 @@ class Higuma:
         static_url_path: str = "/static",
         max_content_length: int = 8 * 1024 * 1024,
         debug: bool = False,
+        openapi_url: str | None = "/openapi.json",
+        docs_url: str | None = "/docs",
     ) -> None:
         self.import_name = import_name
         self.root_path = _find_root_path(import_name)
         self.template_folder = _resolve_folder(self.root_path, template_folder)
         self.static_folder = (
-            _resolve_folder(self.root_path, static_folder)
-            if static_folder
-            else None
+            _resolve_folder(self.root_path, static_folder) if static_folder else None
         )
         self.static_url_path = normalize_rule(static_url_path)
         self.debug = debug
@@ -76,10 +79,14 @@ class Higuma:
             MAX_CONTENT_LENGTH=max_content_length,
             STATIC_CACHE_MAX_AGE=3600,
             SERVER_HEADER=f"higuma/{__version__}",
+            OPENAPI_TITLE=import_name,
+            OPENAPI_VERSION=__version__,
+            OPENAPI_DESCRIPTION="",
         )
 
         self._routes: list[Rule] = []
         self._endpoint_rules: dict[str, Rule] = {}
+        self._websocket_rules: dict[str, Rule] = {}
         self._before_request: list[Callable[..., ResponseValue | None]] = []
         self._after_request: list[Callable[..., ResponseValue]] = []
         self._middlewares: list[Middleware] = []
@@ -95,6 +102,32 @@ class Higuma:
         )
         self._core.set_fallback(self._fallback_callback)
 
+        if openapi_url:
+            self.add_url_rule(
+                openapi_url,
+                endpoint="openapi",
+                view_func=self.openapi,
+                methods=("GET",),
+                include_in_schema=False,
+            )
+        if docs_url and openapi_url:
+
+            def openapi_docs() -> HTMLResponse:
+                return HTMLResponse(
+                    swagger_ui_html(
+                        normalize_rule(openapi_url),
+                        f"{self.config['OPENAPI_TITLE']} API",
+                    )
+                )
+
+            self.add_url_rule(
+                docs_url,
+                endpoint="openapi_docs",
+                view_func=openapi_docs,
+                methods=("GET",),
+                include_in_schema=False,
+            )
+
         if self.static_folder:
             self.add_url_rule(
                 f"{self.static_url_path}/<path:filename>",
@@ -109,6 +142,14 @@ class Higuma:
         *,
         methods: Iterable[str] | None = None,
         endpoint: str | None = None,
+        summary: str | None = None,
+        description: str | None = None,
+        tags: Iterable[str] | None = None,
+        responses: Mapping[str, Any] | None = None,
+        request_body: Any = None,
+        operation_id: str | None = None,
+        include_in_schema: bool = True,
+        openapi_extra: Mapping[str, Any] | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
             self.add_url_rule(
@@ -116,6 +157,14 @@ class Higuma:
                 endpoint=endpoint or view_func.__name__,
                 view_func=view_func,
                 methods=methods or ("GET",),
+                summary=summary,
+                description=description,
+                tags=tags,
+                responses=responses,
+                request_body=request_body,
+                operation_id=operation_id,
+                include_in_schema=include_in_schema,
+                openapi_extra=openapi_extra,
             )
             return view_func
 
@@ -143,6 +192,14 @@ class Higuma:
         endpoint: str,
         view_func: Callable[..., Any],
         methods: Iterable[str] = ("GET",),
+        summary: str | None = None,
+        description: str | None = None,
+        tags: Iterable[str] | None = None,
+        responses: Mapping[str, Any] | None = None,
+        request_body: Any = None,
+        operation_id: str | None = None,
+        include_in_schema: bool = True,
+        openapi_extra: Mapping[str, Any] | None = None,
     ) -> None:
         method_tuple = tuple(dict.fromkeys(method.upper() for method in methods))
         if not method_tuple:
@@ -155,6 +212,20 @@ class Higuma:
             methods=method_tuple,
             endpoint=endpoint,
             view_func=view_func,
+            openapi={
+                key: value
+                for key, value in {
+                    "summary": summary,
+                    "description": description,
+                    "tags": tuple(tags) if tags else None,
+                    "responses": dict(responses) if responses else None,
+                    "request_body": request_body,
+                    "operation_id": operation_id,
+                    "openapi_extra": dict(openapi_extra or {}),
+                }.items()
+                if value is not None
+            },
+            include_in_schema=include_in_schema,
         )
 
         @wraps(view_func)
@@ -167,6 +238,35 @@ class Higuma:
         self._endpoint_rules[endpoint] = route
         self._core.add_route(route.rule, list(method_tuple), callback)
 
+    def websocket(
+        self,
+        rule: str,
+        *,
+        endpoint: str | None = None,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
+            route_endpoint = endpoint or handler.__name__
+            if route_endpoint in self._websocket_rules:
+                raise ValueError(f"WebSocket endpoint {route_endpoint!r} is already registered")
+            route = Rule(
+                rule=rule,
+                methods=("WEBSOCKET",),
+                endpoint=route_endpoint,
+                view_func=handler,
+                include_in_schema=False,
+            )
+
+            @wraps(handler)
+            def callback(raw_request: Mapping[str, Any], session: Any) -> Any:
+                return self._dispatch_websocket(route, raw_request, session)
+
+            route.callback = callback
+            self._websocket_rules[route_endpoint] = route
+            self._core.add_websocket_route(route.rule, callback)
+            return handler
+
+        return decorator
+
     def register_blueprint(
         self,
         blueprint: Blueprint,
@@ -174,9 +274,7 @@ class Higuma:
         url_prefix: str | None = None,
         name_prefix: str = "",
     ) -> None:
-        prefix = (url_prefix if url_prefix is not None else blueprint.url_prefix).rstrip(
-            "/"
-        )
+        prefix = (url_prefix if url_prefix is not None else blueprint.url_prefix).rstrip("/")
         for deferred in blueprint._routes:
             full_rule = f"{prefix}{deferred.rule}"
             endpoint = f"{name_prefix}{blueprint.name}.{deferred.endpoint}"
@@ -185,6 +283,7 @@ class Higuma:
                 endpoint=endpoint,
                 view_func=deferred.view_func,
                 methods=deferred.methods,
+                **deferred.options,
             )
 
     def before_request(self, func: Callable[..., ResponseValue | None]):
@@ -286,17 +385,87 @@ class Higuma:
 
         return TestClient(self)
 
+    def openapi(self) -> dict[str, Any]:
+        return generate_openapi(self)
+
+    def clear_template_cache(self) -> None:
+        self._core.clear_template_cache()
+
+    def init_database(self, url: str = "sqlite:///higuma.db"):
+        from .database import Database
+
+        self.database = Database(url)
+        return self.database
+
+    def mount_wsgi(
+        self,
+        prefix: str,
+        application: Callable[..., Any],
+        *,
+        name: str = "wsgi",
+    ) -> None:
+        self._mount_application(prefix, wsgi_view(application, normalize_rule(prefix)), name)
+
+    def mount_asgi(
+        self,
+        prefix: str,
+        application: Callable[..., Any],
+        *,
+        name: str = "asgi",
+    ) -> None:
+        self._mount_application(prefix, asgi_view(application, normalize_rule(prefix)), name)
+
+    def _mount_application(
+        self,
+        prefix: str,
+        view_func: Callable[..., Any],
+        name: str,
+    ) -> None:
+        normalized = normalize_rule(prefix)
+        methods = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+        self.add_url_rule(
+            normalized,
+            endpoint=f"{name}_root",
+            view_func=view_func,
+            methods=methods,
+            include_in_schema=False,
+        )
+        self.add_url_rule(
+            f"{normalized}/<path:mounted_path>",
+            endpoint=f"{name}_path",
+            view_func=view_func,
+            methods=methods,
+            include_in_schema=False,
+        )
+
     def run(
         self,
         host: str = "127.0.0.1",
         port: int = 8000,
         *,
         workers: int = 0,
+        processes: int = 1,
+        app_ref: str | None = None,
         debug: bool | None = None,
     ) -> None:
         if debug is not None:
             self.debug = debug
             self.config["DEBUG"] = debug
+        if processes > 1:
+            if not app_ref:
+                raise ValueError(
+                    "app_ref='module:app' is required when processes is greater than one"
+                )
+            from .supervisor import Supervisor
+
+            Supervisor(
+                app_ref,
+                host=host,
+                port=port,
+                processes=processes,
+                threads=workers,
+            ).run()
+            return
         for handler in self._startup_handlers:
             _resolve_awaitable(handler())
         try:
@@ -304,6 +473,35 @@ class Higuma:
         finally:
             for handler in reversed(self._shutdown_handlers):
                 _resolve_awaitable(handler())
+
+    def _dispatch_websocket(
+        self,
+        route: Rule,
+        raw_request: Mapping[str, Any],
+        session: Any,
+    ) -> Any:
+        request = Request(raw_request)
+        request.path_params = route.convert_params(request.path_params)
+        request.view_args = request.path_params
+
+        def endpoint_call() -> Any:
+            websocket = WebSocket(session)
+            signature = inspect.signature(route.view_func)
+            kwargs = {
+                name: value
+                for name, value in request.path_params.items()
+                if name in signature.parameters
+            }
+            parameters = signature.parameters
+            if "websocket" in parameters:
+                kwargs["websocket"] = websocket
+                return _resolve_awaitable(route.view_func(**kwargs))
+            if "ws" in parameters:
+                kwargs["ws"] = websocket
+                return _resolve_awaitable(route.view_func(**kwargs))
+            return _resolve_awaitable(route.view_func(websocket, **kwargs))
+
+        return self._dispatch(request, endpoint_call)
 
     def _dispatch_route(
         self,
@@ -320,9 +518,7 @@ class Higuma:
 
         def fallback() -> Any:
             if request.route_error_status == 405:
-                raise MethodNotAllowed(
-                    headers={"allow": ", ".join(request.allowed_methods)}
-                )
+                raise MethodNotAllowed(headers={"allow": ", ".join(request.allowed_methods)})
             raise NotFound()
 
         return self._dispatch(request, fallback)
@@ -373,8 +569,7 @@ class Higuma:
         args: list[Any] = []
         kwargs: dict[str, Any] = {}
         accepts_kwargs = any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD
-            for parameter in params.values()
+            parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in params.values()
         )
 
         for name, value in request.path_params.items():
@@ -415,13 +610,10 @@ class Higuma:
         if self.debug:
             detail = traceback.format_exc()
             return HTMLResponse(
-                "<h1>500 Internal Server Error</h1>"
-                f"<pre>{escape(detail)}</pre>",
+                f"<h1>500 Internal Server Error</h1><pre>{escape(detail)}</pre>",
                 500,
             )
-        return self._default_http_error(
-            HTTPException(500, "Internal Server Error")
-        )
+        return self._default_http_error(HTTPException(500, "Internal Server Error"))
 
     def _find_error_handler(self, error: BaseException) -> ErrorHandler | None:
         if isinstance(error, HTTPException):
@@ -437,7 +629,7 @@ class Higuma:
     @staticmethod
     def _default_http_error(error: HTTPException) -> HTMLResponse:
         body = (
-            "<!doctype html><html><head><meta charset=\"utf-8\">"
+            '<!doctype html><html><head><meta charset="utf-8">'
             f"<title>{error.status_code} {escape(error.detail)}</title></head>"
             "<body><main>"
             f"<h1>{error.status_code}</h1><p>{escape(error.detail)}</p>"
@@ -574,9 +766,7 @@ def _call_after_hook(func: Callable[..., Any], request: Request, response: Any) 
     return _resolve_awaitable(func(response))
 
 
-def _call_error_handler(
-    func: ErrorHandler, error: BaseException, request: Request
-) -> Any:
+def _call_error_handler(func: ErrorHandler, error: BaseException, request: Request) -> Any:
     count = len(inspect.signature(func).parameters)
     if count >= 2:
         return _resolve_awaitable(func(error, request))

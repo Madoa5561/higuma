@@ -11,6 +11,7 @@ class _DeferredRoute:
     methods: tuple[str, ...]
     endpoint: str
     view_func: Callable[..., Any]
+    options: dict[str, Any]
 
 
 class Blueprint:
@@ -34,6 +35,7 @@ class Blueprint:
         *,
         methods: Iterable[str] | None = None,
         endpoint: str | None = None,
+        **options: Any,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         method_tuple = tuple(method.upper() for method in (methods or ("GET",)))
 
@@ -44,6 +46,7 @@ class Blueprint:
                     methods=method_tuple,
                     endpoint=endpoint or view_func.__name__,
                     view_func=view_func,
+                    options=options,
                 )
             )
             return view_func

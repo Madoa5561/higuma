@@ -31,7 +31,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--host", default="127.0.0.1")
     run_parser.add_argument("--port", type=int, default=8000)
     run_parser.add_argument("--workers", type=int, default=0)
+    run_parser.add_argument(
+        "--processes",
+        type=int,
+        default=1,
+        help="number of isolated worker processes",
+    )
     run_parser.add_argument("--debug", action="store_true")
+    run_parser.add_argument("--internal-worker", action="store_true", help=argparse.SUPPRESS)
 
     routes_parser = subcommands.add_parser("routes", help="list application routes")
     routes_parser.add_argument("app", nargs="?", default=os.getenv("HIGUMA_APP", "app:app"))
@@ -47,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
             host=args.host,
             port=args.port,
             workers=args.workers,
+            processes=1 if args.internal_worker else args.processes,
+            app_ref=args.app,
             debug=args.debug,
         )
         return 0
@@ -55,9 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{'Endpoint':30} {'Methods':25} Rule")
         print(f"{'-' * 30} {'-' * 25} {'-' * 30}")
         for route in app._routes:
-            print(
-                f"{route.endpoint:30} {','.join(route.methods):25} {route.rule}"
-            )
+            print(f"{route.endpoint:30} {','.join(route.methods):25} {route.rule}")
         return 0
 
     return 1

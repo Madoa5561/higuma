@@ -2,8 +2,10 @@
 
 Rust HTTPコアとSSRを備えた、FlaskライクなPython Webフレームワークです。
 
-- [公式ドキュメント](https://higuma.moyashi.xyz)
+- [日本語ドキュメント](https://higuma.moyashi.xyz/)
+- [English documentation](https://higuma.moyashi.xyz/en/)
 - [PyPI](https://pypi.org/project/higuma/)
+- [Examples](https://github.com/Madoa5561/higuma/tree/main/examples)
 
 ## インストール
 
@@ -23,23 +25,18 @@ app = Higuma(__name__)
 
 @app.get("/")
 def index():
-    return "<h1>Hello from higuma</h1>"
-
-
-@app.get("/users/<int:user_id>")
-def user(user_id: int):
-    return {"user_id": user_id}
+    return {"message": "Hello from higuma"}
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8000)
+    app.run()
 ```
 
 ```bash
 python app.py
 ```
 
-`http://127.0.0.1:8000` をブラウザで開きます。
+ブラウザで <http://127.0.0.1:8000> を開きます。
 
 ## 開発者
 

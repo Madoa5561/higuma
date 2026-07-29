@@ -167,9 +167,7 @@ class FileResponse(Response):
     ) -> None:
         file_path = Path(path).resolve()
         resolved_media_type = (
-            media_type
-            or mimetypes.guess_type(file_path.name)[0]
-            or "application/octet-stream"
+            media_type or mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         )
         super().__init__(b"", status, headers, resolved_media_type)
         self.path = str(file_path)
@@ -238,9 +236,7 @@ def make_response(
             value, tuple_status, tuple_headers = value
             status = int(tuple_status)
         else:
-            raise TypeError(
-                "response tuple must be (body, status) or (body, status, headers)"
-            )
+            raise TypeError("response tuple must be (body, status) or (body, status, headers)")
 
     if isinstance(value, (Response, FileResponse, TemplateResponse)):
         response = value

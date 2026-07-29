@@ -1,6 +1,6 @@
 [package]
 name = "higuma"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Flask-like Python web framework powered by a Rust core."
 license = "MIT"
@@ -13,15 +13,16 @@ name = "_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
+futures-util = "0.3"
 minijinja = { version = "2.0", features = ["loader"] }
 percent-encoding = "2.3"
-pyo3 = { version = "0.23", features = [
+pyo3 = { version = "0.29", features = [
   "abi3-py310",
   "generate-import-lib"
 ] }
 serde_json = "1.0"
-tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
 url = "2.5"
 
 [profile.release]

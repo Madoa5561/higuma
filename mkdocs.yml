@@ -1,5 +1,5 @@
 site_name: higuma
-site_description: Rust HTTP coreを備えた、Flaskライクで高速なPython Webフレームワーク
+site_description: Flask-like Python web framework powered by a Rust HTTP core
 site_url: https://higuma.moyashi.xyz/
 repo_url: https://github.com/Madoa5561/higuma
 repo_name: Madoa5561/higuma
@@ -19,9 +19,7 @@ theme:
     primary: custom
     accent: custom
   features:
-    - announce.dismiss
     - content.action.edit
-    - content.code.annotate
     - content.code.copy
     - content.tabs.link
     - navigation.footer
@@ -35,25 +33,28 @@ theme:
     - toc.follow
 
 nav:
-  - ホーム: index.md
-  - はじめる:
-      - インストールと起動: getting-started.md
+  - 日本語:
+      - ホーム: index.md
+      - はじめる: getting-started.md
+      - 機能ガイド: features.md
+      - 認証とセキュリティ: security-auth.md
       - デプロイ: deployment.md
-  - ガイド:
-      - ルーティング: guides/routing.md
-      - RequestとResponse: guides/requests-responses.md
-      - SSRと静的ファイル: guides/templates-static.md
-      - MiddlewareとSession: guides/middleware-sessions.md
-  - APIリファレンス: api.md
-  - コントリビュート: contributing.md
-  - 変更履歴: https://github.com/Madoa5561/higuma/blob/main/CHANGELOG.md
+      - Examples: examples.md
+      - APIリファレンス: api.md
+  - English:
+      - Home: en/index.md
+      - Getting started: en/getting-started.md
+      - Feature guide: en/features.md
+      - Auth and security: en/security-auth.md
+      - Deployment: en/deployment.md
+      - Examples: en/examples.md
+      - API reference: en/api.md
+  - Changelog: https://github.com/Madoa5561/higuma/blob/main/CHANGELOG.md
 
 markdown_extensions:
-  - abbr
   - admonition
   - attr_list
   - def_list
-  - footnotes
   - md_in_html
   - tables
   - toc:
@@ -64,13 +65,10 @@ markdown_extensions:
       line_spans: __span
       pygments_lang_class: true
   - pymdownx.inlinehilite
-  - pymdownx.keys
   - pymdownx.snippets
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
-  - pymdownx.tasklist:
-      custom_checkbox: true
 
 plugins:
   - search:
@@ -85,6 +83,13 @@ extra_javascript:
   - javascripts/extra.js
 
 extra:
+  alternate:
+    - name: 日本語
+      link: /
+      lang: ja
+    - name: English
+      link: /en/
+      lang: en
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/Madoa5561/higuma

@@ -1,15 +1,15 @@
-# はじめる
+# Getting started
 
-## 必要環境
+## Requirements
 
-- Python 3.10以上
-- Windows、Linux、macOS
+- Python 3.10 or newer
+- Windows, Linux, or macOS
 
 ```bash
 python -m pip install -U higuma
 ```
 
-`app.py`を作成します。
+Create `app.py`:
 
 ```python
 from higuma import Higuma, request
@@ -40,9 +40,9 @@ if __name__ == "__main__":
 python app.py
 ```
 
-- アプリ: <http://127.0.0.1:8000>
+- Application: <http://127.0.0.1:8000>
 - Swagger UI: <http://127.0.0.1:8000/docs>
-- OpenAPI: <http://127.0.0.1:8000/openapi.json>
+- OpenAPI JSON: <http://127.0.0.1:8000/openapi.json>
 
 ## CLI
 
@@ -52,15 +52,5 @@ higuma routes app:app
 higuma run app:app --processes 4
 ```
 
-## レスポンス
-
-```python
-@app.get("/text")
-def text():
-    return "HTML or text"
-
-
-@app.get("/json")
-def json_response():
-    return {"ok": True}, 200, {"x-example": "higuma"}
-```
+Routes may return strings, bytes, dictionaries, lists, response objects, or
+`(body, status, headers)` tuples.

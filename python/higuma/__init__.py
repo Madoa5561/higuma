@@ -1,5 +1,30 @@
 from .app import Higuma, __version__, current_app
+from .auth import (
+    AnonymousUser,
+    AuthManager,
+    OAuth2Client,
+    current_user,
+    fresh_login_required,
+    login_required,
+    permissions_required,
+    roles_required,
+)
 from .blueprint import Blueprint
+from .database import (
+    Blob,
+    Boolean,
+    Database,
+    Date,
+    DateTime,
+    Field,
+    Float,
+    Integer,
+    Model,
+    String,
+)
+from .database import (
+    Session as DatabaseSession,
+)
 from .exceptions import (
     BadRequest,
     Conflict,
@@ -19,7 +44,7 @@ from .middleware import (
     SecurityHeadersMiddleware,
     TrustedHostMiddleware,
 )
-from .request import Headers, MultiDict, Request, request
+from .request import Headers, MultiDict, Request, UploadFile, request
 from .response import (
     FileResponse,
     HTMLResponse,
@@ -34,25 +59,52 @@ from .response import (
     render_template,
     send_file,
 )
+from .security import (
+    CSRFProtection,
+    PasswordHasher,
+    RateLimitMiddleware,
+    TokenSigner,
+    csrf_token,
+    generate_user_id,
+    validate_user_id,
+)
 from .sessions import Session, SessionMiddleware
+from .supervisor import Supervisor
+from .websocket import WebSocket, WebSocketDisconnect
 
 __all__ = [
+    "AnonymousUser",
+    "AuthManager",
     "BadRequest",
+    "Blob",
     "Blueprint",
+    "Boolean",
     "CORSMiddleware",
+    "CSRFProtection",
     "Conflict",
+    "Database",
+    "DatabaseSession",
+    "Date",
+    "DateTime",
+    "Field",
     "FileResponse",
+    "Float",
     "Forbidden",
     "HTMLResponse",
     "HTTPException",
     "Headers",
     "Higuma",
+    "Integer",
     "InternalServerError",
     "JSONResponse",
     "MethodNotAllowed",
+    "Model",
     "MultiDict",
     "NotFound",
+    "OAuth2Client",
+    "PasswordHasher",
     "PlainTextResponse",
+    "RateLimitMiddleware",
     "RedirectResponse",
     "Request",
     "RequestEntityTooLarge",
@@ -60,18 +112,32 @@ __all__ = [
     "SecurityHeadersMiddleware",
     "Session",
     "SessionMiddleware",
+    "String",
+    "Supervisor",
     "TemplateResponse",
+    "TokenSigner",
     "TooManyRequests",
     "TrustedHostMiddleware",
     "Unauthorized",
     "UnsupportedMediaType",
+    "UploadFile",
+    "WebSocket",
+    "WebSocketDisconnect",
     "__version__",
     "abort",
+    "csrf_token",
     "current_app",
+    "current_user",
+    "fresh_login_required",
+    "generate_user_id",
     "jsonify",
+    "login_required",
     "make_response",
+    "permissions_required",
     "redirect",
     "render_template",
     "request",
+    "roles_required",
     "send_file",
+    "validate_user_id",
 ]

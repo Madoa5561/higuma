@@ -47,6 +47,8 @@ class Rule:
     methods: tuple[str, ...]
     endpoint: str
     view_func: Callable[..., Any]
+    openapi: dict[str, Any] = field(default_factory=dict)
+    include_in_schema: bool = True
     callback: Callable[[Mapping[str, Any]], Any] | None = None
     converters: dict[str, str] = field(default_factory=dict, init=False)
     _regex: re.Pattern[str] = field(init=False, repr=False)
@@ -103,7 +105,8 @@ class Rule:
             if kind == "static":
                 parts.append(str(value))
                 continue
-            assert value is not None
+            if value is None:
+                raise RuntimeError("route parameter name is missing")
             if value not in values:
                 raise KeyError(f"missing URL value: {value}")
             safe = "/" if converter == "path" else ""

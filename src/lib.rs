@@ -1,14 +1,18 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{mpsc, Arc, Mutex, RwLock},
 };
 
 use axum::{
     body::{to_bytes, Body},
-    extract::State,
+    extract::{
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
+        ConnectInfo, FromRequestParts, State,
+    },
     http::{
         header::{HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE, SERVER},
         Request, StatusCode,
@@ -17,6 +21,7 @@ use axum::{
     routing::any,
     Router,
 };
+use futures_util::{SinkExt, StreamExt};
 use minijinja::{path_loader, Environment};
 use percent_encoding::percent_decode_str;
 use pyo3::{
@@ -24,6 +29,7 @@ use pyo3::{
     prelude::*,
     types::{PyAny, PyBytes, PyDict, PyList, PyTuple},
 };
+use tokio::sync::mpsc as tokio_mpsc;
 use tokio::{net::TcpListener, runtime::Builder, signal};
 use url::form_urlencoded;
 
@@ -63,6 +69,78 @@ struct LookupResult {
     params: HashMap<String, String>,
     pattern: Option<String>,
     allowed_methods: Vec<String>,
+}
+
+enum IncomingMessage {
+    Text(String),
+    Binary(Vec<u8>),
+    Close(u16, String),
+}
+
+enum OutgoingMessage {
+    Text(String),
+    Binary(Vec<u8>),
+    Close(u16, String),
+}
+
+#[pyclass(name = "WebSocketSession")]
+struct WebSocketSession {
+    incoming: Arc<Mutex<mpsc::Receiver<IncomingMessage>>>,
+    outgoing: tokio_mpsc::UnboundedSender<OutgoingMessage>,
+}
+
+#[pymethods]
+impl WebSocketSession {
+    fn receive(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<(
+        String,
+        Option<String>,
+        Option<Vec<u8>>,
+        Option<u16>,
+        Option<String>,
+    )> {
+        let incoming = self.incoming.clone();
+        let message = py.detach(move || {
+            incoming
+                .lock()
+                .map_err(|_| "failed to lock WebSocket receiver".to_string())?
+                .recv()
+                .map_err(|_| "WebSocket connection closed".to_string())
+        });
+        match message {
+            Ok(IncomingMessage::Text(value)) => {
+                Ok(("text".to_string(), Some(value), None, None, None))
+            }
+            Ok(IncomingMessage::Binary(value)) => {
+                Ok(("bytes".to_string(), None, Some(value), None, None))
+            }
+            Ok(IncomingMessage::Close(code, reason)) => {
+                Ok(("close".to_string(), None, None, Some(code), Some(reason)))
+            }
+            Err(error) => Err(PyRuntimeError::new_err(error)),
+        }
+    }
+
+    fn send_text(&self, data: String) -> PyResult<()> {
+        self.outgoing
+            .send(OutgoingMessage::Text(data))
+            .map_err(|_| PyRuntimeError::new_err("WebSocket connection closed"))
+    }
+
+    fn send_bytes(&self, data: Vec<u8>) -> PyResult<()> {
+        self.outgoing
+            .send(OutgoingMessage::Binary(data))
+            .map_err(|_| PyRuntimeError::new_err("WebSocket connection closed"))
+    }
+
+    #[pyo3(signature = (code = 1000, reason = "".to_string()))]
+    fn close(&self, code: u16, reason: String) -> PyResult<()> {
+        self.outgoing
+            .send(OutgoingMessage::Close(code, reason))
+            .map_err(|_| PyRuntimeError::new_err("WebSocket connection closed"))
+    }
 }
 
 impl RouteTable {
@@ -165,8 +243,9 @@ impl RouteTable {
 #[derive(Clone)]
 struct SharedState {
     routes: Arc<RwLock<RouteTable>>,
+    websocket_routes: Arc<RwLock<RouteTable>>,
     fallback: Arc<RwLock<Option<Arc<Py<PyAny>>>>>,
-    template_dir: Arc<PathBuf>,
+    template_env: Arc<RwLock<Environment<'static>>>,
     max_body_size: usize,
     server_header: Arc<String>,
 }
@@ -174,8 +253,9 @@ struct SharedState {
 #[pyclass(name = "HigumaCore")]
 struct HigumaCore {
     routes: Arc<RwLock<RouteTable>>,
+    websocket_routes: Arc<RwLock<RouteTable>>,
     fallback: Arc<RwLock<Option<Arc<Py<PyAny>>>>>,
-    template_dir: PathBuf,
+    template_env: Arc<RwLock<Environment<'static>>>,
     max_body_size: usize,
     server_header: String,
 }
@@ -189,13 +269,23 @@ impl HigumaCore {
         server_header = "higuma".to_string()
     ))]
     fn new(template_dir: String, max_body_size: usize, server_header: String) -> Self {
+        let template_dir = PathBuf::from(template_dir);
         Self {
             routes: Arc::new(RwLock::new(RouteTable::default())),
+            websocket_routes: Arc::new(RwLock::new(RouteTable::default())),
             fallback: Arc::new(RwLock::new(None)),
-            template_dir: PathBuf::from(template_dir),
+            template_env: Arc::new(RwLock::new(create_template_env(&template_dir))),
             max_body_size,
             server_header,
         }
+    }
+
+    fn add_websocket_route(&self, path: String, handler: Py<PyAny>) -> PyResult<()> {
+        self.websocket_routes
+            .write()
+            .map_err(|_| PyRuntimeError::new_err("failed to lock WebSocket route table"))?
+            .add_route(path, "WEBSOCKET".to_string(), Arc::new(handler))
+            .map_err(PyValueError::new_err)
     }
 
     fn add_route(&self, path: String, methods: Vec<String>, handler: Py<PyAny>) -> PyResult<()> {
@@ -227,8 +317,16 @@ impl HigumaCore {
     }
 
     fn render_template(&self, template: String, context_json: String) -> PyResult<String> {
-        render_template(&self.template_dir, &template, &context_json)
+        render_template(&self.template_env, &template, &context_json)
             .map_err(PyRuntimeError::new_err)
+    }
+
+    fn clear_template_cache(&self) -> PyResult<()> {
+        self.template_env
+            .write()
+            .map_err(|_| PyRuntimeError::new_err("failed to lock template cache"))?
+            .clear_templates();
+        Ok(())
     }
 
     #[pyo3(signature = (host = "127.0.0.1".to_string(), port = 8000, workers = 0))]
@@ -247,8 +345,9 @@ impl HigumaCore {
 
         let state = SharedState {
             routes: self.routes.clone(),
+            websocket_routes: self.websocket_routes.clone(),
             fallback: self.fallback.clone(),
-            template_dir: Arc::new(self.template_dir.clone()),
+            template_env: self.template_env.clone(),
             max_body_size: self.max_body_size,
             server_header: Arc::new(self.server_header.clone()),
         };
@@ -259,7 +358,7 @@ impl HigumaCore {
             .build()
             .map_err(|e| PyRuntimeError::new_err(format!("failed to create tokio runtime: {e}")))?;
 
-        py.allow_threads(move || {
+        py.detach(move || {
             runtime.block_on(async move {
                 let app = Router::new().fallback(any(dispatch)).with_state(state);
                 let listener = TcpListener::bind(addr)
@@ -268,10 +367,13 @@ impl HigumaCore {
 
                 println!("higuma listening on http://{addr}");
 
-                axum::serve(listener, app)
-                    .with_graceful_shutdown(shutdown_signal())
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(format!("server error: {e}")))
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+                .map_err(|e| PyRuntimeError::new_err(format!("server error: {e}")))
             })
         })
     }
@@ -281,12 +383,157 @@ async fn shutdown_signal() {
     let _ = signal::ctrl_c().await;
 }
 
-async fn dispatch(State(state): State<SharedState>, req: Request<Body>) -> Response {
-    let (parts, body) = req.into_parts();
+struct WebSocketRequest {
+    method: String,
+    path: String,
+    query: String,
+    headers: HashMap<String, String>,
+    params: HashMap<String, String>,
+    pattern: Option<String>,
+    client_addr: String,
+}
+
+async fn handle_websocket(socket: WebSocket, callback: Arc<Py<PyAny>>, request: WebSocketRequest) {
+    let (mut socket_sender, mut socket_receiver) = socket.split();
+    let (incoming_tx, incoming_rx) = mpsc::channel();
+    let (outgoing_tx, mut outgoing_rx) = tokio_mpsc::unbounded_channel();
+
+    tokio::task::spawn_blocking(move || {
+        Python::attach(|py| -> PyResult<()> {
+            let raw = PyDict::new(py);
+            raw.set_item("method", request.method)?;
+            raw.set_item("path", request.path)?;
+            raw.set_item("query_string", &request.query)?;
+            raw.set_item("query", query_to_dict(py, &request.query)?)?;
+            raw.set_item("headers", request.headers)?;
+            raw.set_item("body", PyBytes::new(py, &[]))?;
+            raw.set_item("text", "")?;
+            raw.set_item("path_params", params_to_dict(py, &request.params)?)?;
+            raw.set_item("route_pattern", request.pattern)?;
+            raw.set_item("route_error_status", 404)?;
+            raw.set_item("allowed_methods", vec!["GET"])?;
+            raw.set_item("client_addr", request.client_addr)?;
+            let session = Py::new(
+                py,
+                WebSocketSession {
+                    incoming: Arc::new(Mutex::new(incoming_rx)),
+                    outgoing: outgoing_tx,
+                },
+            )?;
+            callback.call1(py, (raw, session))?;
+            Ok(())
+        })
+        .unwrap_or_else(|error| eprintln!("higuma WebSocket handler error: {error}"));
+    });
+
+    loop {
+        tokio::select! {
+            incoming = socket_receiver.next() => {
+                match incoming {
+                    Some(Ok(Message::Text(value))) => {
+                        if incoming_tx.send(IncomingMessage::Text(value)).is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Binary(value))) => {
+                        if incoming_tx.send(IncomingMessage::Binary(value)).is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(frame))) => {
+                        let (code, reason) = frame
+                            .map(|value| (value.code, value.reason.into_owned()))
+                            .unwrap_or((1000, String::new()));
+                        let _ = incoming_tx.send(IncomingMessage::Close(code, reason));
+                        break;
+                    }
+                    Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
+                    Some(Err(_)) | None => {
+                        let _ = incoming_tx.send(IncomingMessage::Close(
+                            1006,
+                            "connection closed".to_string(),
+                        ));
+                        break;
+                    }
+                }
+            }
+            outgoing = outgoing_rx.recv() => {
+                let message = match outgoing {
+                    Some(OutgoingMessage::Text(value)) => Message::Text(value),
+                    Some(OutgoingMessage::Binary(value)) => Message::Binary(value),
+                    Some(OutgoingMessage::Close(code, reason)) => Message::Close(
+                        Some(CloseFrame { code, reason: Cow::Owned(reason) })
+                    ),
+                    None => Message::Close(Some(CloseFrame {
+                        code: 1000,
+                        reason: Cow::Borrowed("handler completed"),
+                    })),
+                };
+                let is_close = matches!(message, Message::Close(_));
+                if socket_sender.send(message).await.is_err() || is_close {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn dispatch(
+    State(state): State<SharedState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    req: Request<Body>,
+) -> Response {
+    let (mut parts, body) = req.into_parts();
+    let websocket_upgrade = WebSocketUpgrade::from_request_parts(&mut parts, &state)
+        .await
+        .ok();
     let method = parts.method.as_str().to_ascii_uppercase();
     let path = normalize_path(parts.uri.path());
     let query = parts.uri.query().unwrap_or_default().to_string();
     let headers = parts.headers;
+
+    if let Some(upgrade) = websocket_upgrade {
+        let lookup = match state.websocket_routes.read() {
+            Ok(routes) => routes.find_handler("WEBSOCKET", &path),
+            Err(_) => {
+                return finalize_response(
+                    ResponsePayload::text(
+                        "failed to lock WebSocket route table",
+                        StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    ),
+                    &state,
+                    false,
+                )
+            }
+        };
+        let Some(callback) = lookup.handler else {
+            return finalize_response(
+                ResponsePayload::text("WebSocket route not found", StatusCode::NOT_FOUND.as_u16()),
+                &state,
+                false,
+            );
+        };
+        let request = WebSocketRequest {
+            method,
+            path,
+            query,
+            headers: headers
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.as_str().to_string(),
+                        value.to_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect(),
+            params: lookup.params,
+            pattern: lookup.pattern,
+            client_addr: peer_addr.ip().to_string(),
+        };
+        return upgrade
+            .on_upgrade(move |socket| handle_websocket(socket, callback, request))
+            .into_response();
+    }
 
     let body_bytes = match to_bytes(body, state.max_body_size).await {
         Ok(bytes) => bytes.to_vec(),
@@ -362,7 +609,7 @@ async fn dispatch(State(state): State<SharedState>, req: Request<Body>) -> Respo
         }
     };
 
-    let py_result = Python::with_gil(|py| -> PyResult<ResponsePayload> {
+    let py_result = Python::attach(|py| -> PyResult<ResponsePayload> {
         let request = PyDict::new(py);
         request.set_item("method", &method)?;
         request.set_item("path", &path)?;
@@ -375,9 +622,10 @@ async fn dispatch(State(state): State<SharedState>, req: Request<Body>) -> Respo
         request.set_item("route_pattern", lookup.pattern)?;
         request.set_item("route_error_status", route_status.as_u16())?;
         request.set_item("allowed_methods", lookup.allowed_methods.clone())?;
+        request.set_item("client_addr", peer_addr.ip().to_string())?;
 
         let py_obj = callback.call1(py, (request,))?;
-        py_to_response(py, py_obj.bind(py), &state.template_dir)
+        py_to_response(py, py_obj.bind(py), &state.template_env)
     });
 
     let payload = match py_result {
@@ -446,7 +694,7 @@ fn params_to_dict<'py>(
 fn py_to_response(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
-    template_dir: &Path,
+    template_env: &Arc<RwLock<Environment<'static>>>,
 ) -> PyResult<ResponsePayload> {
     if is_truthy_marker(obj, "__higuma_file__")? {
         return file_response_from_py(obj);
@@ -457,7 +705,7 @@ fn py_to_response(
         let context_json: String = obj.getattr("context_json")?.extract()?;
         let status: u16 = obj.getattr("status")?.extract()?;
         let headers = extract_response_headers(obj)?;
-        let html = render_template(template_dir, &template, &context_json)
+        let html = render_template(template_env, &template, &context_json)
             .map_err(PyRuntimeError::new_err)?;
 
         return Ok(ResponsePayload::new(
@@ -472,7 +720,7 @@ fn py_to_response(
         return response_from_py(py, obj);
     }
 
-    if let Ok(tuple) = obj.downcast::<PyTuple>() {
+    if let Ok(tuple) = obj.cast::<PyTuple>() {
         return tuple_to_response(py, tuple);
     }
 
@@ -542,7 +790,7 @@ fn body_from_py(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<(Vec<u8>, Op
         return Ok((bytes.to_vec(), Some("application/octet-stream".to_string())));
     }
 
-    if obj.downcast::<PyDict>().is_ok() || obj.downcast::<PyList>().is_ok() {
+    if obj.cast::<PyDict>().is_ok() || obj.cast::<PyList>().is_ok() {
         let json = py.import("json")?;
         let dumped: String = json.call_method1("dumps", (obj,))?.extract()?;
         return Ok((
@@ -566,7 +814,7 @@ fn extract_headers(obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, String)>> {
         return Ok(Vec::new());
     }
 
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let mut pairs = Vec::with_capacity(dict.len());
         for (key, value) in dict {
             pairs.push((key.str()?.to_string(), value.str()?.to_string()));
@@ -574,11 +822,11 @@ fn extract_headers(obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, String)>> {
         return Ok(pairs);
     }
 
-    if let Ok(items) = obj.downcast::<PyList>() {
+    if let Ok(items) = obj.cast::<PyList>() {
         let mut pairs = Vec::with_capacity(items.len());
         for item in items {
             let tuple = item
-                .downcast::<PyTuple>()
+                .cast::<PyTuple>()
                 .map_err(|_| PyValueError::new_err("header items must be (name, value) tuples"))?;
             if tuple.len() != 2 {
                 return Err(PyValueError::new_err(
@@ -614,21 +862,27 @@ fn is_truthy_marker(obj: &Bound<'_, PyAny>, marker: &str) -> PyResult<bool> {
 }
 
 fn render_template(
-    template_dir: &Path,
+    template_env: &Arc<RwLock<Environment<'static>>>,
     template_name: &str,
     context_json: &str,
 ) -> Result<String, String> {
-    let mut env = Environment::new();
-    env.set_loader(path_loader(template_dir));
-
     let context: serde_json::Value = serde_json::from_str(context_json)
         .map_err(|e| format!("invalid template context json: {e}"))?;
+    let env = template_env
+        .read()
+        .map_err(|_| "failed to lock template cache".to_string())?;
     let template = env
         .get_template(template_name)
         .map_err(|e| format!("template loading failed: {e}"))?;
     template
         .render(context)
         .map_err(|e| format!("template render failed: {e}"))
+}
+
+fn create_template_env(template_dir: &Path) -> Environment<'static> {
+    let mut env = Environment::new();
+    env.set_loader(path_loader(template_dir));
+    env
 }
 
 fn parse_route_pattern(pattern: &str) -> Result<(Vec<RouteSegment>, usize), String> {
@@ -844,6 +1098,7 @@ impl IntoResponse for ResponsePayload {
 #[pymodule]
 fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<HigumaCore>()?;
+    module.add_class::<WebSocketSession>()?;
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-# APIリファレンス
+# API reference
 
 ## Application
 
@@ -44,6 +44,6 @@ openapi_url="/openapi.json", docs_url="/docs")`
 - `login_required`, `fresh_login_required`, `roles_required`, `permissions_required`
 - `CORSMiddleware`, `SecurityHeadersMiddleware`, `TrustedHostMiddleware`
 
-詳細な実行コードは[Examples](examples.md)と
-[リポジトリのexamples](https://github.com/Madoa5561/higuma/tree/main/examples)
-を参照してください。
+See [Examples](examples.md) and the
+[repository examples](https://github.com/Madoa5561/higuma/tree/main/examples)
+for complete runnable applications.

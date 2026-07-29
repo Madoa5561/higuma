@@ -62,19 +62,29 @@ class SecurityHeadersMiddleware:
         content_security_policy: str | None = "default-src 'self'",
         frame_options: str = "DENY",
         referrer_policy: str = "strict-origin-when-cross-origin",
+        permissions_policy: str | None = "camera=(), microphone=(), geolocation=()",
+        strict_transport_security: str | None = None,
     ) -> None:
         self.content_security_policy = content_security_policy
         self.frame_options = frame_options
         self.referrer_policy = referrer_policy
+        self.permissions_policy = permissions_policy
+        self.strict_transport_security = strict_transport_security
 
     def __call__(self, request: Request, call_next: NextHandler) -> Response:
         response = make_response(call_next(request))
         response.headers.setdefault("x-content-type-options", "nosniff")
         response.headers.setdefault("x-frame-options", self.frame_options)
         response.headers.setdefault("referrer-policy", self.referrer_policy)
+        response.headers.setdefault("cross-origin-opener-policy", "same-origin")
         if self.content_security_policy:
+            response.headers.setdefault("content-security-policy", self.content_security_policy)
+        if self.permissions_policy:
+            response.headers.setdefault("permissions-policy", self.permissions_policy)
+        if self.strict_transport_security:
             response.headers.setdefault(
-                "content-security-policy", self.content_security_policy
+                "strict-transport-security",
+                self.strict_transport_security,
             )
         return response
 
@@ -84,7 +94,12 @@ class TrustedHostMiddleware:
         self.allowed_hosts = tuple(host.lower() for host in allowed_hosts)
 
     def __call__(self, request: Request, call_next: NextHandler) -> ResponseValue:
-        host = str(request.headers.get("host", "")).split(":", 1)[0].lower()
+        raw_host = str(request.headers.get("host", "")).lower()
+        host = (
+            raw_host[1 : raw_host.find("]")]
+            if raw_host.startswith("[") and "]" in raw_host
+            else raw_host.split(":", 1)[0]
+        )
         if host and not any(self._matches(host, pattern) for pattern in self.allowed_hosts):
             raise Forbidden(detail="untrusted Host header")
         return call_next(request)

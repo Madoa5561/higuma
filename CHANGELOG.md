@@ -7,13 +7,32 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Planned
+## [0.2.0] - 2026-07-29
 
-- WebSocket support
-- Multipart file uploads
-- Template bytecode caching
-- OpenAPI schema generation
-- Unix multi-process supervisor
+### Added
+
+- Rust-backed text, binary, and JSON WebSockets
+- Multipart form parsing and `UploadFile`
+- WSGI and ASGI application mounts
+- Automatic OpenAPI 3.1 schemas and Swagger UI
+- Shared MiniJinja compiled template cache
+- Built-in SQLite ORM with declarative models and transactions
+- Cross-platform multi-process TCP supervisor
+- Session authentication and `login_required`
+- Fresh-login, role, and permission authorization decorators
+- scrypt password hashing and signed expiring tokens
+- CSRF protection, rate limiting, and user ID helpers
+- OAuth 2.0 clients for Google, LINE, Discord, and custom providers
+- Japanese and English documentation
+- Expanded runnable examples and LLM-oriented `SKILLS.md`
+
+### Security
+
+- Signed cookie sessions now enforce their configured maximum age
+- Rate limiting uses the peer address supplied by the Rust server
+- OAuth state values are signed and time-limited
+- OAuth state is session-bound and single-use with automatic PKCE S256
+- Untrusted token, cookie, salt, and digest sizes are bounded before decoding
 
 ## [0.1.0] - 2026-07-27
 
