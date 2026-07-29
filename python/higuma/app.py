@@ -32,7 +32,7 @@ from .response import (
 from .routing import Rule, normalize_rule
 from .websocket import WebSocket
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -64,6 +64,8 @@ class Higuma:
         openapi_url: str | None = "/openapi.json",
         docs_url: str | None = "/docs",
     ) -> None:
+        if max_content_length <= 0:
+            raise ValueError("max_content_length must be positive")
         self.import_name = import_name
         self.root_path = _find_root_path(import_name)
         self.template_folder = _resolve_folder(self.root_path, template_folder)
@@ -117,7 +119,14 @@ class Higuma:
                     swagger_ui_html(
                         normalize_rule(openapi_url),
                         f"{self.config['OPENAPI_TITLE']} API",
-                    )
+                    ),
+                    headers={
+                        "content-security-policy": (
+                            "default-src 'self'; "
+                            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net"
+                        )
+                    },
                 )
 
             self.add_url_rule(
@@ -206,6 +215,12 @@ class Higuma:
             raise ValueError("methods must not be empty")
         if endpoint in self._endpoint_rules:
             raise ValueError(f"endpoint {endpoint!r} is already registered")
+        normalized_rule = normalize_rule(rule)
+        for existing in self._routes:
+            duplicate_methods = set(existing.methods) & set(method_tuple)
+            if existing.rule == normalized_rule and duplicate_methods:
+                methods_text = ", ".join(sorted(duplicate_methods))
+                raise ValueError(f"duplicate route registration: {methods_text} {normalized_rule}")
 
         route = Rule(
             rule=rule,
@@ -233,21 +248,25 @@ class Higuma:
             return self._dispatch_route(route, raw_request)
 
         route.callback = callback
+        self._core.add_route(route.rule, list(method_tuple), callback)
         self._routes.append(route)
         self._routes.sort(key=lambda item: item.specificity, reverse=True)
         self._endpoint_rules[endpoint] = route
-        self._core.add_route(route.rule, list(method_tuple), callback)
 
     def websocket(
         self,
         rule: str,
         *,
         endpoint: str | None = None,
+        allowed_origins: Iterable[str] | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
             route_endpoint = endpoint or handler.__name__
             if route_endpoint in self._websocket_rules:
                 raise ValueError(f"WebSocket endpoint {route_endpoint!r} is already registered")
+            normalized_rule = normalize_rule(rule)
+            if any(item.rule == normalized_rule for item in self._websocket_rules.values()):
+                raise ValueError(f"duplicate WebSocket route registration: {normalized_rule}")
             route = Rule(
                 rule=rule,
                 methods=("WEBSOCKET",),
@@ -260,9 +279,18 @@ class Higuma:
             def callback(raw_request: Mapping[str, Any], session: Any) -> Any:
                 return self._dispatch_websocket(route, raw_request, session)
 
+            @wraps(handler)
+            def preflight(raw_request: Mapping[str, Any]) -> Any:
+                return self._dispatch_websocket_preflight(route, raw_request)
+
             route.callback = callback
+            self._core.add_websocket_route(
+                route.rule,
+                callback,
+                preflight,
+                list(allowed_origins or ()),
+            )
             self._websocket_rules[route_endpoint] = route
-            self._core.add_websocket_route(route.rule, callback)
             return handler
 
         return decorator
@@ -285,6 +313,14 @@ class Higuma:
                 methods=deferred.methods,
                 **deferred.options,
             )
+        for deferred in blueprint._websockets:
+            full_rule = f"{prefix}{deferred.rule}"
+            endpoint = f"{name_prefix}{blueprint.name}.{deferred.endpoint}"
+            self.websocket(
+                full_rule,
+                endpoint=endpoint,
+                **deferred.options,
+            )(deferred.view_func)
 
     def before_request(self, func: Callable[..., ResponseValue | None]):
         self._before_request.append(func)
@@ -447,7 +483,12 @@ class Higuma:
         processes: int = 1,
         app_ref: str | None = None,
         debug: bool | None = None,
+        max_connections: int = 1024,
+        max_restarts: int = 5,
+        restart_window: float = 60.0,
     ) -> None:
+        if workers < 0 or processes < 1:
+            raise ValueError("workers must be non-negative and processes must be positive")
         if debug is not None:
             self.debug = debug
             self.config["DEBUG"] = debug
@@ -464,6 +505,9 @@ class Higuma:
                 port=port,
                 processes=processes,
                 threads=workers,
+                max_connections=max_connections,
+                max_restarts=max_restarts,
+                restart_window=restart_window,
             ).run()
             return
         for handler in self._startup_handlers:
@@ -503,6 +547,23 @@ class Higuma:
 
         return self._dispatch(request, endpoint_call)
 
+    def _dispatch_websocket_preflight(
+        self,
+        route: Rule,
+        raw_request: Mapping[str, Any],
+    ) -> Any:
+        request = Request(raw_request)
+        request.path_params = route.convert_params(request.path_params)
+        request.view_args = request.path_params
+
+        def authorize() -> Response:
+            from .auth import _run_auth_checks
+
+            _run_auth_checks(route.view_func)
+            return Response(b"", 204)
+
+        return self._dispatch(request, authorize, run_hooks=False)
+
     def _dispatch_route(
         self,
         route: Rule,
@@ -517,22 +578,35 @@ class Higuma:
         request = Request(raw_request)
 
         def fallback() -> Any:
+            if request.method == "OPTIONS" and request.allowed_methods:
+                return Response(
+                    b"",
+                    204,
+                    {"allow": ", ".join(request.allowed_methods)},
+                )
             if request.route_error_status == 405:
                 raise MethodNotAllowed(headers={"allow": ", ".join(request.allowed_methods)})
             raise NotFound()
 
         return self._dispatch(request, fallback)
 
-    def _dispatch(self, request: Request, endpoint_call: Callable[[], Any]) -> Any:
+    def _dispatch(
+        self,
+        request: Request,
+        endpoint_call: Callable[[], Any],
+        *,
+        run_hooks: bool = True,
+    ) -> Any:
         request_token = _push_request(request)
         app_token: Token[Higuma | None] = _app_context.set(self)
 
         def terminal(current_request: Request) -> Any:
             try:
-                for hook in self._before_request:
-                    result = _call_hook(hook, current_request)
-                    if result is not None:
-                        return result
+                if run_hooks:
+                    for hook in self._before_request:
+                        result = _call_hook(hook, current_request)
+                        if result is not None:
+                            return result
                 return endpoint_call()
             except Exception as exc:  # noqa: BLE001 - framework exception boundary
                 return self._handle_exception(exc, current_request)
@@ -556,8 +630,12 @@ class Higuma:
             except Exception as exc:  # noqa: BLE001 - middleware exception boundary
                 response = make_response(self._handle_exception(exc, request))
 
-            for hook in reversed(self._after_request):
-                response = make_response(_call_after_hook(hook, request, response))
+            if run_hooks:
+                try:
+                    for hook in reversed(self._after_request):
+                        response = make_response(_call_after_hook(hook, request, response))
+                except Exception as exc:  # noqa: BLE001 - after hook exception boundary
+                    response = make_response(self._handle_exception(exc, request))
             return response
         finally:
             _app_context.reset(app_token)
@@ -657,21 +735,29 @@ class Higuma:
         range_header = request.headers.get("range")
         if range_header and str(range_header).startswith("bytes="):
             parsed_range = _parse_range(str(range_header), stat.st_size)
-            if parsed_range is not None:
-                start, end = parsed_range
-                with candidate.open("rb") as handle:
-                    handle.seek(start)
-                    body = handle.read(end - start + 1)
+            if parsed_range is None:
                 return Response(
-                    body,
-                    206,
+                    b"",
+                    416,
                     {
                         **common_headers,
-                        "accept-ranges": "bytes",
-                        "content-range": f"bytes {start}-{end}/{stat.st_size}",
+                        "content-range": f"bytes */{stat.st_size}",
                     },
-                    _guess_media_type(candidate),
                 )
+            start, end = parsed_range
+            with candidate.open("rb") as handle:
+                handle.seek(start)
+                body = handle.read(end - start + 1)
+            return Response(
+                body,
+                206,
+                {
+                    **common_headers,
+                    "accept-ranges": "bytes",
+                    "content-range": f"bytes {start}-{end}/{stat.st_size}",
+                },
+                _guess_media_type(candidate),
+            )
 
         return FileResponse(
             candidate,
@@ -774,6 +860,8 @@ def _call_error_handler(func: ErrorHandler, error: BaseException, request: Reque
 
 
 def _parse_range(value: str, size: int) -> tuple[int, int] | None:
+    if size <= 0:
+        return None
     try:
         spec = value.removeprefix("bytes=").split(",", 1)[0]
         start_text, end_text = spec.split("-", 1)

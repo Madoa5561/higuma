@@ -18,6 +18,7 @@ def me():
 ```
 
 Use `auth.login_user(user)` to log in and `auth.logout_user()` to log out.
+Only `auth.login_user(user, remember=True)` creates a persistent cookie.
 `fresh_login_required`, `roles_required("admin")`, and
 `permissions_required("posts:write")` are also available. User objects should
 expose iterable `roles` or `permissions` attributes.
@@ -36,10 +37,11 @@ The built-in password format uses scrypt with a random salt.
 
 ```python
 app.add_middleware(CSRFProtection)
-app.add_middleware(RateLimitMiddleware, limit=100, window=60)
+app.add_middleware(RateLimitMiddleware, limit=100, window=60, max_keys=10_000)
 ```
 
 Unsafe requests must send `_csrf_token` as a form field or `X-CSRF-Token`.
+`max_keys` bounds memory use when many distinct client identities are observed.
 
 ## OAuth
 
@@ -56,6 +58,27 @@ google = OAuth2Client.google(
 Always call `validate_state()` before exchanging an authorization code.
 With `SessionMiddleware`, state is bound to the browser session, accepted only
 once, and PKCE S256 is added automatically.
+
+## Secret keys
+
+Secrets used for sessions, tokens, and OAuth state must contain at least 32
+UTF-8 bytes.
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+## Reverse proxies
+
+`X-Forwarded-For` and `X-Forwarded-Proto` are ignored by default. Enable them
+only for known direct peers:
+
+```python
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_proxies=("127.0.0.1", "10.0.0.0/8"),
+)
+```
 
 ## Production rules
 

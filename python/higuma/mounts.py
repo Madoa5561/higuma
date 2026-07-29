@@ -88,7 +88,7 @@ def _mounted_path(path: str, prefix: str) -> str:
 
 
 def _wsgi_environ(request: Request, prefix: str) -> dict[str, Any]:
-    host, _, port = str(request.headers.get("host", "localhost")).partition(":")
+    host, port = _server_address(str(request.headers.get("host", "localhost")), request.scheme)
     environ: dict[str, Any] = {
         "REQUEST_METHOD": request.method,
         "SCRIPT_NAME": "" if prefix == "/" else prefix,
@@ -98,44 +98,46 @@ def _wsgi_environ(request: Request, prefix: str) -> dict[str, Any]:
         "SERVER_PORT": port or "80",
         "SERVER_PROTOCOL": "HTTP/1.1",
         "wsgi.version": (1, 0),
-        "wsgi.url_scheme": "https"
-        if request.headers.get("x-forwarded-proto") == "https"
-        else "http",
+        "wsgi.url_scheme": request.scheme,
         "wsgi.input": io.BytesIO(request.body),
         "wsgi.errors": sys.stderr,
         "wsgi.multithread": True,
         "wsgi.multiprocess": False,
         "wsgi.run_once": False,
+        "REMOTE_ADDR": request.remote_addr,
     }
     if request.content_type:
         environ["CONTENT_TYPE"] = request.content_type
     if request.content_length is not None:
         environ["CONTENT_LENGTH"] = str(request.content_length)
-    for key, value in request.headers.items():
+    combined_headers: dict[str, list[str]] = {}
+    for raw_key, raw_value in request.raw_headers:
+        key = raw_key.decode("latin-1")
+        value = raw_value.decode("latin-1")
         normalized = key.upper().replace("-", "_")
         if normalized not in {"CONTENT_TYPE", "CONTENT_LENGTH"}:
-            environ[f"HTTP_{normalized}"] = value
+            combined_headers.setdefault(normalized, []).append(value)
+    for normalized, values in combined_headers.items():
+        separator = "; " if normalized == "COOKIE" else ","
+        environ[f"HTTP_{normalized}"] = separator.join(values)
     return environ
 
 
 def _asgi_scope(request: Request, prefix: str) -> dict[str, Any]:
-    host, _, port = str(request.headers.get("host", "localhost")).partition(":")
+    host, port = _server_address(str(request.headers.get("host", "localhost")), request.scheme)
     return {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
         "http_version": "1.1",
         "method": request.method,
-        "scheme": "https" if request.headers.get("x-forwarded-proto") == "https" else "http",
+        "scheme": request.scheme,
         "path": _mounted_path(request.path, prefix),
         "raw_path": _mounted_path(request.path, prefix).encode(),
         "root_path": "" if prefix == "/" else prefix,
         "query_string": request.query_string.encode(),
-        "headers": [
-            (key.encode("latin-1"), value.encode("latin-1"))
-            for key, value in request.headers.items()
-        ],
-        "server": (host, int(port or 80)),
-        "client": None,
+        "headers": list(request.raw_headers),
+        "server": (host, int(port)),
+        "client": (request.remote_addr, 0) if request.remote_addr else None,
         "state": request.state,
     }
 
@@ -159,5 +161,17 @@ def _mounted_response(
         else:
             first_headers[normalized] = value
     response = Response(body, status, first_headers, _header(headers, "content-type"))
-    response._extra_headers.extend(extra_headers)
+    for key, value in extra_headers:
+        response.append_header(key, value)
     return response
+
+
+def _server_address(host_header: str, scheme: str) -> tuple[str, str]:
+    value = host_header.strip()
+    if value.startswith("[") and "]" in value:
+        closing = value.find("]")
+        host = value[1:closing]
+        port = value[closing + 1 :].removeprefix(":")
+    else:
+        host, port = value.rsplit(":", 1) if value.count(":") == 1 else (value, "")
+    return host, port or ("443" if scheme == "https" else "80")

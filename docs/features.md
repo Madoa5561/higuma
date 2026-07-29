@@ -3,11 +3,18 @@
 ## WebSocket
 
 ```python
-@app.websocket("/ws/<string:room>")
+@app.websocket(
+    "/ws/<string:room>",
+    allowed_origins=("https://example.com",),
+)
 def chat(ws, room):
     while True:
         ws.send_json({"room": room, "message": ws.receive_json()})
 ```
+
+Origin未指定時はsame-originのみ許可されます。送受信queueはboundedで、
+message sizeは`max_content_length`に従います。認証decoratorはHTTP 101より前に評価されます。
+`Blueprint.websocket()`も同じAPIです。
 
 ## Multipart upload
 
@@ -64,3 +71,10 @@ with db.session() as session:
 ```
 
 session blockは成功時commit、例外時rollbackです。
+`query.offset(20).limit(10)`でpaginationできます。filterなしの`delete()`は
+事故防止のため拒否され、全件削除は`delete_all()`を明示します。
+
+## File streamingと圧縮
+
+`send_file()`と`FileResponse`はRustからchunk streamingされるため、
+大きなfileを全量RAMへ読み込みません。対応clientにはgzipも自動適用されます。

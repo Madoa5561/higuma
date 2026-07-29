@@ -18,6 +18,7 @@ def me():
 ```
 
 login時は`auth.login_user(user)`、logout時は`auth.logout_user()`を使います。
+`auth.login_user(user, remember=True)`だけが永続cookieを発行します。
 `fresh_login_required`、`roles_required("admin")`、
 `permissions_required("posts:write")`も利用できます。User objectは
 `roles`または`permissions` iterableを持たせてください。
@@ -36,8 +37,10 @@ valid = hasher.verify(password, stored)
 
 ```python
 app.add_middleware(CSRFProtection)
-app.add_middleware(RateLimitMiddleware, limit=100, window=60)
+app.add_middleware(RateLimitMiddleware, limit=100, window=60, max_keys=10_000)
 ```
+
+`max_keys`は大量の異なるclient identityによるメモリ増加を制限します。
 
 unsafe methodではformの`_csrf_token`または`X-CSRF-Token`を送信します。
 
@@ -56,6 +59,26 @@ google = OAuth2Client.google(
 callbackでは必ず`validate_state()`を先に実行してください。
 `SessionMiddleware`が有効ならstateはブラウザsessionに束縛されて単回使用になり、
 PKCE S256も自動的に追加されます。
+
+## Secret key
+
+session、token、OAuth stateに使うsecretはUTF-8で32バイト以上必須です。
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+## Reverse proxy
+
+`X-Forwarded-For`と`X-Forwarded-Proto`は標準では無視されます。
+直接接続元を限定して有効にします。
+
+```python
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_proxies=("127.0.0.1", "10.0.0.0/8"),
+)
+```
 
 ## 原則
 

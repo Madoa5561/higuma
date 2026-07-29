@@ -33,6 +33,7 @@ from .exceptions import (
     InternalServerError,
     MethodNotAllowed,
     NotFound,
+    RangeNotSatisfiable,
     RequestEntityTooLarge,
     TooManyRequests,
     Unauthorized,
@@ -41,10 +42,11 @@ from .exceptions import (
 )
 from .middleware import (
     CORSMiddleware,
+    ProxyHeadersMiddleware,
     SecurityHeadersMiddleware,
     TrustedHostMiddleware,
 )
-from .request import Headers, MultiDict, Request, UploadFile, request
+from .request import Headers, MultiDict, Request, UploadFile, request, secure_filename
 from .response import (
     FileResponse,
     HTMLResponse,
@@ -104,6 +106,8 @@ __all__ = [
     "OAuth2Client",
     "PasswordHasher",
     "PlainTextResponse",
+    "ProxyHeadersMiddleware",
+    "RangeNotSatisfiable",
     "RateLimitMiddleware",
     "RedirectResponse",
     "Request",
@@ -138,6 +142,7 @@ __all__ = [
     "render_template",
     "request",
     "roles_required",
+    "secure_filename",
     "send_file",
     "validate_user_id",
 ]

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import unicodedata
 from collections.abc import Iterator, Mapping
 from contextvars import ContextVar, Token
 from email import policy
@@ -16,6 +18,14 @@ from urllib.parse import parse_qsl
 from .exceptions import BadRequest, UnsupportedMediaType
 
 T = TypeVar("T")
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
 
 
 class MultiDict(Mapping[str, Any]):
@@ -82,11 +92,7 @@ class UploadFile:
         headers: Mapping[str, str] | None = None,
         field_name: str = "",
     ) -> None:
-        self.filename = (
-            filename.replace("\\", "/").rsplit("/", 1)[-1].replace("\x00", "").lstrip(". ")
-        )
-        if not self.filename:
-            self.filename = "upload"
+        self.filename = secure_filename(filename)
         self.content_type = content_type
         self.headers = Headers(headers)
         self.field_name = field_name
@@ -117,6 +123,23 @@ class UploadFile:
         return self.stream.getvalue()
 
 
+def secure_filename(filename: str, *, fallback: str = "upload") -> str:
+    value = unicodedata.normalize("NFKC", str(filename))
+    value = value.replace("\\", "/").rsplit("/", 1)[-1]
+    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip(" ._")
+    if not value:
+        value = fallback
+    stem = value.split(".", 1)[0].upper()
+    if stem in _WINDOWS_RESERVED_NAMES:
+        value = f"_{value}"
+    encoded = value.encode("utf-8")
+    if len(encoded) > 240:
+        suffix = Path(value).suffix[:20]
+        stem_bytes = Path(value).stem.encode("utf-8")[: 240 - len(suffix.encode("utf-8"))]
+        value = stem_bytes.decode("utf-8", errors="ignore").rstrip(" .") + suffix
+    return value or fallback
+
+
 class Headers(Mapping[str, str]):
     def __init__(self, values: Mapping[str, str] | None = None) -> None:
         self._values = {str(key).lower(): str(value) for key, value in (values or {}).items()}
@@ -141,7 +164,19 @@ class Request:
         self.query_string = str(raw.get("query_string", ""))
         self.args = MultiDict(iter(parse_qsl(self.query_string, keep_blank_values=True)))
         self.query = self.args
-        self.headers = Headers(raw.get("headers", {}))
+        raw_headers = raw.get("raw_headers")
+        if raw_headers is None:
+            raw_headers = (raw.get("headers") or {}).items()
+        self.raw_headers = tuple(
+            (
+                key if isinstance(key, bytes) else str(key).encode("latin-1"),
+                value if isinstance(value, bytes) else str(value).encode("latin-1"),
+            )
+            for key, value in raw_headers
+        )
+        self.headers = Headers(
+            {key.decode("latin-1"): value.decode("latin-1") for key, value in self.raw_headers}
+        )
         self.body = bytes(raw.get("body", b""))
         self.path_params = dict(raw.get("path_params", {}))
         self.view_args = self.path_params
@@ -149,6 +184,8 @@ class Request:
         self.route_error_status = int(raw.get("route_error_status", 404))
         self.allowed_methods = tuple(raw.get("allowed_methods", ()))
         self.client_addr = str(raw.get("client_addr", ""))
+        self.remote_addr = self.client_addr
+        self.scheme = str(raw.get("scheme", "http")).lower()
         self.state: dict[str, Any] = {}
         self._json_cache: Any = _MISSING
         self._form_cache: MultiDict | None = None
@@ -178,13 +215,7 @@ class Request:
 
     @property
     def content_length(self) -> int | None:
-        value = self.headers.get("content-length")
-        if value is None:
-            return len(self.body)
-        try:
-            return int(value)
-        except ValueError:
-            return None
+        return len(self.body)
 
     @property
     def is_json(self) -> bool:
@@ -199,7 +230,10 @@ class Request:
             key, _, value = item.strip().partition("=")
             if key.lower() == "charset" and value:
                 charset = value.strip("\"'")
-        return self.body.decode(charset, errors="replace")
+        try:
+            return self.body.decode(charset, errors="replace")
+        except LookupError as exc:
+            raise BadRequest(detail=f"unknown request charset: {charset}") from exc
 
     @property
     def json(self) -> Any:
@@ -281,7 +315,11 @@ class Request:
             filename = part.get_filename()
             if filename is None:
                 charset = part.get_content_charset() or "utf-8"
-                fields.append((field_name, payload.decode(charset, errors="replace")))
+                try:
+                    value = payload.decode(charset, errors="replace")
+                except LookupError as exc:
+                    raise BadRequest(detail=f"unknown multipart charset: {charset}") from exc
+                fields.append((field_name, value))
                 continue
             files.append(
                 (

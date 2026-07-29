@@ -10,10 +10,30 @@ from typing import Any
 
 from .request import Request
 from .response import Response, ResponseValue, make_response
+from .security import _validate_secret_key
 
 
 class Session(dict[str, Any]):
-    modified = False
+    def __init__(
+        self,
+        *args: Any,
+        permanent: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.modified = False
+        self._permanent = bool(permanent)
+
+    @property
+    def permanent(self) -> bool:
+        return self._permanent
+
+    @permanent.setter
+    def permanent(self, value: bool) -> None:
+        value = bool(value)
+        if value != self._permanent:
+            self.modified = True
+            self._permanent = value
 
     def __setitem__(self, key: str, value: Any) -> None:
         self.modified = True
@@ -47,9 +67,7 @@ class SessionMiddleware:
         httponly: bool = True,
         samesite: str = "Lax",
     ) -> None:
-        if not secret_key:
-            raise ValueError("secret_key must not be empty")
-        self.secret_key = secret_key.encode("utf-8") if isinstance(secret_key, str) else secret_key
+        self.secret_key = _validate_secret_key(secret_key)
         self.cookie_name = cookie_name
         self.max_age = max_age
         self.secure = secure
@@ -70,7 +88,7 @@ class SessionMiddleware:
                 response.set_cookie(
                     self.cookie_name,
                     self._dump(session),
-                    max_age=self.max_age,
+                    max_age=self.max_age if session.permanent else None,
                     secure=self.secure,
                     httponly=self.httponly,
                     samesite=self.samesite,
@@ -81,7 +99,11 @@ class SessionMiddleware:
 
     def _dump(self, session: Session) -> str:
         payload = json.dumps(
-            {"data": dict(session), "iat": int(time.time())},
+            {
+                "data": dict(session),
+                "iat": int(time.time()),
+                "permanent": session.permanent,
+            },
             ensure_ascii=False,
             separators=(",", ":"),
             default=str,
@@ -89,18 +111,21 @@ class SessionMiddleware:
         encoded = base64.urlsafe_b64encode(payload).rstrip(b"=")
         signature = hmac.new(self.secret_key, encoded, hashlib.sha256).digest()
         encoded_signature = base64.urlsafe_b64encode(signature).rstrip(b"=")
-        return f"{encoded.decode()}.{encoded_signature.decode()}"
+        value = f"{encoded.decode()}.{encoded_signature.decode()}"
+        if len(value) > 4093:
+            raise ValueError("session cookie exceeds the 4093-byte safety limit")
+        return value
 
     def _load(self, value: str | None) -> Session:
         if not value or len(value) > 16 * 1024 or "." not in value:
             return Session()
         encoded, encoded_signature = value.rsplit(".", 1)
-        expected = hmac.new(
-            self.secret_key,
-            encoded.encode("ascii"),
-            hashlib.sha256,
-        ).digest()
         try:
+            expected = hmac.new(
+                self.secret_key,
+                encoded.encode("ascii"),
+                hashlib.sha256,
+            ).digest()
             actual = _decode_base64(encoded_signature)
         except (ValueError, UnicodeEncodeError):
             return Session()
@@ -114,11 +139,14 @@ class SessionMiddleware:
             return Session()
         issued_at = payload.get("iat")
         data = payload.get("data")
+        permanent = payload.get("permanent", False)
         if not isinstance(issued_at, int) or not isinstance(data, dict):
+            return Session()
+        if not isinstance(permanent, bool):
             return Session()
         if issued_at > int(time.time()) + 60 or time.time() - issued_at > self.max_age:
             return Session()
-        return Session(data)
+        return Session(data, permanent=permanent)
 
 
 def _decode_base64(value: str) -> bytes:

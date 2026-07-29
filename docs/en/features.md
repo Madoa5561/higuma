@@ -3,11 +3,18 @@
 ## WebSocket
 
 ```python
-@app.websocket("/ws/<string:room>")
+@app.websocket(
+    "/ws/<string:room>",
+    allowed_origins=("https://example.com",),
+)
 def chat(ws, room):
     while True:
         ws.send_json({"room": room, "message": ws.receive_json()})
 ```
+
+When omitted, origins default to same-origin. Queues are bounded, message size
+follows `max_content_length`, and authentication decorators run before the HTTP
+101 upgrade. `Blueprint.websocket()` uses the same API.
 
 ## Multipart upload
 
@@ -64,3 +71,10 @@ with db.session() as session:
 ```
 
 A successful session block commits; an exception rolls it back.
+Use `query.offset(20).limit(10)` for pagination. An unfiltered `delete()` is
+rejected; call `delete_all()` when a full-table delete is intentional.
+
+## File streaming and compression
+
+`send_file()` and `FileResponse` stream chunks from Rust instead of loading a
+whole file into RAM. Eligible responses are gzip-compressed automatically.

@@ -243,7 +243,7 @@ class AppTests(unittest.TestCase):
 
     def test_sessions_cors_and_security_headers(self):
         app = self.make_app()
-        app.add_middleware(SessionMiddleware, "test-secret")
+        app.add_middleware(SessionMiddleware, "test-secret-that-is-at-least-32-bytes")
         app.add_middleware(
             CORSMiddleware,
             allow_origins=("https://example.com",),

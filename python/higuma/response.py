@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from email.utils import format_datetime
@@ -9,6 +10,49 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+
+def _validate_status(status: int) -> int:
+    value = int(status)
+    if not 100 <= value <= 599:
+        raise ValueError("HTTP status code must be between 100 and 599")
+    return value
+
+
+def _validate_header(name: str, value: str) -> tuple[str, str]:
+    normalized = str(name).lower()
+    text = str(value)
+    if not _HEADER_NAME_RE.fullmatch(normalized):
+        raise ValueError(f"invalid HTTP header name: {name!r}")
+    if "\r" in text or "\n" in text or "\x00" in text:
+        raise ValueError(f"invalid HTTP header value for {normalized!r}")
+    return normalized, text
+
+
+class _ResponseHeaders(dict[str, str]):
+    def __init__(self, values: Mapping[str, str] | None = None) -> None:
+        super().__init__()
+        self.update(values or {})
+
+    def __setitem__(self, name: str, value: str) -> None:
+        normalized, text = _validate_header(name, value)
+        super().__setitem__(normalized, text)
+
+    def setdefault(self, name: str, value: str = "") -> str:
+        normalized, text = _validate_header(name, value)
+        return super().setdefault(normalized, text)
+
+    def update(
+        self,
+        values: Mapping[str, str] | None = None,
+        **kwargs: str,
+    ) -> None:
+        pairs = dict(values or {}, **kwargs)
+        validated = [_validate_header(name, value) for name, value in pairs.items()]
+        for name, value in validated:
+            super().__setitem__(name, value)
 
 
 class Response:
@@ -30,8 +74,8 @@ class Response:
             body = bytes(body)
 
         self.body = body
-        self.status_code = int(status)
-        self.headers = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
+        self.status_code = _validate_status(status)
+        self.headers = _ResponseHeaders(headers)
         self._extra_headers: list[tuple[str, str]] = []
         self.media_type = media_type
 
@@ -41,7 +85,7 @@ class Response:
 
     @status.setter
     def status(self, value: int) -> None:
-        self.status_code = int(value)
+        self.status_code = _validate_status(value)
 
     @property
     def text(self) -> str:
@@ -57,6 +101,9 @@ class Response:
     @property
     def header_items(self) -> list[tuple[str, str]]:
         return [*self.headers.items(), *self._extra_headers]
+
+    def append_header(self, name: str, value: str) -> None:
+        self._extra_headers.append(_validate_header(name, value))
 
     def set_cookie(
         self,
@@ -91,7 +138,7 @@ class Response:
             morsel["httponly"] = True
         if samesite:
             morsel["samesite"] = samesite
-        self._extra_headers.append(("set-cookie", morsel.OutputString()))
+        self.append_header("set-cookie", morsel.OutputString())
 
     def delete_cookie(self, key: str, *, path: str = "/", domain: str | None = None) -> None:
         self.set_cookie(

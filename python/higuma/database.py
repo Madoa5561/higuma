@@ -104,7 +104,11 @@ class Boolean(Field):
     sql_type = "INTEGER"
 
     def to_database(self, value: Any) -> int | None:
-        return None if value is None else int(bool(value))
+        if value is None:
+            return None
+        if value not in (True, False, 0, 1):
+            raise TypeError(f"{self.name} must be a boolean")
+        return int(bool(value))
 
     def from_database(self, value: Any) -> bool | None:
         return None if value is None else bool(value)
@@ -202,6 +206,7 @@ class Query(Generic[ModelT]):
         params: tuple[Any, ...] = (),
         ordering: str | None = None,
         limit_value: int | None = None,
+        offset_value: int | None = None,
     ) -> None:
         self.session = session
         self.model = model
@@ -209,14 +214,18 @@ class Query(Generic[ModelT]):
         self.params = params
         self.ordering = ordering
         self.limit_value = limit_value
+        self.offset_value = offset_value
 
     def filter_by(self, **values: Any) -> Query[ModelT]:
         clauses = list(self.where)
         params = list(self.params)
         for name, value in values.items():
             field = _field_for(self.model, name)
-            clauses.append(f"{quote_identifier(name)} = ?")
-            params.append(field.to_database(value))
+            if value is None:
+                clauses.append(f"{quote_identifier(name)} IS NULL")
+            else:
+                clauses.append(f"{quote_identifier(name)} = ?")
+                params.append(field.to_database(value))
         return self._clone(where=tuple(clauses), params=tuple(params))
 
     def order_by(self, field: str, *, descending: bool = False) -> Query[ModelT]:
@@ -228,6 +237,11 @@ class Query(Generic[ModelT]):
         if value < 0:
             raise ValueError("limit must be non-negative")
         return self._clone(limit_value=value)
+
+    def offset(self, value: int) -> Query[ModelT]:
+        if value < 0:
+            raise ValueError("offset must be non-negative")
+        return self._clone(offset_value=value)
 
     def all(self) -> list[ModelT]:
         sql, params = self._select_sql()
@@ -255,6 +269,11 @@ class Query(Generic[ModelT]):
         return int(row["count"])
 
     def delete(self) -> int:
+        if not self.where:
+            raise ValueError("refusing unfiltered delete; use delete_all() explicitly")
+        return self.delete_all()
+
+    def delete_all(self) -> int:
         table = quote_identifier(self.model.__tablename__)
         where, params = self._where_sql()
         # All identifiers pass quote_identifier; all values use placeholders.
@@ -274,6 +293,10 @@ class Query(Generic[ModelT]):
             sql += f" ORDER BY {self.ordering}"
         if self.limit_value is not None:
             sql += f" LIMIT {self.limit_value}"
+        if self.offset_value is not None:
+            if self.limit_value is None:
+                sql += " LIMIT -1"
+            sql += f" OFFSET {self.offset_value}"
         return sql, params
 
     def _where_sql(self) -> tuple[str, tuple[Any, ...]]:
@@ -288,6 +311,7 @@ class Query(Generic[ModelT]):
             "params": self.params,
             "ordering": self.ordering,
             "limit_value": self.limit_value,
+            "offset_value": self.offset_value,
             **changes,
         }
         return Query(self.session, self.model, **values)
@@ -347,6 +371,8 @@ class Session:
         fields = [
             (name, field) for name, field in model.__fields__.items() if field is not primary_key
         ]
+        if not fields:
+            return instance
         assignments = ", ".join(f"{quote_identifier(name)} = ?" for name, _ in fields)
         values = [field.to_database(getattr(instance, name)) for name, field in fields]
         values.append(primary_key.to_database(primary_value))
@@ -386,20 +412,22 @@ class Database:
         self._memory_connection: sqlite3.Connection | None = None
 
     def connect(self) -> sqlite3.Connection:
-        if self.path == ":memory:" and self._memory_connection is not None:
-            return self._memory_connection
-        connection = sqlite3.connect(
-            self.path,
-            detect_types=sqlite3.PARSE_DECLTYPES,
-            check_same_thread=False,
-        )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        if self.path != ":memory:":
-            connection.execute("PRAGMA journal_mode = WAL")
-        else:
-            self._memory_connection = connection
-        return connection
+        with self._memory_lock:
+            if self.path == ":memory:" and self._memory_connection is not None:
+                return self._memory_connection
+            connection = sqlite3.connect(
+                self.path,
+                detect_types=sqlite3.PARSE_DECLTYPES,
+                check_same_thread=False,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 5000")
+            if self.path != ":memory:":
+                connection.execute("PRAGMA journal_mode = WAL")
+            else:
+                self._memory_connection = connection
+            return connection
 
     @contextmanager
     def session(self) -> Iterator[Session]:
@@ -431,16 +459,12 @@ class Database:
                     if field.index:
                         index = quote_identifier(f"idx_{model.__tablename__}_{name}")
                         column = quote_identifier(name)
-                        session.execute(
-                            f"CREATE INDEX IF NOT EXISTS {index} ON {table} ({column})"
-                        )
+                        session.execute(f"CREATE INDEX IF NOT EXISTS {index} ON {table} ({column})")
 
     def drop_all(self, *models: type[Model]) -> None:
         with self.session() as session:
             for model in reversed(models):
-                session.execute(
-                    f"DROP TABLE IF EXISTS {quote_identifier(model.__tablename__)}"
-                )
+                session.execute(f"DROP TABLE IF EXISTS {quote_identifier(model.__tablename__)}")
 
 
 def quote_identifier(value: str) -> str:

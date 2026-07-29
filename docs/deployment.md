@@ -3,11 +3,14 @@
 ## Multi-process supervisor
 
 ```bash
-higuma run app:app --host 0.0.0.0 --port 8000 --processes 4
+higuma run app:app --host 0.0.0.0 --port 8000 --processes 4 --max-connections 1024
 ```
 
+`--max-connections`を超えた接続は拒否され、proxy threadは無制限に増加しません。
+
 親プロセスがTCPロードバランサーとして動作し、独立したRust workerへ
-接続を振り分けます。HTTPとWebSocketの両方を透過します。
+接続を振り分けます。HTTPとWebSocketの両方を透過し、異常終了したworkerは
+restart limit内で自動再起動します。
 
 ## Reverse proxy
 
@@ -18,6 +21,10 @@ higuma run app:app --host 0.0.0.0 --port 8000 --processes 4
 app.add_middleware(
     TrustedHostMiddleware,
     ("example.com", "*.example.com"),
+)
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_proxies=("127.0.0.1",),
 )
 ```
 
@@ -35,7 +42,7 @@ GOOGLE_CLIENT_SECRET=...
 
 - HTTPSを強制する
 - `debug=False`
-- 推測不能なsecret key
+- 32バイト以上の推測不能なsecret key
 - SQLiteファイルのバックアップ
 - uploadサイズと保存先を制限
 - reverse proxyが接続元headerを上書きする

@@ -7,8 +7,9 @@ import socket
 import subprocess  # nosec B404
 import sys
 import time
+from collections import deque
 from itertools import cycle
-from threading import Event, Thread
+from threading import BoundedSemaphore, Event, Thread
 from typing import Any
 
 
@@ -22,24 +23,38 @@ class Supervisor:
         processes: int = 2,
         threads: int = 0,
         startup_timeout: float = 15.0,
+        max_restarts: int = 5,
+        restart_window: float = 60.0,
+        max_connections: int = 1024,
     ) -> None:
         if processes < 2:
             raise ValueError("Supervisor requires at least two processes")
+        if threads < 0 or startup_timeout <= 0:
+            raise ValueError("threads must be non-negative and startup_timeout must be positive")
         self.app = app
         self.host = host
         self.port = port
         self.processes = processes
         self.threads = threads
         self.startup_timeout = startup_timeout
+        if max_restarts < 0 or restart_window <= 0 or max_connections <= 0:
+            raise ValueError(
+                "max_restarts must be non-negative; restart_window and max_connections "
+                "must be positive"
+            )
+        self.max_restarts = max_restarts
+        self.restart_window = restart_window
+        self.max_connections = max_connections
         self._children: list[subprocess.Popen[Any]] = []
+        self._restart_times: deque[float] = deque()
         self._stopped = Event()
 
     def run(self) -> None:
         internal_ports = [_free_port() for _ in range(self.processes)]
         self._children = [self._start_worker(port) for port in internal_ports]
         try:
-            for port in internal_ports:
-                _wait_for_port("127.0.0.1", port, self.startup_timeout)
+            for child, port in zip(self._children, internal_ports):
+                _wait_for_port("127.0.0.1", port, self.startup_timeout, child)
             self._serve(internal_ports)
         finally:
             self.stop()
@@ -81,6 +96,7 @@ class Supervisor:
     def _serve(self, internal_ports: list[int]) -> None:
         previous_handlers = _install_signal_handlers(self.stop)
         targets = cycle(internal_ports)
+        connection_slots = BoundedSemaphore(self.max_connections)
         listener = socket.create_server((self.host, self.port), reuse_port=False)
         listener.settimeout(0.5)
         print(
@@ -90,44 +106,70 @@ class Supervisor:
         try:
             while not self._stopped.is_set():
                 failed = next(
-                    (child for child in self._children if child.poll() is not None),
+                    (
+                        (index, child)
+                        for index, child in enumerate(self._children)
+                        if child.poll() is not None
+                    ),
                     None,
                 )
                 if failed is not None:
-                    raise RuntimeError(
-                        f"higuma worker exited unexpectedly with {failed.returncode}"
-                    )
+                    index, child = failed
+                    self._restart_worker(index, internal_ports[index], child.returncode)
                 try:
                     client, _ = listener.accept()
                 except TimeoutError:
                     continue
+                if not connection_slots.acquire(blocking=False):
+                    client.close()
+                    continue
                 target_port = next(targets)
                 Thread(
                     target=_proxy_connection,
-                    args=(client, ("127.0.0.1", target_port)),
+                    args=(client, ("127.0.0.1", target_port), connection_slots),
                     daemon=True,
                 ).start()
         finally:
             listener.close()
             _restore_signal_handlers(previous_handlers)
 
+    def _restart_worker(self, index: int, port: int, returncode: int | None) -> None:
+        now = time.monotonic()
+        while self._restart_times and self._restart_times[0] <= now - self.restart_window:
+            self._restart_times.popleft()
+        if len(self._restart_times) >= self.max_restarts:
+            raise RuntimeError(f"higuma worker restart limit exceeded after exit {returncode}")
+        self._restart_times.append(now)
+        replacement = self._start_worker(port)
+        self._children[index] = replacement
+        _wait_for_port("127.0.0.1", port, self.startup_timeout, replacement)
 
-def _proxy_connection(client: socket.socket, target: tuple[str, int]) -> None:
+
+def _proxy_connection(
+    client: socket.socket,
+    target: tuple[str, int],
+    connection_slots: BoundedSemaphore | None = None,
+) -> None:
     try:
-        upstream = socket.create_connection(target, timeout=10)
-    except OSError:
+        try:
+            upstream = socket.create_connection(target, timeout=10)
+        except OSError:
+            return
+        try:
+            client.settimeout(None)
+            upstream.settimeout(None)
+            first = Thread(target=_copy_socket, args=(client, upstream), daemon=True)
+            second = Thread(target=_copy_socket, args=(upstream, client), daemon=True)
+            first.start()
+            second.start()
+            first.join()
+            second.join()
+        finally:
+            upstream.close()
+    finally:
         client.close()
-        return
-    client.settimeout(None)
-    upstream.settimeout(None)
-    first = Thread(target=_copy_socket, args=(client, upstream), daemon=True)
-    second = Thread(target=_copy_socket, args=(upstream, client), daemon=True)
-    first.start()
-    second.start()
-    first.join()
-    second.join()
-    client.close()
-    upstream.close()
+        if connection_slots is not None:
+            connection_slots.release()
 
 
 def _copy_socket(source: socket.socket, destination: socket.socket) -> None:
@@ -149,9 +191,16 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_for_port(host: str, port: int, timeout: float) -> None:
+def _wait_for_port(
+    host: str,
+    port: int,
+    timeout: float,
+    child: subprocess.Popen[Any] | None = None,
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if child is not None and child.poll() is not None:
+            raise RuntimeError(f"higuma worker exited during startup with {child.returncode}")
         try:
             with socket.create_connection((host, port), timeout=0.2):
                 return

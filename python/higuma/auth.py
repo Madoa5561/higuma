@@ -41,7 +41,7 @@ class _CurrentUserProxy(Generic[UserT]):
         return getattr(self._get(), name)
 
     def __bool__(self) -> bool:
-        return bool(self._get())
+        return bool(getattr(self._get(), "is_authenticated", False))
 
     def __repr__(self) -> str:
         return repr(self._get())
@@ -101,9 +101,12 @@ class AuthManager:
         user_id = getattr(user, "id", None)
         if user_id is None:
             raise TypeError("authenticated user must expose an id attribute")
+        request.session.clear()
         request.session[self.session_key] = str(user_id)
         request.session["_remember"] = bool(remember)
         request.session["_fresh"] = True
+        request.session["_csrf_token"] = secrets.token_urlsafe(32)
+        request.session.permanent = bool(remember)
 
     def confirm_login(self) -> None:
         if self.session_key not in request.session:
@@ -111,9 +114,8 @@ class AuthManager:
         request.session["_fresh"] = True
 
     def logout_user(self) -> None:
-        request.session.pop(self.session_key, None)
-        request.session.pop("_remember", None)
-        request.session.pop("_fresh", None)
+        request.session.clear()
+        request.session.permanent = False
 
     def login_required(self, func: Callable[..., ResponseValue]):
         return login_required(func)
@@ -138,7 +140,7 @@ def login_required(func: Callable[..., ResponseValue]):
             )
         return func(*args, **kwargs)
 
-    return decorated
+    return _mark_auth_check(decorated, ("login",))
 
 
 def fresh_login_required(func: Callable[..., ResponseValue]):
@@ -149,7 +151,7 @@ def fresh_login_required(func: Callable[..., ResponseValue]):
             raise Unauthorized(detail="fresh authentication required")
         return func(*args, **kwargs)
 
-    return decorated
+    return _mark_auth_check(decorated, ("fresh",))
 
 
 def roles_required(*roles: str, match_all: bool = True):
@@ -168,7 +170,7 @@ def _claims_required(attribute: str, required: tuple[str, ...], *, match_all: bo
         @wraps(func)
         @login_required
         def decorated(*args: Any, **kwargs: Any) -> ResponseValue:
-            claims = {str(value) for value in getattr(current_user, attribute, ())}
+            claims = {str(value) for value in (getattr(current_user, attribute, None) or ())}
             allowed = all(value in claims for value in required)
             if not match_all:
                 allowed = any(value in claims for value in required)
@@ -176,7 +178,10 @@ def _claims_required(attribute: str, required: tuple[str, ...], *, match_all: bo
                 raise Forbidden(detail=f"required {attribute} are missing")
             return func(*args, **kwargs)
 
-        return decorated
+        return _mark_auth_check(
+            decorated,
+            ("claims", attribute, tuple(required), bool(match_all)),
+        )
 
     return decorator
 
@@ -222,6 +227,7 @@ class OAuth2Client:
             "response_type": "code",
             "scope": " ".join(self.scopes),
             "state": state,
+            "nonce": nonce,
             **self.extra_authorize_params,
             **params,
         }
@@ -324,9 +330,11 @@ class OAuth2Client:
         )
         try:
             with urlopen(request_object, timeout=10) as response:  # nosec B310
-                payload = response.read()
+                payload = response.read(1024 * 1024 + 1)
         except HTTPError as exc:
             raise RuntimeError(f"OAuth provider returned HTTP {exc.code}") from exc
+        if len(payload) > 1024 * 1024:
+            raise RuntimeError("OAuth provider response exceeded 1 MiB")
         value = json.loads(payload)
         if not isinstance(value, dict):
             raise TypeError("OAuth provider returned a non-object response")
@@ -351,3 +359,32 @@ def _active_session() -> MutableMapping[str, Any] | None:
 
 def _urlsafe_b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _mark_auth_check(func: Any, check: tuple[Any, ...]) -> Any:
+    checks = list(getattr(func, "__higuma_auth_checks__", ()))
+    checks.append(check)
+    func.__higuma_auth_checks__ = tuple(checks)
+    return func
+
+
+def _run_auth_checks(func: Any) -> None:
+    for check in getattr(func, "__higuma_auth_checks__", ()):
+        kind = check[0]
+        if kind == "login":
+            if not current_user or not getattr(current_user, "is_authenticated", True):
+                raise Unauthorized(
+                    detail="authentication required",
+                    headers={"www-authenticate": "Session"},
+                )
+        elif kind == "fresh":
+            if not current_user or not request.session.get("_fresh"):
+                raise Unauthorized(detail="fresh authentication required")
+        elif kind == "claims":
+            _, attribute, required, match_all = check
+            claims = {str(value) for value in (getattr(current_user, attribute, None) or ())}
+            allowed = all(value in claims for value in required)
+            if not match_all:
+                allowed = any(value in claims for value in required)
+            if not allowed:
+                raise Forbidden(detail=f"required {attribute} are missing")

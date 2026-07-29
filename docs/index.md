@@ -23,19 +23,21 @@ def index():
 app.run()
 ```
 
-## 0.2.0の主要機能
+## 0.3.0の主要機能
 
 - axum / Tokioを使用したRust HTTPコア
 - Flaskライクなrouting、Blueprint、middleware、hooks
 - MiniJinja SSRとコンパイル済みtemplate cache
-- WebSocket text / binary / JSON
+- 認証preflight、Origin検証、bounded queue付きWebSocket
 - multipart file upload
 - WSGI / ASGI application mount
 - OpenAPI 3.1とSwagger UIの自動生成
 - 外部依存なしのSQLite ORM
-- Windows対応multi-process supervisor
+- worker自動再起動付きmulti-process supervisor
 - session認証、password hashing、CSRF、rate limit
 - Google、LINE、Discordを含むOAuth 2.0 client
+- streaming file responseとgzip
+- trusted proxy header、厳格なresponse/session安全検証
 
 ## 次に読む
 

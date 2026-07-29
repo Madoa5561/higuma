@@ -1,10 +1,11 @@
 use std::{
     borrow::Cow,
+    cmp::Reverse,
     collections::{HashMap, HashSet},
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{mpsc, Arc, Mutex, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use axum::{
@@ -31,6 +32,8 @@ use pyo3::{
 };
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio::{net::TcpListener, runtime::Builder, signal};
+use tokio_util::io::ReaderStream;
+use tower_http::compression::CompressionLayer;
 use url::form_urlencoded;
 
 const DEFAULT_MAX_BODY_SIZE: usize = 8 * 1024 * 1024;
@@ -57,6 +60,8 @@ struct RouteEntry {
     segments: Vec<RouteSegment>,
     specificity: usize,
     handler: Arc<Py<PyAny>>,
+    preflight: Option<Arc<Py<PyAny>>>,
+    allowed_origins: Vec<String>,
 }
 
 #[derive(Default)]
@@ -69,7 +74,26 @@ struct LookupResult {
     params: HashMap<String, String>,
     pattern: Option<String>,
     allowed_methods: Vec<String>,
+    preflight: Option<Arc<Py<PyAny>>>,
+    allowed_origins: Vec<String>,
 }
+
+type WebSocketReceive = (
+    String,
+    Option<String>,
+    Option<Vec<u8>>,
+    Option<u16>,
+    Option<String>,
+);
+
+type RouteMatch = (
+    u8,
+    Arc<Py<PyAny>>,
+    HashMap<String, String>,
+    String,
+    Option<Arc<Py<PyAny>>>,
+    Vec<String>,
+);
 
 enum IncomingMessage {
     Text(String),
@@ -85,29 +109,20 @@ enum OutgoingMessage {
 
 #[pyclass(name = "WebSocketSession")]
 struct WebSocketSession {
-    incoming: Arc<Mutex<mpsc::Receiver<IncomingMessage>>>,
-    outgoing: tokio_mpsc::UnboundedSender<OutgoingMessage>,
+    incoming: Arc<Mutex<tokio_mpsc::Receiver<IncomingMessage>>>,
+    outgoing: tokio_mpsc::Sender<OutgoingMessage>,
 }
 
 #[pymethods]
 impl WebSocketSession {
-    fn receive(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<(
-        String,
-        Option<String>,
-        Option<Vec<u8>>,
-        Option<u16>,
-        Option<String>,
-    )> {
+    fn receive(&self, py: Python<'_>) -> PyResult<WebSocketReceive> {
         let incoming = self.incoming.clone();
         let message = py.detach(move || {
             incoming
                 .lock()
                 .map_err(|_| "failed to lock WebSocket receiver".to_string())?
-                .recv()
-                .map_err(|_| "WebSocket connection closed".to_string())
+                .blocking_recv()
+                .ok_or_else(|| "WebSocket connection closed".to_string())
         });
         match message {
             Ok(IncomingMessage::Text(value)) => {
@@ -123,22 +138,22 @@ impl WebSocketSession {
         }
     }
 
-    fn send_text(&self, data: String) -> PyResult<()> {
-        self.outgoing
-            .send(OutgoingMessage::Text(data))
+    fn send_text(&self, py: Python<'_>, data: String) -> PyResult<()> {
+        let outgoing = self.outgoing.clone();
+        py.detach(move || outgoing.blocking_send(OutgoingMessage::Text(data)))
             .map_err(|_| PyRuntimeError::new_err("WebSocket connection closed"))
     }
 
-    fn send_bytes(&self, data: Vec<u8>) -> PyResult<()> {
-        self.outgoing
-            .send(OutgoingMessage::Binary(data))
+    fn send_bytes(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        let outgoing = self.outgoing.clone();
+        py.detach(move || outgoing.blocking_send(OutgoingMessage::Binary(data)))
             .map_err(|_| PyRuntimeError::new_err("WebSocket connection closed"))
     }
 
     #[pyo3(signature = (code = 1000, reason = "".to_string()))]
-    fn close(&self, code: u16, reason: String) -> PyResult<()> {
-        self.outgoing
-            .send(OutgoingMessage::Close(code, reason))
+    fn close(&self, py: Python<'_>, code: u16, reason: String) -> PyResult<()> {
+        let outgoing = self.outgoing.clone();
+        py.detach(move || outgoing.blocking_send(OutgoingMessage::Close(code, reason)))
             .map_err(|_| PyRuntimeError::new_err("WebSocket connection closed"))
     }
 }
@@ -149,6 +164,8 @@ impl RouteTable {
         path: String,
         method: String,
         handler: Arc<Py<PyAny>>,
+        preflight: Option<Arc<Py<PyAny>>>,
+        allowed_origins: Vec<String>,
     ) -> Result<(), String> {
         let pattern = normalize_path(&path);
         let method_upper = method.to_ascii_uppercase();
@@ -170,9 +187,10 @@ impl RouteTable {
             segments,
             specificity,
             handler,
+            preflight,
+            allowed_origins,
         });
-        self.entries
-            .sort_by(|a, b| b.specificity.cmp(&a.specificity));
+        self.entries.sort_by_key(|entry| Reverse(entry.specificity));
         Ok(())
     }
 
@@ -180,7 +198,7 @@ impl RouteTable {
         let normalized = normalize_path(path);
         let requested_method = method.to_ascii_uppercase();
         let mut allowed = HashSet::new();
-        let mut match_result: Option<(u8, Arc<Py<PyAny>>, HashMap<String, String>, String)> = None;
+        let mut match_result: Option<RouteMatch> = None;
 
         for entry in &self.entries {
             let Some(params) = match_segments(&entry.segments, &normalized) else {
@@ -212,6 +230,8 @@ impl RouteTable {
                     entry.handler.clone(),
                     params,
                     entry.pattern.clone(),
+                    entry.preflight.clone(),
+                    entry.allowed_origins.clone(),
                 ));
             }
         }
@@ -222,12 +242,14 @@ impl RouteTable {
         let mut allowed_methods: Vec<_> = allowed.into_iter().collect();
         allowed_methods.sort();
 
-        if let Some((_, handler, params, pattern)) = match_result {
+        if let Some((_, handler, params, pattern, preflight, allowed_origins)) = match_result {
             LookupResult {
                 handler: Some(handler),
                 params,
                 pattern: Some(pattern),
                 allowed_methods,
+                preflight,
+                allowed_origins,
             }
         } else {
             LookupResult {
@@ -235,6 +257,8 @@ impl RouteTable {
                 params: HashMap::new(),
                 pattern: None,
                 allowed_methods,
+                preflight: None,
+                allowed_origins: Vec::new(),
             }
         }
     }
@@ -280,11 +304,23 @@ impl HigumaCore {
         }
     }
 
-    fn add_websocket_route(&self, path: String, handler: Py<PyAny>) -> PyResult<()> {
+    fn add_websocket_route(
+        &self,
+        path: String,
+        handler: Py<PyAny>,
+        preflight: Py<PyAny>,
+        allowed_origins: Vec<String>,
+    ) -> PyResult<()> {
         self.websocket_routes
             .write()
             .map_err(|_| PyRuntimeError::new_err("failed to lock WebSocket route table"))?
-            .add_route(path, "WEBSOCKET".to_string(), Arc::new(handler))
+            .add_route(
+                path,
+                "WEBSOCKET".to_string(),
+                Arc::new(handler),
+                Some(Arc::new(preflight)),
+                allowed_origins,
+            )
             .map_err(PyValueError::new_err)
     }
 
@@ -301,7 +337,7 @@ impl HigumaCore {
 
         for method in methods {
             routes
-                .add_route(path.clone(), method, handler.clone())
+                .add_route(path.clone(), method, handler.clone(), None, Vec::new())
                 .map_err(PyValueError::new_err)?;
         }
         Ok(())
@@ -360,7 +396,10 @@ impl HigumaCore {
 
         py.detach(move || {
             runtime.block_on(async move {
-                let app = Router::new().fallback(any(dispatch)).with_state(state);
+                let app = Router::new()
+                    .fallback(any(dispatch))
+                    .with_state(state)
+                    .layer(CompressionLayer::new());
                 let listener = TcpListener::bind(addr)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(format!("failed to bind {addr}: {e}")))?;
@@ -383,11 +422,13 @@ async fn shutdown_signal() {
     let _ = signal::ctrl_c().await;
 }
 
+#[derive(Clone)]
 struct WebSocketRequest {
     method: String,
     path: String,
     query: String,
     headers: HashMap<String, String>,
+    raw_headers: Vec<(Vec<u8>, Vec<u8>)>,
     params: HashMap<String, String>,
     pattern: Option<String>,
     client_addr: String,
@@ -395,24 +436,12 @@ struct WebSocketRequest {
 
 async fn handle_websocket(socket: WebSocket, callback: Arc<Py<PyAny>>, request: WebSocketRequest) {
     let (mut socket_sender, mut socket_receiver) = socket.split();
-    let (incoming_tx, incoming_rx) = mpsc::channel();
-    let (outgoing_tx, mut outgoing_rx) = tokio_mpsc::unbounded_channel();
+    let (incoming_tx, incoming_rx) = tokio_mpsc::channel(64);
+    let (outgoing_tx, mut outgoing_rx) = tokio_mpsc::channel(64);
 
     tokio::task::spawn_blocking(move || {
         Python::attach(|py| -> PyResult<()> {
-            let raw = PyDict::new(py);
-            raw.set_item("method", request.method)?;
-            raw.set_item("path", request.path)?;
-            raw.set_item("query_string", &request.query)?;
-            raw.set_item("query", query_to_dict(py, &request.query)?)?;
-            raw.set_item("headers", request.headers)?;
-            raw.set_item("body", PyBytes::new(py, &[]))?;
-            raw.set_item("text", "")?;
-            raw.set_item("path_params", params_to_dict(py, &request.params)?)?;
-            raw.set_item("route_pattern", request.pattern)?;
-            raw.set_item("route_error_status", 404)?;
-            raw.set_item("allowed_methods", vec!["GET"])?;
-            raw.set_item("client_addr", request.client_addr)?;
+            let raw = websocket_request_to_dict(py, &request)?;
             let session = Py::new(
                 py,
                 WebSocketSession {
@@ -431,12 +460,12 @@ async fn handle_websocket(socket: WebSocket, callback: Arc<Py<PyAny>>, request: 
             incoming = socket_receiver.next() => {
                 match incoming {
                     Some(Ok(Message::Text(value))) => {
-                        if incoming_tx.send(IncomingMessage::Text(value)).is_err() {
+                        if incoming_tx.send(IncomingMessage::Text(value)).await.is_err() {
                             break;
                         }
                     }
                     Some(Ok(Message::Binary(value))) => {
-                        if incoming_tx.send(IncomingMessage::Binary(value)).is_err() {
+                        if incoming_tx.send(IncomingMessage::Binary(value)).await.is_err() {
                             break;
                         }
                     }
@@ -444,7 +473,7 @@ async fn handle_websocket(socket: WebSocket, callback: Arc<Py<PyAny>>, request: 
                         let (code, reason) = frame
                             .map(|value| (value.code, value.reason.into_owned()))
                             .unwrap_or((1000, String::new()));
-                        let _ = incoming_tx.send(IncomingMessage::Close(code, reason));
+                        let _ = incoming_tx.send(IncomingMessage::Close(code, reason)).await;
                         break;
                     }
                     Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
@@ -452,7 +481,7 @@ async fn handle_websocket(socket: WebSocket, callback: Arc<Py<PyAny>>, request: 
                         let _ = incoming_tx.send(IncomingMessage::Close(
                             1006,
                             "connection closed".to_string(),
-                        ));
+                        )).await;
                         break;
                     }
                 }
@@ -513,6 +542,13 @@ async fn dispatch(
                 false,
             );
         };
+        if !websocket_origin_allowed(&headers, &lookup.allowed_origins) {
+            return finalize_response(
+                ResponsePayload::text("WebSocket origin is not allowed", 403),
+                &state,
+                false,
+            );
+        }
         let request = WebSocketRequest {
             method,
             path,
@@ -526,10 +562,43 @@ async fn dispatch(
                     )
                 })
                 .collect(),
+            raw_headers: headers
+                .iter()
+                .map(|(name, value)| (name.as_str().as_bytes().to_vec(), value.as_bytes().to_vec()))
+                .collect(),
             params: lookup.params,
             pattern: lookup.pattern,
             client_addr: peer_addr.ip().to_string(),
         };
+        if let Some(preflight) = lookup.preflight {
+            let preflight_request = request.clone();
+            let template_env = state.template_env.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                Python::attach(|py| -> PyResult<ResponsePayload> {
+                    let raw = websocket_request_to_dict(py, &preflight_request)?;
+                    let py_obj = preflight.call1(py, (raw,))?;
+                    py_to_response(py, py_obj.bind(py), &template_env)
+                })
+            })
+            .await;
+            let payload = match result {
+                Ok(Ok(payload)) => payload,
+                Ok(Err(error)) => {
+                    eprintln!("higuma WebSocket preflight error: {error}");
+                    ResponsePayload::text("Internal Server Error", 500)
+                }
+                Err(error) => {
+                    eprintln!("higuma WebSocket preflight task failed: {error}");
+                    ResponsePayload::text("Internal Server Error", 500)
+                }
+            };
+            if payload.status >= 400 {
+                return finalize_response(payload, &state, false);
+            }
+        }
+        let upgrade = upgrade
+            .max_message_size(state.max_body_size)
+            .max_frame_size(state.max_body_size);
         return upgrade
             .on_upgrade(move |socket| handle_websocket(socket, callback, request))
             .into_response();
@@ -562,14 +631,6 @@ async fn dispatch(
             )
         }
     };
-
-    if method == "OPTIONS" && !lookup.allowed_methods.is_empty() && lookup.handler.is_none() {
-        let mut payload = ResponsePayload::new(Vec::new(), 204, Vec::new(), None);
-        payload
-            .headers
-            .push(("allow".to_string(), lookup.allowed_methods.join(", ")));
-        return finalize_response(payload, &state, false);
-    }
 
     let route_status = if lookup.allowed_methods.is_empty() {
         StatusCode::NOT_FOUND
@@ -609,34 +670,48 @@ async fn dispatch(
         }
     };
 
-    let py_result = Python::attach(|py| -> PyResult<ResponsePayload> {
-        let request = PyDict::new(py);
-        request.set_item("method", &method)?;
-        request.set_item("path", &path)?;
-        request.set_item("query_string", &query)?;
-        request.set_item("query", query_to_dict(py, &query)?)?;
-        request.set_item("headers", headers_to_dict(py, &headers)?)?;
-        request.set_item("body", PyBytes::new(py, &body_bytes))?;
-        request.set_item("text", String::from_utf8_lossy(&body_bytes).to_string())?;
-        request.set_item("path_params", params_to_dict(py, &lookup.params)?)?;
-        request.set_item("route_pattern", lookup.pattern)?;
-        request.set_item("route_error_status", route_status.as_u16())?;
-        request.set_item("allowed_methods", lookup.allowed_methods.clone())?;
-        request.set_item("client_addr", peer_addr.ip().to_string())?;
+    let template_env = state.template_env.clone();
+    let strip_body = method == "HEAD";
+    let client_addr = peer_addr.ip().to_string();
+    let params = lookup.params;
+    let pattern = lookup.pattern;
+    let allowed_methods = lookup.allowed_methods;
+    let py_result = tokio::task::spawn_blocking(move || {
+        Python::attach(|py| -> PyResult<ResponsePayload> {
+            let request = PyDict::new(py);
+            request.set_item("method", &method)?;
+            request.set_item("path", &path)?;
+            request.set_item("query_string", &query)?;
+            request.set_item("query", query_to_dict(py, &query)?)?;
+            request.set_item("headers", headers_to_dict(py, &headers)?)?;
+            request.set_item("raw_headers", headers_to_list(py, &headers)?)?;
+            request.set_item("body", PyBytes::new(py, &body_bytes))?;
+            request.set_item("text", String::from_utf8_lossy(&body_bytes).to_string())?;
+            request.set_item("path_params", params_to_dict(py, &params)?)?;
+            request.set_item("route_pattern", pattern)?;
+            request.set_item("route_error_status", route_status.as_u16())?;
+            request.set_item("allowed_methods", allowed_methods)?;
+            request.set_item("client_addr", client_addr)?;
 
-        let py_obj = callback.call1(py, (request,))?;
-        py_to_response(py, py_obj.bind(py), &state.template_env)
-    });
+            let py_obj = callback.call1(py, (request,))?;
+            py_to_response(py, py_obj.bind(py), &template_env)
+        })
+    })
+    .await;
 
     let payload = match py_result {
-        Ok(payload) => payload,
-        Err(err) => ResponsePayload::text(
-            format!("handler error: {err}"),
-            StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-        ),
+        Ok(Ok(payload)) => payload,
+        Ok(Err(error)) => {
+            eprintln!("higuma handler error: {error}");
+            ResponsePayload::text("Internal Server Error", 500)
+        }
+        Err(error) => {
+            eprintln!("higuma handler task failed: {error}");
+            ResponsePayload::text("Internal Server Error", 500)
+        }
     };
 
-    finalize_response(payload, &state, method == "HEAD")
+    finalize_response(payload, &state, strip_body)
 }
 
 fn finalize_response(
@@ -644,15 +719,20 @@ fn finalize_response(
     state: &SharedState,
     strip_body: bool,
 ) -> Response {
-    if strip_body {
-        let length = payload.body.len();
-        payload
-            .headers
-            .push(("content-length".to_string(), length.to_string()));
-        payload.body.clear();
-    }
+    let head_length = if strip_body {
+        let length = Some(payload.body.length());
+        payload.body = PayloadBody::Bytes(Vec::new());
+        length
+    } else {
+        None
+    };
 
     let mut response = payload.into_response();
+    if let Some(length) = head_length {
+        if let Ok(value) = HeaderValue::from_str(&length.to_string()) {
+            response.headers_mut().insert(CONTENT_LENGTH, value);
+        }
+    }
     if !state.server_header.is_empty() && !response.headers().contains_key(SERVER) {
         if let Ok(value) = HeaderValue::from_str(&state.server_header) {
             response.headers_mut().insert(SERVER, value);
@@ -669,6 +749,92 @@ fn query_to_dict<'py>(py: Python<'py>, query: &str) -> PyResult<Bound<'py, PyDic
     Ok(dict)
 }
 
+fn websocket_request_to_dict<'py>(
+    py: Python<'py>,
+    request: &WebSocketRequest,
+) -> PyResult<Bound<'py, PyDict>> {
+    let raw = PyDict::new(py);
+    raw.set_item("method", &request.method)?;
+    raw.set_item("path", &request.path)?;
+    raw.set_item("query_string", &request.query)?;
+    raw.set_item("query", query_to_dict(py, &request.query)?)?;
+    raw.set_item("headers", &request.headers)?;
+    raw.set_item(
+        "raw_headers",
+        PyList::new(
+            py,
+            request.raw_headers.iter().map(|(name, value)| {
+                (
+                    PyBytes::new(py, name.as_slice()),
+                    PyBytes::new(py, value.as_slice()),
+                )
+            }),
+        )?,
+    )?;
+    raw.set_item("body", PyBytes::new(py, &[]))?;
+    raw.set_item("text", "")?;
+    raw.set_item("path_params", params_to_dict(py, &request.params)?)?;
+    raw.set_item("route_pattern", &request.pattern)?;
+    raw.set_item("route_error_status", 404)?;
+    raw.set_item("allowed_methods", vec!["GET"])?;
+    raw.set_item("client_addr", &request.client_addr)?;
+    Ok(raw)
+}
+
+fn websocket_origin_allowed(
+    headers: &axum::http::HeaderMap<HeaderValue>,
+    allowed_origins: &[String],
+) -> bool {
+    let Some(origin) = headers.get("origin") else {
+        return true;
+    };
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    if allowed_origins.iter().any(|value| value == "*") {
+        return true;
+    }
+    if !allowed_origins.is_empty() {
+        return allowed_origins
+            .iter()
+            .any(|value| value.trim_end_matches('/') == origin.trim_end_matches('/'));
+    }
+
+    let Some(host_header) = headers.get("host").and_then(|value| value.to_str().ok()) else {
+        return false;
+    };
+    let Ok(origin_url) = url::Url::parse(origin) else {
+        return false;
+    };
+    let Some(origin_host) = origin_url.host_str() else {
+        return false;
+    };
+    let (host, port) = split_host_port(host_header);
+    origin_host.eq_ignore_ascii_case(&host)
+        && match port {
+            Some(expected) => origin_url.port_or_known_default() == Some(expected),
+            None => origin_url.port().is_none(),
+        }
+}
+
+fn split_host_port(value: &str) -> (String, Option<u16>) {
+    let value = value.trim();
+    if let Some(rest) = value.strip_prefix('[') {
+        if let Some((host, suffix)) = rest.split_once(']') {
+            let port = suffix
+                .strip_prefix(':')
+                .and_then(|item| item.parse::<u16>().ok());
+            return (host.to_string(), port);
+        }
+    }
+    if value.matches(':').count() == 1 {
+        if let Some((host, port)) = value.rsplit_once(':') {
+            return (host.to_string(), port.parse::<u16>().ok());
+        }
+    }
+    (value.to_string(), None)
+}
+
 fn headers_to_dict<'py>(
     py: Python<'py>,
     headers: &axum::http::HeaderMap<HeaderValue>,
@@ -678,6 +844,21 @@ fn headers_to_dict<'py>(
         dict.set_item(name.as_str(), value.to_str().unwrap_or_default())?;
     }
     Ok(dict)
+}
+
+fn headers_to_list<'py>(
+    py: Python<'py>,
+    headers: &axum::http::HeaderMap<HeaderValue>,
+) -> PyResult<Bound<'py, PyList>> {
+    PyList::new(
+        py,
+        headers.iter().map(|(name, value)| {
+            (
+                PyBytes::new(py, name.as_str().as_bytes()),
+                PyBytes::new(py, value.as_bytes()),
+            )
+        }),
+    )
 }
 
 fn params_to_dict<'py>(
@@ -747,12 +928,17 @@ fn file_response_from_py(obj: &Bound<'_, PyAny>) -> PyResult<ResponsePayload> {
     let status: u16 = obj.getattr("status_code")?.extract()?;
     let headers = extract_response_headers(obj)?;
     let media_type: Option<String> = obj.getattr("media_type")?.extract()?;
-    let body = fs::read(&path).map_err(|e| {
-        PyRuntimeError::new_err(format!("failed to read response file {path}: {e}"))
+    let file = fs::File::open(&path).map_err(|e| {
+        PyRuntimeError::new_err(format!("failed to open response file {path}: {e}"))
     })?;
+    let length = file
+        .metadata()
+        .map_err(|e| PyRuntimeError::new_err(format!("failed to stat response file {path}: {e}")))?
+        .len();
 
-    Ok(ResponsePayload::new(
-        body,
+    Ok(ResponsePayload::file(
+        file,
+        length,
         status,
         headers,
         media_type.or_else(|| Some("application/octet-stream".to_string())),
@@ -948,7 +1134,7 @@ fn match_segments(pattern: &[RouteSegment], path: &str) -> Option<HashMap<String
         match segment {
             RouteSegment::Static(expected) => {
                 let actual = path_parts.get(path_index)?;
-                if decode_component(actual) != *expected {
+                if decode_component(actual)? != *expected {
                     return None;
                 }
                 path_index += 1;
@@ -961,14 +1147,23 @@ fn match_segments(pattern: &[RouteSegment], path: &str) -> Option<HashMap<String
                     let value = path_parts[path_index..]
                         .iter()
                         .map(|part| decode_component(part))
-                        .collect::<Vec<_>>()
+                        .collect::<Option<Vec<_>>>()?
                         .join("/");
+                    if value.chars().any(char::is_control) {
+                        return None;
+                    }
                     params.insert(name.clone(), value);
                     path_index = path_parts.len();
                     continue;
                 }
 
-                let value = decode_component(path_parts.get(path_index)?);
+                let value = decode_component(path_parts.get(path_index)?)?;
+                if value.contains('/')
+                    || value.contains('\\')
+                    || value.chars().any(char::is_control)
+                {
+                    return None;
+                }
                 let valid = match converter {
                     Converter::String => !value.is_empty(),
                     Converter::Int => value.parse::<i64>().is_ok(),
@@ -1004,15 +1199,15 @@ fn split_path(path: &str) -> Vec<&str> {
     if path == "/" {
         Vec::new()
     } else {
-        path.trim_matches('/')
-            .split('/')
-            .filter(|part| !part.is_empty())
-            .collect()
+        path.strip_prefix('/').unwrap_or(path).split('/').collect()
     }
 }
 
-fn decode_component(value: &str) -> String {
-    percent_decode_str(value).decode_utf8_lossy().into_owned()
+fn decode_component(value: &str) -> Option<String> {
+    percent_decode_str(value)
+        .decode_utf8()
+        .ok()
+        .map(Cow::into_owned)
 }
 
 fn normalize_path(raw: &str) -> String {
@@ -1032,8 +1227,22 @@ fn normalize_path(raw: &str) -> String {
     path
 }
 
+enum PayloadBody {
+    Bytes(Vec<u8>),
+    File { file: fs::File, length: u64 },
+}
+
+impl PayloadBody {
+    fn length(&self) -> u64 {
+        match self {
+            Self::Bytes(value) => value.len() as u64,
+            Self::File { length, .. } => *length,
+        }
+    }
+}
+
 struct ResponsePayload {
-    body: Vec<u8>,
+    body: PayloadBody,
     status: u16,
     headers: Vec<(String, String)>,
     content_type: Option<String>,
@@ -1047,7 +1256,22 @@ impl ResponsePayload {
         content_type: Option<String>,
     ) -> Self {
         Self {
-            body,
+            body: PayloadBody::Bytes(body),
+            status,
+            headers,
+            content_type,
+        }
+    }
+
+    fn file(
+        file: fs::File,
+        length: u64,
+        status: u16,
+        headers: Vec<(String, String)>,
+        content_type: Option<String>,
+    ) -> Self {
+        Self {
+            body: PayloadBody::File { file, length },
             status,
             headers,
             content_type,
@@ -1065,9 +1289,27 @@ impl ResponsePayload {
 }
 
 impl IntoResponse for ResponsePayload {
-    fn into_response(self) -> Response {
-        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::OK);
-        let mut response = (status, self.body).into_response();
+    fn into_response(mut self) -> Response {
+        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        if status == StatusCode::NO_CONTENT || status == StatusCode::NOT_MODIFIED {
+            self.body = PayloadBody::Bytes(Vec::new());
+        }
+        let body_length = self.body.length();
+        let body_is_empty = body_length == 0;
+        let body = match self.body {
+            PayloadBody::Bytes(value) => Body::from(value),
+            PayloadBody::File { file, .. } => {
+                Body::from_stream(ReaderStream::new(tokio::fs::File::from_std(file)))
+            }
+        };
+        let mut response = Response::new(body);
+        *response.status_mut() = status;
+        if !body_is_empty && status != StatusCode::NO_CONTENT && status != StatusCode::NOT_MODIFIED
+        {
+            if let Ok(value) = HeaderValue::from_str(&body_length.to_string()) {
+                response.headers_mut().insert(CONTENT_LENGTH, value);
+            }
+        }
 
         if let Some(content_type) = self.content_type {
             if let Ok(value) = HeaderValue::from_str(&content_type) {
@@ -1080,11 +1322,16 @@ impl IntoResponse for ResponsePayload {
                 HeaderName::from_bytes(name.as_bytes()),
                 HeaderValue::from_str(&value),
             ) {
-                if header_name == CONTENT_TYPE || header_name == CONTENT_LENGTH {
+                if header_name == CONTENT_LENGTH {
+                    continue;
+                }
+                if header_name == CONTENT_TYPE {
                     response.headers_mut().insert(header_name, header_value);
                 } else {
                     response.headers_mut().append(header_name, header_value);
                 }
+            } else {
+                eprintln!("higuma dropped invalid response header: {name:?}");
             }
         }
 
@@ -1138,5 +1385,28 @@ mod tests {
         assert_eq!(normalize_path(""), "/");
         assert_eq!(normalize_path("users/"), "/users");
         assert_eq!(normalize_path("/users///"), "/users");
+    }
+
+    #[test]
+    fn repeated_and_encoded_slashes_do_not_match_string_parameters() {
+        let (segments, _) = parse_route_pattern("/values/<string:value>").unwrap();
+        assert!(match_segments(&segments, "/values//12").is_none());
+        assert!(match_segments(&segments, "/values/a%2Fb").is_none());
+        assert!(match_segments(&segments, "/values/%FF").is_none());
+    }
+
+    #[test]
+    fn websocket_origin_defaults_to_same_host() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("host", HeaderValue::from_static("example.com"));
+        headers.insert("origin", HeaderValue::from_static("https://example.com"));
+        assert!(websocket_origin_allowed(&headers, &[]));
+
+        headers.insert("origin", HeaderValue::from_static("https://evil.example"));
+        assert!(!websocket_origin_allowed(&headers, &[]));
+        assert!(websocket_origin_allowed(
+            &headers,
+            &["https://evil.example".to_string()]
+        ));
     }
 }

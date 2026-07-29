@@ -23,19 +23,21 @@ def index():
 app.run()
 ```
 
-## Highlights in 0.2.0
+## Highlights in 0.3.0
 
 - Rust HTTP core powered by axum and Tokio
 - Flask-like routing, blueprints, middleware, and hooks
 - MiniJinja SSR with a compiled template cache
-- Text, binary, and JSON WebSockets
+- WebSockets with auth preflight, origin checks, and bounded queues
 - Multipart file uploads
 - WSGI and ASGI application mounting
 - Automatic OpenAPI 3.1 and Swagger UI
 - Dependency-free built-in SQLite ORM
-- Cross-platform multi-process supervisor
+- Multi-process supervisor with bounded worker restarts
 - Session authentication, password hashing, CSRF, and rate limiting
 - OAuth 2.0 clients for Google, LINE, Discord, and custom providers
+- Streaming file responses and automatic gzip
+- Trusted proxy handling and strict response/session validation
 
 ## Continue
 

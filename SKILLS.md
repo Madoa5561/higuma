@@ -55,9 +55,10 @@ python app.py
 | Password storage | `PasswordHasher`, never a plain hash |
 | Signed expiring data | `TokenSigner` |
 | CSRF defense | `SessionMiddleware` then `CSRFProtection` |
-| Abuse prevention | `RateLimitMiddleware` |
+| Abuse prevention | `RateLimitMiddleware(max_keys=10_000)` |
+| Trusted reverse proxy | `ProxyHeadersMiddleware` with exact peer CIDRs |
 | OAuth | `OAuth2Client.google`, `.line`, or `.discord` |
-| Multi-process | `higuma run module:app --processes 4` |
+| Multi-process | `higuma run module:app --processes 4 --max-connections 1024` |
 
 ## Request and response rules
 
@@ -70,6 +71,8 @@ python app.py
   `<path:filename>`, and `<string:name>`.
 - Do not manually serialize JSON unless a custom encoding is required.
 - Do not access private `_core` APIs from application code.
+- Use `request.raw_headers` only when duplicate header byte pairs are required
+  for ASGI/WSGI interoperability.
 
 ## WebSocket pattern
 
@@ -79,7 +82,7 @@ from higuma import Higuma, WebSocketDisconnect
 app = Higuma(__name__)
 
 
-@app.websocket("/ws")
+@app.websocket("/ws", allowed_origins=("https://example.com",))
 def socket(ws):
     try:
         while True:
@@ -90,6 +93,10 @@ def socket(ws):
 
 Available methods are `send_text`, `send_bytes`, `send_json`, `receive_text`,
 `receive_bytes`, `receive_json`, and `close`.
+
+WebSocket origins default to same-origin. Keep explicit production origins,
+and do not use `"*"` for cookie-authenticated sockets. Authentication
+decorators are evaluated before the protocol upgrade.
 
 ## Database pattern
 
@@ -116,11 +123,15 @@ with db.session() as session:
 - Keep one session within one `with db.session()` block.
 - A successful block commits; an exception rolls back.
 - Use `filter_by()` so values are always passed through parameter binding.
+- Use `offset()` and `limit()` for pagination.
+- `delete()` requires a filter. Use `delete_all()` only for an intentional
+  full-table delete.
 
 ## Authentication and security rules
 
 - Load `HIGUMA_SECRET_KEY`, OAuth client IDs, and OAuth client secrets from the
   environment or a secret manager.
+- Require at least 32 bytes of entropy-bearing session/token secret material.
 - Never commit credentials, database passwords, tokens, or production cookies.
 - Store passwords with `PasswordHasher.hash()` and verify them with
   `PasswordHasher.verify()`.
@@ -128,7 +139,8 @@ with db.session() as session:
 - Add `CSRFProtection` to browser applications that use cookie sessions.
 - Configure exact CORS origins when credentials are allowed.
 - Configure `TrustedHostMiddleware` in production.
-- Do not trust `X-Forwarded-For` unless a trusted reverse proxy overwrites it.
+- Do not trust `X-Forwarded-For` directly. Configure `ProxyHeadersMiddleware`
+  with the direct proxy IP/CIDR after the proxy overwrites forwarded headers.
 - Validate OAuth `state` before exchanging an authorization code.
 - Use HTTPS and secure cookies in production.
 
@@ -198,3 +210,5 @@ supervisor, streaming, and proxy changes.
 - Update tests, Japanese docs, English docs, examples, changelog, and version
   together for a public feature.
 - Treat response `Content-Type` as part of API correctness.
+- Never set `Content-Length` manually; the Rust core derives it.
+- Use `secure_filename()` for any user-visible upload name.

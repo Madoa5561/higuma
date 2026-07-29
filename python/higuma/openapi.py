@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import inspect
+import json
 import types
 from dataclasses import MISSING, fields, is_dataclass
-from typing import Any, get_args, get_origin, get_type_hints
+from enum import Enum
+from html import escape
+from typing import Any, Literal, get_args, get_origin, get_type_hints
 
 
 def generate_openapi(app: Any) -> dict[str, Any]:
     paths: dict[str, dict[str, Any]] = {}
     schemas: dict[str, Any] = {}
+    operation_ids: set[str] = set()
     for route in app._routes:
         if not route.include_in_schema:
             continue
@@ -18,6 +22,17 @@ def generate_openapi(app: Any) -> dict[str, Any]:
             if method in {"HEAD", "OPTIONS"}:
                 continue
             operation = _operation_for(route, method, schemas)
+            operation_id = str(operation["operationId"])
+            if operation_id in operation_ids:
+                operation_id = f"{operation_id}_{method.lower()}"
+                suffix = 2
+                candidate = operation_id
+                while candidate in operation_ids:
+                    candidate = f"{operation_id}_{suffix}"
+                    suffix += 1
+                operation["operationId"] = candidate
+                operation_id = candidate
+            operation_ids.add(operation_id)
             path_item[method.lower()] = operation
 
     document: dict[str, Any] = {
@@ -38,20 +53,22 @@ def generate_openapi(app: Any) -> dict[str, Any]:
 
 
 def swagger_ui_html(openapi_url: str, title: str) -> str:
+    safe_title = escape(title)
+    safe_url = json.dumps(openapi_url).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+  <title>{safe_title}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css">
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
   <script>
     SwaggerUIBundle({{
-      url: {openapi_url!r},
+      url: {safe_url},
       dom_id: "#swagger-ui",
       deepLinking: true,
       displayRequestDuration: true
@@ -83,6 +100,12 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
     if origin in {types.UnionType, __import__("typing").Union}:
         options = [schema_for(item, schemas) for item in args]
         return {"anyOf": options}
+    if origin is Literal:
+        values = list(args)
+        schema: dict[str, Any] = {"enum": values}
+        if values and all(isinstance(value, str) for value in values):
+            schema["type"] = "string"
+        return schema
 
     primitive = {
         str: {"type": "string"},
@@ -93,13 +116,29 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
     }.get(annotation)
     if primitive is not None:
         return primitive
+    if inspect.isclass(annotation) and issubclass(annotation, Enum):
+        values = [member.value for member in annotation]
+        schema_type = (
+            "integer" if values and all(isinstance(value, int) for value in values) else "string"
+        )
+        return {"type": schema_type, "enum": values}
 
     if is_dataclass(annotation):
         name = annotation.__name__
+        if name in schemas:
+            return {"$ref": f"#/components/schemas/{name}"}
+        schemas[name] = {}
+        try:
+            field_hints = get_type_hints(annotation)
+        except (NameError, TypeError):
+            field_hints = {}
         properties = {}
         required = []
         for item in fields(annotation):
-            properties[item.name] = schema_for(item.type, schemas)
+            properties[item.name] = schema_for(
+                field_hints.get(item.name, item.type),
+                schemas,
+            )
             if item.default is MISSING and item.default_factory is MISSING:
                 required.append(item.name)
         schemas[name] = {
@@ -111,6 +150,9 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
 
     if inspect.isclass(annotation) and hasattr(annotation, "__fields__"):
         name = annotation.__name__
+        if name in schemas:
+            return {"$ref": f"#/components/schemas/{name}"}
+        schemas[name] = {}
         properties = {
             field_name: _orm_field_schema(field)
             for field_name, field in annotation.__fields__.items()

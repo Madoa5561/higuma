@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
 import re
 import secrets
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from threading import Lock
 from typing import Any
@@ -38,6 +39,8 @@ class PasswordHasher:
     def hash(self, password: str) -> str:
         if not password:
             raise ValueError("password must not be empty")
+        if len(password.encode("utf-8")) > 1024:
+            raise ValueError("password must not exceed 1024 UTF-8 bytes")
         salt = secrets.token_bytes(self.salt_bytes)
         digest = hashlib.scrypt(
             password.encode("utf-8"),
@@ -60,7 +63,7 @@ class PasswordHasher:
         )
 
     def verify(self, password: str, encoded: str) -> bool:
-        if len(encoded) > 512:
+        if len(encoded) > 512 or len(password.encode("utf-8")) > 1024:
             return False
         try:
             marker, algorithm, n, r, p, salt, expected = encoded.split("$")
@@ -87,7 +90,7 @@ class PasswordHasher:
                 p=parallelism,
                 dklen=len(expected_bytes),
             )
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, binascii.Error):
             return False
         return hmac.compare_digest(actual, expected_bytes)
 
@@ -101,15 +104,13 @@ class PasswordHasher:
                 or int(p) != self.p
                 or len(_unb64(digest)) != self.key_bytes
             )
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, binascii.Error):
             return True
 
 
 class TokenSigner:
     def __init__(self, secret_key: str | bytes, *, salt: str = "higuma-token") -> None:
-        if not secret_key:
-            raise ValueError("secret_key must not be empty")
-        secret = secret_key.encode() if isinstance(secret_key, str) else secret_key
+        secret = _validate_secret_key(secret_key)
         self.key = hmac.new(secret, salt.encode(), hashlib.sha256).digest()
 
     def dumps(self, value: Any) -> str:
@@ -138,7 +139,7 @@ class TokenSigner:
             if max_age is not None and time.time() - issued_at > max_age:
                 raise ValueError("token has expired")
             return payload["value"]
-        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        except (KeyError, TypeError, ValueError, binascii.Error, json.JSONDecodeError) as exc:
             raise ValueError("invalid token") from exc
 
 
@@ -180,13 +181,15 @@ class RateLimitMiddleware:
         window: float = 60.0,
         *,
         key: Callable[[Request], str] | None = None,
+        max_keys: int = 10_000,
     ) -> None:
-        if limit <= 0 or window <= 0:
-            raise ValueError("limit and window must be positive")
+        if limit <= 0 or window <= 0 or max_keys <= 0:
+            raise ValueError("limit, window, and max_keys must be positive")
         self.limit = limit
         self.window = window
         self.key = key or self._default_key
-        self._requests: dict[str, deque[float]] = defaultdict(deque)
+        self.max_keys = max_keys
+        self._requests: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = Lock()
         self._last_cleanup = time.monotonic()
 
@@ -199,16 +202,20 @@ class RateLimitMiddleware:
         identity = self.key(current)
         with self._lock:
             if now - self._last_cleanup >= self.window:
-                self._requests = defaultdict(
-                    deque,
-                    {
-                        key: values
-                        for key, values in self._requests.items()
-                        if values and values[-1] > now - self.window
-                    },
+                self._requests = OrderedDict(
+                    (key, values)
+                    for key, values in self._requests.items()
+                    if values and values[-1] > now - self.window
                 )
                 self._last_cleanup = now
-            bucket = self._requests[identity]
+            bucket = self._requests.get(identity)
+            if bucket is None:
+                if len(self._requests) >= self.max_keys:
+                    self._requests.popitem(last=False)
+                bucket = deque()
+                self._requests[identity] = bucket
+            else:
+                self._requests.move_to_end(identity)
             while bucket and bucket[0] <= now - self.window:
                 bucket.popleft()
             if len(bucket) >= self.limit:
@@ -258,4 +265,15 @@ def _b64(value: bytes) -> str:
 
 
 def _unb64(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    return base64.b64decode(
+        value + "=" * (-len(value) % 4),
+        altchars=b"-_",
+        validate=True,
+    )
+
+
+def _validate_secret_key(secret_key: str | bytes) -> bytes:
+    secret = secret_key.encode("utf-8") if isinstance(secret_key, str) else bytes(secret_key)
+    if len(secret) < 32:
+        raise ValueError("secret_key must contain at least 32 bytes")
+    return secret

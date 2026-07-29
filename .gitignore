@@ -14,6 +14,8 @@ target/
 *.dylib
 *.so
 dist/
+dist-review/
+dist-review-x64/
 site/
 build/
 *.egg-info/

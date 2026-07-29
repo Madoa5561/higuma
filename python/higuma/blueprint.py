@@ -14,6 +14,14 @@ class _DeferredRoute:
     options: dict[str, Any]
 
 
+@dataclass
+class _DeferredWebSocket:
+    rule: str
+    endpoint: str
+    view_func: Callable[..., Any]
+    options: dict[str, Any]
+
+
 class Blueprint:
     def __init__(
         self,
@@ -28,6 +36,7 @@ class Blueprint:
         self.import_name = import_name
         self.url_prefix = url_prefix.rstrip("/")
         self._routes: list[_DeferredRoute] = []
+        self._websockets: list[_DeferredWebSocket] = []
 
     def route(
         self,
@@ -67,3 +76,23 @@ class Blueprint:
 
     def delete(self, rule: str, **options: Any):
         return self.route(rule, methods=("DELETE",), **options)
+
+    def websocket(
+        self,
+        rule: str,
+        *,
+        endpoint: str | None = None,
+        **options: Any,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
+            self._websockets.append(
+                _DeferredWebSocket(
+                    rule=rule,
+                    endpoint=endpoint or view_func.__name__,
+                    view_func=view_func,
+                    options=options,
+                )
+            )
+            return view_func
+
+        return decorator

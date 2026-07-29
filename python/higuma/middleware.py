@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from ipaddress import ip_address, ip_network
 
 from .exceptions import Forbidden
 from .request import Request
@@ -26,6 +27,8 @@ class CORSMiddleware:
         self.expose_headers = tuple(expose_headers)
         self.allow_credentials = allow_credentials
         self.max_age = max_age
+        if self.allow_credentials and "*" in self.allow_origins:
+            raise ValueError("credentialed CORS requires explicit origins")
 
     def __call__(self, request: Request, call_next: NextHandler) -> Response:
         response = make_response(call_next(request))
@@ -36,14 +39,31 @@ class CORSMiddleware:
 
         response.headers["access-control-allow-origin"] = allowed_origin
         if allowed_origin != "*":
-            response.headers.setdefault("vary", "Origin")
+            _add_vary(response, "Origin")
         if self.allow_credentials:
             response.headers["access-control-allow-credentials"] = "true"
         if self.expose_headers:
             response.headers["access-control-expose-headers"] = ", ".join(self.expose_headers)
         if request.method == "OPTIONS":
+            requested_method = str(request.headers.get("access-control-request-method", "")).upper()
+            if requested_method and requested_method not in self.allow_methods:
+                raise Forbidden(detail="CORS method is not allowed")
+            requested_headers = {
+                value.strip().lower()
+                for value in str(request.headers.get("access-control-request-headers", "")).split(
+                    ","
+                )
+                if value.strip()
+            }
+            allowed_headers = {value.lower() for value in self.allow_headers}
+            if "*" not in allowed_headers and not requested_headers <= allowed_headers:
+                raise Forbidden(detail="CORS headers are not allowed")
             response.headers["access-control-allow-methods"] = ", ".join(self.allow_methods)
-            response.headers["access-control-allow-headers"] = ", ".join(self.allow_headers)
+            response.headers["access-control-allow-headers"] = (
+                ", ".join(sorted(requested_headers))
+                if "*" in allowed_headers and requested_headers
+                else ", ".join(self.allow_headers)
+            )
             response.headers["access-control-max-age"] = str(self.max_age)
         return response
 
@@ -112,6 +132,58 @@ class TrustedHostMiddleware:
             suffix = pattern[1:]
             return host.endswith(suffix) and host != suffix[1:]
         return host == pattern
+
+
+class ProxyHeadersMiddleware:
+    def __init__(
+        self,
+        trusted_proxies: Iterable[str] = ("127.0.0.1", "::1"),
+    ) -> None:
+        self.trusted_proxies = tuple(ip_network(value, strict=False) for value in trusted_proxies)
+
+    def __call__(self, request: Request, call_next: NextHandler) -> ResponseValue:
+        try:
+            peer = ip_address(request.client_addr)
+        except ValueError:
+            return call_next(request)
+        if not any(peer in network for network in self.trusted_proxies):
+            return call_next(request)
+
+        forwarded_for = str(request.headers.get("x-forwarded-for", ""))
+        chain = []
+        for value in forwarded_for.split(","):
+            try:
+                chain.append(ip_address(value.strip()))
+            except ValueError:
+                continue
+        chain.append(peer)
+        client = next(
+            (
+                address
+                for address in reversed(chain)
+                if not any(address in network for network in self.trusted_proxies)
+            ),
+            chain[0],
+        )
+        request.client_addr = str(client)
+        request.remote_addr = request.client_addr
+
+        forwarded_proto = (
+            str(request.headers.get("x-forwarded-proto", "")).rsplit(",", 1)[-1].strip()
+        )
+        if forwarded_proto.lower() in {"http", "https"}:
+            request.scheme = forwarded_proto.lower()
+        return call_next(request)
+
+
+def _add_vary(response: Response, value: str) -> None:
+    existing = {
+        item.strip().lower() for item in response.headers.get("vary", "").split(",") if item.strip()
+    }
+    if value.lower() not in existing:
+        response.headers["vary"] = ", ".join(
+            [item for item in (response.headers.get("vary"), value) if item]
+        )
 
 
 def middleware(

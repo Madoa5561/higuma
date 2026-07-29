@@ -37,6 +37,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="number of isolated worker processes",
     )
+    run_parser.add_argument(
+        "--max-connections",
+        type=int,
+        default=1024,
+        help="maximum concurrent supervisor connections",
+    )
+    run_parser.add_argument("--max-restarts", type=int, default=5)
+    run_parser.add_argument("--restart-window", type=float, default=60.0)
     run_parser.add_argument("--debug", action="store_true")
     run_parser.add_argument("--internal-worker", action="store_true", help=argparse.SUPPRESS)
 
@@ -57,6 +65,9 @@ def main(argv: list[str] | None = None) -> int:
             processes=1 if args.internal_worker else args.processes,
             app_ref=args.app,
             debug=args.debug,
+            max_connections=args.max_connections,
+            max_restarts=args.max_restarts,
+            restart_window=args.restart_window,
         )
         return 0
 

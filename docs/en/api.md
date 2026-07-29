@@ -12,14 +12,15 @@ openapi_url="/openapi.json", docs_url="/docs")`
 - `openapi`, `clear_template_cache`
 - `init_database`
 - `before_request`, `after_request`, `middleware`, `errorhandler`
-- `run(host, port, workers, processes, app_ref)`
+- `run(host, port, workers, processes, app_ref, max_connections, max_restarts, restart_window)`
 - `test_client`
 
 ## Request
 
 - `request.method`, `path`, `args`, `headers`, `cookies`
 - `request.json`, `form`, `files`, `body`, `text`
-- `request.path_params`, `client_addr`, `state`, `session`, `user`
+- `request.path_params`, `client_addr`, `remote_addr`, `scheme`, `state`, `session`, `user`
+- `request.raw_headers` preserves duplicate header byte pairs for ASGI/WSGI interop
 
 ## WebSocket
 
@@ -32,17 +33,19 @@ openapi_url="/openapi.json", docs_url="/docs")`
 
 - `Database`, `Model`, `Session`, `Query`
 - `Field`, `Integer`, `Float`, `String`, `Boolean`, `Date`, `DateTime`, `Blob`
+- `Query.offset`, `limit`, `delete_all`
 
 ## Auth and security
 
 - `AuthManager`, `current_user`, `login_required`, `AnonymousUser`
 - `PasswordHasher`, `TokenSigner`
 - `CSRFProtection`, `csrf_token`
-- `RateLimitMiddleware`
+- `RateLimitMiddleware(limit, window, key, max_keys)`
 - `generate_user_id`, `validate_user_id`
 - `OAuth2Client.google`, `line`, `discord`
 - `login_required`, `fresh_login_required`, `roles_required`, `permissions_required`
 - `CORSMiddleware`, `SecurityHeadersMiddleware`, `TrustedHostMiddleware`
+- `ProxyHeadersMiddleware`, `secure_filename`
 
 See [Examples](examples.md) and the
 [repository examples](https://github.com/Madoa5561/higuma/tree/main/examples)

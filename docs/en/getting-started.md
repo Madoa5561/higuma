@@ -54,3 +54,11 @@ higuma run app:app --processes 4
 
 Routes may return strings, bytes, dictionaries, lists, response objects, or
 `(body, status, headers)` tuples.
+
+## Migrating from 0.2 to 0.3
+
+- Use a secret of at least 32 bytes with `SessionMiddleware`, `AuthManager`,
+  and `TokenSigner`.
+- Replace an intentional unfiltered `query.delete()` with `query.delete_all()`.
+- Set `allowed_origins=(...)` for cross-origin WebSockets.
+- Add `ProxyHeadersMiddleware` before using reverse-proxy headers.

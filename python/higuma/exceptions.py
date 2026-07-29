@@ -55,6 +55,10 @@ class UnsupportedMediaType(HTTPException):
     status_code = 415
 
 
+class RangeNotSatisfiable(HTTPException):
+    status_code = 416
+
+
 class TooManyRequests(HTTPException):
     status_code = 429
 
@@ -74,6 +78,7 @@ _STATUS_EXCEPTIONS = {
         Conflict,
         RequestEntityTooLarge,
         UnsupportedMediaType,
+        RangeNotSatisfiable,
         TooManyRequests,
         InternalServerError,
     )

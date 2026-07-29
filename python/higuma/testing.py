@@ -56,20 +56,16 @@ class TestClient:
         request_headers.setdefault("content-length", str(len(body)))
 
         route, params, allowed = self.app._match_route(split.path or "/", method)
-        if method == "OPTIONS" and route is None and allowed:
-            response = Response(
-                b"",
-                204,
-                {"allow": ", ".join(allowed)},
-            )
-            return response
-
         raw = {
             "method": method,
             "path": split.path or "/",
             "query_string": query_string,
             "query": {},
             "headers": request_headers,
+            "raw_headers": [
+                (key.encode("latin-1"), value.encode("latin-1"))
+                for key, value in request_headers.items()
+            ],
             "body": body,
             "text": body.decode("utf-8", errors="replace"),
             "path_params": {key: str(value) for key, value in params.items()},
@@ -89,6 +85,9 @@ class TestClient:
 
         if method == "HEAD":
             response.headers.setdefault("content-length", str(len(response.body)))
+            response.body = b""
+        elif response.status_code in {204, 304}:
+            response.headers.pop("content-length", None)
             response.body = b""
         self._update_cookies(response)
         return response

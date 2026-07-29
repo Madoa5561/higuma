@@ -64,3 +64,10 @@ def text():
 def json_response():
     return {"ok": True}, 200, {"x-example": "higuma"}
 ```
+
+## 0.2から0.3への移行
+
+- `SessionMiddleware`、`AuthManager`、`TokenSigner`のsecretを32バイト以上にする
+- 意図した全件削除を`query.delete()`から`query.delete_all()`へ変更する
+- cross-origin WebSocketは`allowed_origins=(...)`を明示する
+- reverse proxyのheaderを使う場合は`ProxyHeadersMiddleware`を追加する

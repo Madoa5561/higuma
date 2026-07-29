@@ -164,7 +164,7 @@ class FeatureTests(unittest.TestCase):
         self.assertFalse(hasher.verify("wrong", encoded))
         self.assertFalse(hasher.needs_rehash(encoded))
 
-        signer = TokenSigner("test-secret")
+        signer = TokenSigner("test-secret-that-is-at-least-32-bytes")
         token = signer.dumps({"user_id": "usr_12345678"})
         self.assertEqual(
             signer.loads(token, max_age=60),
@@ -184,7 +184,11 @@ class FeatureTests(unittest.TestCase):
 
         users = {"usr_12345678": User("usr_12345678")}
         app = self.make_app()
-        auth = AuthManager(app, secret_key="test-secret", user_loader=users.get)
+        auth = AuthManager(
+            app,
+            secret_key="test-secret-that-is-at-least-32-bytes",
+            user_loader=users.get,
+        )
         app.add_middleware(CSRFProtection)
 
         @app.get("/csrf")
@@ -234,14 +238,17 @@ class FeatureTests(unittest.TestCase):
             client_id="client",
             client_secret="secret",
             redirect_uri="https://example.com/callback",
-            secret_key="state-secret",
+            secret_key="state-secret-that-is-at-least-32-bytes",
         )
         url = oauth.authorization_url(prompt="consent")
         self.assertIn("accounts.google.com", url)
         self.assertIn("state=", url)
 
         app = self.make_app()
-        app.add_middleware(SessionMiddleware, "oauth-session-secret")
+        app.add_middleware(
+            SessionMiddleware,
+            "oauth-session-secret-that-is-at-least-32-bytes",
+        )
 
         @app.get("/oauth/start")
         def oauth_start():
@@ -279,7 +286,7 @@ class FeatureTests(unittest.TestCase):
         app = self.make_app()
         auth = AuthManager(
             app,
-            secret_key="socket-secret",
+            secret_key="socket-secret-that-is-at-least-32-bytes",
             user_loader=lambda user_id: user if user_id == user.id else None,
         )
 

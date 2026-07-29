@@ -3,12 +3,21 @@ import os
 from higuma import (
     CORSMiddleware,
     Higuma,
+    ProxyHeadersMiddleware,
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
     TrustedHostMiddleware,
 )
 
 app = Higuma(__name__)
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_proxies=tuple(
+        value.strip()
+        for value in os.environ.get("TRUSTED_PROXIES", "127.0.0.1,::1").split(",")
+        if value.strip()
+    ),
+)
 app.add_middleware(
     TrustedHostMiddleware,
     ("localhost", "127.0.0.1", os.environ.get("APP_HOST", "example.com")),
