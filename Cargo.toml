@@ -13,7 +13,7 @@ name = "_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-axum = { version = "0.7", features = ["ws"] }
+axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 minijinja = { version = "2.0", features = ["loader"] }
 percent-encoding = "2.3"
@@ -31,7 +31,7 @@ tokio = { version = "1.40", features = [
   "fs"
 ] }
 tokio-util = { version = "0.7", features = ["io"] }
-tower-http = { version = "0.6", features = ["compression-gzip"] }
+tower-http = { version = "0.7", features = ["compression-gzip"] }
 url = "2.5"
 
 [profile.release]
