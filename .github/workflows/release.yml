@@ -99,7 +99,19 @@ jobs:
           args: --release --locked --compatibility pypi --out dist
           manylinux: ${{ matrix.platform.manylinux }}
       - name: Install and smoke-test wheel
+        if: matrix.platform.name != 'musllinux-x86_64'
         run: >-
+          python tools/smoke_package.py
+          --wheel-dir dist
+          --expected-version "${{ needs.guard.outputs.version }}"
+      - name: Install and smoke-test musllinux wheel on Alpine
+        if: matrix.platform.name == 'musllinux-x86_64'
+        shell: bash
+        run: >-
+          docker run --rm
+          --volume "$GITHUB_WORKSPACE:/workspace"
+          --workdir /workspace
+          python:3.10-alpine
           python tools/smoke_package.py
           --wheel-dir dist
           --expected-version "${{ needs.guard.outputs.version }}"
