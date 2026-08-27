@@ -113,8 +113,21 @@ enum OutgoingMessage {
     Text(String),
     Binary(Vec<u8>),
     Close(u16, String),
-    FlushAndClose,
-    Disconnect,
+}
+
+enum WebSocketEvent {
+    Incoming(Message),
+    ReceiveError(String),
+    Disconnected,
+    Outgoing(OutgoingMessage),
+    OutgoingClosed,
+    CloseTimeout,
+}
+
+enum IncomingEnqueueResult {
+    Accepted,
+    Closed,
+    Full,
 }
 
 #[pyclass(name = "WebSocketSession")]
@@ -475,15 +488,13 @@ struct WebSocketRequest {
 }
 
 async fn handle_websocket(
-    socket: WebSocket,
+    mut socket: WebSocket,
     callback: Arc<Py<PyAny>>,
     request: WebSocketRequest,
     websocket_permit: OwnedSemaphorePermit,
 ) {
-    let (mut socket_sender, mut socket_receiver) = socket.split();
     let (incoming_tx, incoming_rx) = tokio_mpsc::channel(64);
     let (outgoing_tx, mut outgoing_rx) = tokio_mpsc::channel(64);
-    let reader_outgoing = outgoing_tx.clone();
     let panic_outgoing = outgoing_tx.clone();
     let completion_outgoing = outgoing_tx.clone();
 
@@ -524,140 +535,151 @@ async fn handle_websocket(
         }
     });
 
-    let mut reader_task = tokio::spawn(async move {
-        loop {
-            match socket_receiver.next().await {
-                Some(Ok(Message::Text(value))) => {
-                    if !enqueue_incoming_message(
-                        &incoming_tx,
-                        &reader_outgoing,
-                        IncomingMessage::Text(value.to_string()),
-                    )
-                    .await
-                    {
-                        break;
-                    }
-                }
-                Some(Ok(Message::Binary(value))) => {
-                    if !enqueue_incoming_message(
-                        &incoming_tx,
-                        &reader_outgoing,
-                        IncomingMessage::Binary(value.to_vec()),
-                    )
-                    .await
-                    {
-                        break;
-                    }
-                }
-                Some(Ok(Message::Close(frame))) => {
-                    let (code, reason) = frame
-                        .map(|value| (value.code, value.reason.to_string()))
-                        .unwrap_or((1000, String::new()));
-                    let _ = incoming_tx.try_send(IncomingMessage::Close(code, reason));
-                    let _ = reader_outgoing.send(OutgoingMessage::FlushAndClose).await;
-                    break;
-                }
-                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
-                Some(Err(error)) => {
-                    eprintln!("higuma WebSocket receive error: {error}");
-                    let _ = incoming_tx.try_send(IncomingMessage::Close(
-                        1006,
-                        "connection closed".to_string(),
-                    ));
-                    let _ = reader_outgoing.send(OutgoingMessage::Disconnect).await;
-                    break;
-                }
-                None => {
-                    let _ = incoming_tx.try_send(IncomingMessage::Close(
-                        1006,
-                        "connection closed".to_string(),
-                    ));
-                    let _ = reader_outgoing.send(OutgoingMessage::Disconnect).await;
-                    break;
-                }
+    let mut close_deadline = None;
+    loop {
+        let event = tokio::select! {
+            incoming = socket.recv() => match incoming {
+                Some(Ok(message)) => WebSocketEvent::Incoming(message),
+                Some(Err(error)) => WebSocketEvent::ReceiveError(error.to_string()),
+                None => WebSocketEvent::Disconnected,
+            },
+            outgoing = outgoing_rx.recv() => match outgoing {
+                Some(message) => WebSocketEvent::Outgoing(message),
+                None => WebSocketEvent::OutgoingClosed,
+            },
+            _ = wait_for_websocket_close_timeout(close_deadline) => {
+                WebSocketEvent::CloseTimeout
             }
-        }
-    });
+        };
 
-    let mut writer_task = tokio::spawn(async move {
-        let mut close_deadline = None;
-        loop {
-            let outgoing = if let Some(deadline) = close_deadline {
-                tokio::select! {
-                    outgoing = outgoing_rx.recv() => outgoing,
-                    _ = tokio::time::sleep_until(deadline) => {
-                        let _ = socket_sender.flush().await;
-                        break;
+        match event {
+            WebSocketEvent::Incoming(Message::Text(value)) if close_deadline.is_none() => {
+                match enqueue_incoming_message(
+                    &incoming_tx,
+                    IncomingMessage::Text(value.to_string()),
+                ) {
+                    IncomingEnqueueResult::Accepted => {}
+                    IncomingEnqueueResult::Closed => break,
+                    IncomingEnqueueResult::Full => {
+                        if send_websocket_close(&mut socket, 1013, "handler receive queue is full")
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        close_deadline =
+                            Some(tokio::time::Instant::now() + WEBSOCKET_CLOSE_TIMEOUT);
                     }
                 }
-            } else {
-                outgoing_rx.recv().await
-            };
-            let Some(outgoing) = outgoing else {
-                break;
-            };
-            let message = match outgoing {
-                OutgoingMessage::Text(value) if close_deadline.is_none() => {
-                    Message::Text(value.into())
+            }
+            WebSocketEvent::Incoming(Message::Binary(value)) if close_deadline.is_none() => {
+                match enqueue_incoming_message(
+                    &incoming_tx,
+                    IncomingMessage::Binary(value.to_vec()),
+                ) {
+                    IncomingEnqueueResult::Accepted => {}
+                    IncomingEnqueueResult::Closed => break,
+                    IncomingEnqueueResult::Full => {
+                        if send_websocket_close(&mut socket, 1013, "handler receive queue is full")
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        close_deadline =
+                            Some(tokio::time::Instant::now() + WEBSOCKET_CLOSE_TIMEOUT);
+                    }
                 }
-                OutgoingMessage::Binary(value) if close_deadline.is_none() => {
-                    Message::Binary(value.into())
-                }
-                OutgoingMessage::Text(_) | OutgoingMessage::Binary(_) => continue,
-                OutgoingMessage::Close(_, _) if close_deadline.is_some() => continue,
-                OutgoingMessage::Close(code, reason) => Message::Close(Some(CloseFrame {
-                    code,
-                    reason: reason.into(),
-                })),
-                OutgoingMessage::FlushAndClose => {
-                    let _ = socket_sender.flush().await;
-                    break;
-                }
-                OutgoingMessage::Disconnect => break,
-            };
-            let is_close = matches!(message, Message::Close(_));
-            if socket_sender.send(message).await.is_err() {
+            }
+            WebSocketEvent::Incoming(Message::Close(frame)) => {
+                let (code, reason) = frame
+                    .map(|value| (value.code, value.reason.to_string()))
+                    .unwrap_or((1000, String::new()));
+                let _ = incoming_tx.try_send(IncomingMessage::Close(code, reason));
+                let _ = socket.recv().await;
                 break;
             }
-            if is_close {
+            WebSocketEvent::Incoming(Message::Ping(_))
+            | WebSocketEvent::Incoming(Message::Pong(_)) => {
+                let _ = socket.flush().await;
+            }
+            WebSocketEvent::Incoming(Message::Text(_))
+            | WebSocketEvent::Incoming(Message::Binary(_)) => {}
+            WebSocketEvent::ReceiveError(error) => {
+                eprintln!("higuma WebSocket receive error: {error}");
+                let _ = incoming_tx.try_send(IncomingMessage::Close(
+                    1006,
+                    "connection closed".to_string(),
+                ));
+                break;
+            }
+            WebSocketEvent::Disconnected => {
+                let _ = incoming_tx.try_send(IncomingMessage::Close(
+                    1006,
+                    "connection closed".to_string(),
+                ));
+                break;
+            }
+            WebSocketEvent::Outgoing(OutgoingMessage::Text(value)) if close_deadline.is_none() => {
+                if socket.send(Message::Text(value.into())).await.is_err() {
+                    break;
+                }
+            }
+            WebSocketEvent::Outgoing(OutgoingMessage::Binary(value))
+                if close_deadline.is_none() =>
+            {
+                if socket.send(Message::Binary(value.into())).await.is_err() {
+                    break;
+                }
+            }
+            WebSocketEvent::Outgoing(OutgoingMessage::Close(code, reason))
+                if close_deadline.is_none() =>
+            {
+                if send_websocket_close(&mut socket, code, reason)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
                 close_deadline = Some(tokio::time::Instant::now() + WEBSOCKET_CLOSE_TIMEOUT);
             }
-        }
-    });
-
-    tokio::select! {
-        reader_result = &mut reader_task => {
-            if let Err(error) = reader_result {
-                eprintln!("higuma WebSocket reader task failed: {error}");
+            WebSocketEvent::Outgoing(_) => {}
+            WebSocketEvent::OutgoingClosed | WebSocketEvent::CloseTimeout => {
+                let _ = socket.flush().await;
+                break;
             }
-            let _ = writer_task.await;
-        }
-        writer_result = &mut writer_task => {
-            if let Err(error) = writer_result {
-                eprintln!("higuma WebSocket writer task failed: {error}");
-            }
-            reader_task.abort();
         }
     }
 }
 
-async fn enqueue_incoming_message(
+async fn wait_for_websocket_close_timeout(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn send_websocket_close(
+    socket: &mut WebSocket,
+    code: u16,
+    reason: impl Into<String>,
+) -> Result<(), axum::Error> {
+    socket
+        .send(Message::Close(Some(CloseFrame {
+            code,
+            reason: reason.into().into(),
+        })))
+        .await
+}
+
+fn enqueue_incoming_message(
     incoming: &tokio_mpsc::Sender<IncomingMessage>,
-    outgoing: &tokio_mpsc::Sender<OutgoingMessage>,
     message: IncomingMessage,
-) -> bool {
+) -> IncomingEnqueueResult {
     match incoming.try_send(message) {
-        Ok(()) => true,
-        Err(tokio_mpsc::error::TrySendError::Closed(_)) => false,
-        Err(tokio_mpsc::error::TrySendError::Full(_)) => {
-            let _ = outgoing
-                .send(OutgoingMessage::Close(
-                    1013,
-                    "handler receive queue is full".to_string(),
-                ))
-                .await;
-            false
-        }
+        Ok(()) => IncomingEnqueueResult::Accepted,
+        Err(tokio_mpsc::error::TrySendError::Closed(_)) => IncomingEnqueueResult::Closed,
+        Err(tokio_mpsc::error::TrySendError::Full(_)) => IncomingEnqueueResult::Full,
     }
 }
 

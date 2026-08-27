@@ -32,6 +32,7 @@ from higuma import (
     Response,
     ServerSentEvent,
     StreamingResponse,
+    WebSocketDisconnect,
     request,
 )
 
@@ -159,6 +160,14 @@ def download():
 def websocket_echo(ws):
     ws.send_text("echo:" + ws.receive_text())
     ws.close(1000, "complete")
+
+
+@app.websocket("/ws-client-close")
+def websocket_client_close(ws):
+    try:
+        ws.receive()
+    except WebSocketDisconnect:
+        pass
 
 
 @app.websocket("/ws-denied")
@@ -564,6 +573,20 @@ class RealServerTests(unittest.TestCase):
             self.assertEqual(struct.unpack("!H", payload[:2])[0], 1000)
             self.assertEqual(payload[2:], b"complete")
             connection.sendall(_masked_frame(0x8, struct.pack("!H", 1000)))
+
+    def test_websocket_client_close_is_acknowledged(self) -> None:
+        with self.websocket_handshake("/ws-client-close") as (
+            connection,
+            status,
+            _,
+            remainder,
+        ):
+            self.assertEqual(status, 101)
+            self.assertEqual(remainder, b"")
+            close_payload = struct.pack("!H", 1000) + b"client done"
+            connection.sendall(_masked_frame(0x8, close_payload))
+            opcode, payload = _read_frame(connection)
+            self.assertEqual((opcode, payload), (0x8, close_payload))
 
     def test_websocket_preflight_must_return_no_content(self) -> None:
         with self.websocket_handshake("/ws-denied") as (_, status, headers, remainder):
