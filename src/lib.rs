@@ -3,26 +3,27 @@ use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
     fs,
+    io::{self, Seek, SeekFrom},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
 };
 
 use axum::{
-    body::{to_bytes, Body},
+    body::{to_bytes, Body, Bytes},
     extract::{
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
         ConnectInfo, FromRequestParts, State,
     },
     http::{
         header::{HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE, SERVER},
-        Request, StatusCode,
+        Extensions, HeaderMap, Request, StatusCode, Version,
     },
     response::{IntoResponse, Response},
     routing::any,
     Router,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{stream, SinkExt, StreamExt};
 use minijinja::{path_loader, Environment};
 use percent_encoding::percent_decode_str;
 use pyo3::{
@@ -30,13 +31,18 @@ use pyo3::{
     prelude::*,
     types::{PyAny, PyBytes, PyDict, PyList, PyTuple},
 };
-use tokio::sync::mpsc as tokio_mpsc;
+use tokio::io::AsyncReadExt;
+use tokio::sync::{mpsc as tokio_mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio::{net::TcpListener, runtime::Builder, signal};
 use tokio_util::io::ReaderStream;
-use tower_http::compression::CompressionLayer;
+use tower_http::compression::{
+    predicate::{DefaultPredicate, Predicate},
+    CompressionLayer,
+};
 use url::form_urlencoded;
 
 const DEFAULT_MAX_BODY_SIZE: usize = 8 * 1024 * 1024;
+const MAX_CONCURRENT_WEBSOCKET_HANDLERS: usize = 128;
 
 #[derive(Clone, Debug)]
 enum Converter {
@@ -105,6 +111,8 @@ enum OutgoingMessage {
     Text(String),
     Binary(Vec<u8>),
     Close(u16, String),
+    FlushAndClose,
+    Disconnect,
 }
 
 #[pyclass(name = "WebSocketSession")]
@@ -272,6 +280,7 @@ struct SharedState {
     template_env: Arc<RwLock<Environment<'static>>>,
     max_body_size: usize,
     server_header: Arc<String>,
+    websocket_slots: Arc<Semaphore>,
 }
 
 #[pyclass(name = "HigumaCore")]
@@ -386,6 +395,7 @@ impl HigumaCore {
             template_env: self.template_env.clone(),
             max_body_size: self.max_body_size,
             server_header: Arc::new(self.server_header.clone()),
+            websocket_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_WEBSOCKET_HANDLERS)),
         };
 
         let runtime = Builder::new_multi_thread()
@@ -399,7 +409,16 @@ impl HigumaCore {
                 let app = Router::new()
                     .fallback(any(dispatch))
                     .with_state(state)
-                    .layer(CompressionLayer::new());
+                    .layer(
+                        CompressionLayer::new().compress_when(DefaultPredicate::new().and(
+                            |status: StatusCode,
+                             _version: Version,
+                             _headers: &HeaderMap,
+                             _extensions: &Extensions| {
+                                status != StatusCode::PARTIAL_CONTENT
+                            },
+                        )),
+                    );
                 let listener = TcpListener::bind(addr)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(format!("failed to bind {addr}: {e}")))?;
@@ -418,6 +437,25 @@ impl HigumaCore {
     }
 }
 
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal as unix_signal, SignalKind};
+
+    let mut terminate = match unix_signal(SignalKind::terminate()) {
+        Ok(signal) => signal,
+        Err(_) => {
+            let _ = signal::ctrl_c().await;
+            return;
+        }
+    };
+
+    tokio::select! {
+        _ = signal::ctrl_c() => {}
+        _ = terminate.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
 async fn shutdown_signal() {
     let _ = signal::ctrl_c().await;
 }
@@ -434,13 +472,22 @@ struct WebSocketRequest {
     client_addr: String,
 }
 
-async fn handle_websocket(socket: WebSocket, callback: Arc<Py<PyAny>>, request: WebSocketRequest) {
+async fn handle_websocket(
+    socket: WebSocket,
+    callback: Arc<Py<PyAny>>,
+    request: WebSocketRequest,
+    websocket_permit: OwnedSemaphorePermit,
+) {
     let (mut socket_sender, mut socket_receiver) = socket.split();
     let (incoming_tx, incoming_rx) = tokio_mpsc::channel(64);
     let (outgoing_tx, mut outgoing_rx) = tokio_mpsc::channel(64);
+    let reader_outgoing = outgoing_tx.clone();
+    let panic_outgoing = outgoing_tx.clone();
+    let completion_outgoing = outgoing_tx.clone();
 
-    tokio::task::spawn_blocking(move || {
-        Python::attach(|py| -> PyResult<()> {
+    let handler_task = tokio::task::spawn_blocking(move || {
+        let _websocket_permit = websocket_permit;
+        let result = Python::attach(|py| -> PyResult<()> {
             let raw = websocket_request_to_dict(py, &request)?;
             let session = Py::new(
                 py,
@@ -451,58 +498,139 @@ async fn handle_websocket(socket: WebSocket, callback: Arc<Py<PyAny>>, request: 
             )?;
             callback.call1(py, (raw, session))?;
             Ok(())
-        })
-        .unwrap_or_else(|error| eprintln!("higuma WebSocket handler error: {error}"));
+        });
+
+        let close = match result {
+            Ok(()) => OutgoingMessage::Close(1000, "handler completed".to_string()),
+            Err(error) => {
+                eprintln!("higuma WebSocket handler error: {error}");
+                OutgoingMessage::Close(1011, "internal server error".to_string())
+            }
+        };
+        let _ = completion_outgoing.blocking_send(close);
     });
 
-    loop {
-        tokio::select! {
-            incoming = socket_receiver.next() => {
-                match incoming {
-                    Some(Ok(Message::Text(value))) => {
-                        if incoming_tx.send(IncomingMessage::Text(value)).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(Ok(Message::Binary(value))) => {
-                        if incoming_tx.send(IncomingMessage::Binary(value)).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(Ok(Message::Close(frame))) => {
-                        let (code, reason) = frame
-                            .map(|value| (value.code, value.reason.into_owned()))
-                            .unwrap_or((1000, String::new()));
-                        let _ = incoming_tx.send(IncomingMessage::Close(code, reason)).await;
-                        break;
-                    }
-                    Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
-                    Some(Err(_)) | None => {
-                        let _ = incoming_tx.send(IncomingMessage::Close(
-                            1006,
-                            "connection closed".to_string(),
-                        )).await;
+    tokio::spawn(async move {
+        if let Err(error) = handler_task.await {
+            eprintln!("higuma WebSocket handler task failed: {error}");
+            let _ = panic_outgoing
+                .send(OutgoingMessage::Close(
+                    1011,
+                    "internal server error".to_string(),
+                ))
+                .await;
+        }
+    });
+
+    let mut reader_task = tokio::spawn(async move {
+        loop {
+            match socket_receiver.next().await {
+                Some(Ok(Message::Text(value))) => {
+                    if !enqueue_incoming_message(
+                        &incoming_tx,
+                        &reader_outgoing,
+                        IncomingMessage::Text(value.to_string()),
+                    )
+                    .await
+                    {
                         break;
                     }
                 }
-            }
-            outgoing = outgoing_rx.recv() => {
-                let message = match outgoing {
-                    Some(OutgoingMessage::Text(value)) => Message::Text(value),
-                    Some(OutgoingMessage::Binary(value)) => Message::Binary(value),
-                    Some(OutgoingMessage::Close(code, reason)) => Message::Close(
-                        Some(CloseFrame { code, reason: Cow::Owned(reason) })
-                    ),
-                    None => Message::Close(Some(CloseFrame {
-                        code: 1000,
-                        reason: Cow::Borrowed("handler completed"),
-                    })),
-                };
-                let is_close = matches!(message, Message::Close(_));
-                if socket_sender.send(message).await.is_err() || is_close {
+                Some(Ok(Message::Binary(value))) => {
+                    if !enqueue_incoming_message(
+                        &incoming_tx,
+                        &reader_outgoing,
+                        IncomingMessage::Binary(value.to_vec()),
+                    )
+                    .await
+                    {
+                        break;
+                    }
+                }
+                Some(Ok(Message::Close(frame))) => {
+                    let (code, reason) = frame
+                        .map(|value| (value.code, value.reason.to_string()))
+                        .unwrap_or((1000, String::new()));
+                    let _ = incoming_tx.try_send(IncomingMessage::Close(code, reason));
+                    let _ = reader_outgoing.send(OutgoingMessage::FlushAndClose).await;
+                    break;
+                }
+                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
+                Some(Err(error)) => {
+                    eprintln!("higuma WebSocket receive error: {error}");
+                    let _ = incoming_tx.try_send(IncomingMessage::Close(
+                        1006,
+                        "connection closed".to_string(),
+                    ));
+                    let _ = reader_outgoing.send(OutgoingMessage::Disconnect).await;
+                    break;
+                }
+                None => {
+                    let _ = incoming_tx.try_send(IncomingMessage::Close(
+                        1006,
+                        "connection closed".to_string(),
+                    ));
+                    let _ = reader_outgoing.send(OutgoingMessage::Disconnect).await;
                     break;
                 }
             }
+        }
+    });
+
+    let mut writer_task = tokio::spawn(async move {
+        while let Some(outgoing) = outgoing_rx.recv().await {
+            let message = match outgoing {
+                OutgoingMessage::Text(value) => Message::Text(value.into()),
+                OutgoingMessage::Binary(value) => Message::Binary(value.into()),
+                OutgoingMessage::Close(code, reason) => Message::Close(Some(CloseFrame {
+                    code,
+                    reason: reason.into(),
+                })),
+                OutgoingMessage::FlushAndClose => {
+                    let _ = socket_sender.flush().await;
+                    break;
+                }
+                OutgoingMessage::Disconnect => break,
+            };
+            let is_close = matches!(message, Message::Close(_));
+            if socket_sender.send(message).await.is_err() || is_close {
+                break;
+            }
+        }
+    });
+
+    tokio::select! {
+        reader_result = &mut reader_task => {
+            if let Err(error) = reader_result {
+                eprintln!("higuma WebSocket reader task failed: {error}");
+            }
+            let _ = writer_task.await;
+        }
+        writer_result = &mut writer_task => {
+            if let Err(error) = writer_result {
+                eprintln!("higuma WebSocket writer task failed: {error}");
+            }
+            reader_task.abort();
+        }
+    }
+}
+
+async fn enqueue_incoming_message(
+    incoming: &tokio_mpsc::Sender<IncomingMessage>,
+    outgoing: &tokio_mpsc::Sender<OutgoingMessage>,
+    message: IncomingMessage,
+) -> bool {
+    match incoming.try_send(message) {
+        Ok(()) => true,
+        Err(tokio_mpsc::error::TrySendError::Closed(_)) => false,
+        Err(tokio_mpsc::error::TrySendError::Full(_)) => {
+            let _ = outgoing
+                .send(OutgoingMessage::Close(
+                    1013,
+                    "handler receive queue is full".to_string(),
+                ))
+                .await;
+            false
         }
     }
 }
@@ -592,15 +720,28 @@ async fn dispatch(
                     ResponsePayload::text("Internal Server Error", 500)
                 }
             };
-            if payload.status >= 400 {
+            if !websocket_preflight_allows_upgrade(&payload) {
                 return finalize_response(payload, &state, false);
             }
         }
+        let websocket_permit = match state.websocket_slots.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                return finalize_response(
+                    ResponsePayload::text(
+                        "WebSocket handler capacity reached",
+                        StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                    ),
+                    &state,
+                    false,
+                )
+            }
+        };
         let upgrade = upgrade
             .max_message_size(state.max_body_size)
             .max_frame_size(state.max_body_size);
         return upgrade
-            .on_upgrade(move |socket| handle_websocket(socket, callback, request))
+            .on_upgrade(move |socket| handle_websocket(socket, callback, request, websocket_permit))
             .into_response();
     }
 
@@ -719,8 +860,12 @@ fn finalize_response(
     state: &SharedState,
     strip_body: bool,
 ) -> Response {
-    let head_length = if strip_body {
-        let length = Some(payload.body.length());
+    let status = StatusCode::from_u16(payload.status)
+        .ok()
+        .filter(|value| !value.is_informational())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let head_length = if strip_body && status_allows_body(status) {
+        let length = payload.body.length();
         payload.body = PayloadBody::Bytes(Vec::new());
         length
     } else {
@@ -739,6 +884,10 @@ fn finalize_response(
         }
     }
     response
+}
+
+fn websocket_preflight_allows_upgrade(payload: &ResponsePayload) -> bool {
+    payload.status == StatusCode::NO_CONTENT.as_u16()
 }
 
 fn query_to_dict<'py>(py: Python<'py>, query: &str) -> PyResult<Bound<'py, PyDict>> {
@@ -877,6 +1026,10 @@ fn py_to_response(
     obj: &Bound<'_, PyAny>,
     template_env: &Arc<RwLock<Environment<'static>>>,
 ) -> PyResult<ResponsePayload> {
+    if is_truthy_marker(obj, "__higuma_stream__")? {
+        return streaming_response_from_py(obj);
+    }
+
     if is_truthy_marker(obj, "__higuma_file__")? {
         return file_response_from_py(obj);
     }
@@ -894,7 +1047,8 @@ fn py_to_response(
             status,
             headers,
             Some("text/html; charset=utf-8".to_string()),
-        ));
+        )
+        .with_background(extract_background(obj)?));
     }
 
     if is_truthy_marker(obj, "__higuma_response__")? {
@@ -915,12 +1069,26 @@ fn response_from_py(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Response
     let media_type: Option<String> = obj.getattr("media_type")?.extract()?;
     let body_obj = obj.getattr("body")?;
     let (body, inferred_type) = body_from_py(py, &body_obj)?;
-    Ok(ResponsePayload::new(
-        body,
-        status,
-        headers,
-        media_type.or(inferred_type),
-    ))
+    Ok(
+        ResponsePayload::new(body, status, headers, media_type.or(inferred_type))
+            .with_background(extract_background(obj)?),
+    )
+}
+
+fn streaming_response_from_py(obj: &Bound<'_, PyAny>) -> PyResult<ResponsePayload> {
+    let status: u16 = obj.getattr("status_code")?.extract()?;
+    let headers = extract_response_headers(obj)?;
+    let media_type: Option<String> = obj.getattr("media_type")?.extract()?;
+    let length = obj
+        .getattr("headers")?
+        .get_item("content-length")
+        .ok()
+        .and_then(|value| value.extract::<String>().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    Ok(
+        ResponsePayload::stream(obj.clone().unbind(), length, status, headers, media_type)
+            .with_background(extract_background(obj)?),
+    )
 }
 
 fn file_response_from_py(obj: &Bound<'_, PyAny>) -> PyResult<ResponsePayload> {
@@ -928,13 +1096,29 @@ fn file_response_from_py(obj: &Bound<'_, PyAny>) -> PyResult<ResponsePayload> {
     let status: u16 = obj.getattr("status_code")?.extract()?;
     let headers = extract_response_headers(obj)?;
     let media_type: Option<String> = obj.getattr("media_type")?.extract()?;
-    let file = fs::File::open(&path).map_err(|e| {
+    let offset: u64 = obj.getattr("offset")?.extract()?;
+    let selected_length: Option<u64> = obj.getattr("length")?.extract()?;
+    let mut file = fs::File::open(&path).map_err(|e| {
         PyRuntimeError::new_err(format!("failed to open response file {path}: {e}"))
     })?;
-    let length = file
+    let file_length = file
         .metadata()
         .map_err(|e| PyRuntimeError::new_err(format!("failed to stat response file {path}: {e}")))?
         .len();
+    if offset > file_length {
+        return Err(PyRuntimeError::new_err(format!(
+            "response file {path} became shorter than offset {offset}"
+        )));
+    }
+    let length = selected_length.unwrap_or(file_length - offset);
+    if length > file_length - offset {
+        return Err(PyRuntimeError::new_err(format!(
+            "response file {path} became shorter than the selected range"
+        )));
+    }
+    file.seek(SeekFrom::Start(offset)).map_err(|e| {
+        PyRuntimeError::new_err(format!("failed to seek response file {path}: {e}"))
+    })?;
 
     Ok(ResponsePayload::file(
         file,
@@ -942,7 +1126,8 @@ fn file_response_from_py(obj: &Bound<'_, PyAny>) -> PyResult<ResponsePayload> {
         status,
         headers,
         media_type.or_else(|| Some("application/octet-stream".to_string())),
-    ))
+    )
+    .with_background(extract_background(obj)?))
 }
 
 fn tuple_to_response(py: Python<'_>, tuple: &Bound<'_, PyTuple>) -> PyResult<ResponsePayload> {
@@ -1037,6 +1222,18 @@ fn extract_response_headers(obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, Str
         extract_headers(&obj.getattr("header_items")?)
     } else {
         extract_headers(&obj.getattr("headers")?)
+    }
+}
+
+fn extract_background(obj: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
+    if !obj.hasattr("background")? {
+        return Ok(None);
+    }
+    let background = obj.getattr("background")?;
+    if background.is_none() {
+        Ok(None)
+    } else {
+        Ok(Some(background.unbind()))
     }
 }
 
@@ -1166,8 +1363,8 @@ fn match_segments(pattern: &[RouteSegment], path: &str) -> Option<HashMap<String
                 }
                 let valid = match converter {
                     Converter::String => !value.is_empty(),
-                    Converter::Int => value.parse::<i64>().is_ok(),
-                    Converter::Float => value.parse::<f64>().is_ok(),
+                    Converter::Int => is_integer_literal(&value),
+                    Converter::Float => is_float_literal(&value),
                     Converter::Uuid => is_uuid(&value),
                     Converter::Path => unreachable!(),
                 };
@@ -1193,6 +1390,28 @@ fn is_uuid(value: &str) -> bool {
             matches!(index, 8 | 13 | 18 | 23) && ch == '-'
                 || !matches!(index, 8 | 13 | 18 | 23) && ch.is_ascii_hexdigit()
         })
+}
+
+fn is_integer_literal(value: &str) -> bool {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    is_ascii_digits(digits)
+}
+
+fn is_float_literal(value: &str) -> bool {
+    let unsigned = value.strip_prefix('-').unwrap_or(value);
+    let Some((whole, fraction)) = unsigned.split_once('.') else {
+        return is_ascii_digits(unsigned);
+    };
+    if fraction.contains('.') {
+        return false;
+    }
+
+    (is_ascii_digits(whole) && fraction.chars().all(|ch| ch.is_ascii_digit()))
+        || (whole.is_empty() && is_ascii_digits(fraction))
+}
+
+fn is_ascii_digits(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn split_path(path: &str) -> Vec<&str> {
@@ -1229,14 +1448,22 @@ fn normalize_path(raw: &str) -> String {
 
 enum PayloadBody {
     Bytes(Vec<u8>),
-    File { file: fs::File, length: u64 },
+    File {
+        file: fs::File,
+        length: u64,
+    },
+    Stream {
+        response: Py<PyAny>,
+        length: Option<u64>,
+    },
 }
 
 impl PayloadBody {
-    fn length(&self) -> u64 {
+    fn length(&self) -> Option<u64> {
         match self {
-            Self::Bytes(value) => value.len() as u64,
-            Self::File { length, .. } => *length,
+            Self::Bytes(value) => Some(value.len() as u64),
+            Self::File { length, .. } => Some(*length),
+            Self::Stream { length, .. } => *length,
         }
     }
 }
@@ -1246,6 +1473,7 @@ struct ResponsePayload {
     status: u16,
     headers: Vec<(String, String)>,
     content_type: Option<String>,
+    background: Option<Py<PyAny>>,
 }
 
 impl ResponsePayload {
@@ -1260,6 +1488,7 @@ impl ResponsePayload {
             status,
             headers,
             content_type,
+            background: None,
         }
     }
 
@@ -1275,7 +1504,29 @@ impl ResponsePayload {
             status,
             headers,
             content_type,
+            background: None,
         }
+    }
+
+    fn stream(
+        response: Py<PyAny>,
+        length: Option<u64>,
+        status: u16,
+        headers: Vec<(String, String)>,
+        content_type: Option<String>,
+    ) -> Self {
+        Self {
+            body: PayloadBody::Stream { response, length },
+            status,
+            headers,
+            content_type,
+            background: None,
+        }
+    }
+
+    fn with_background(mut self, background: Option<Py<PyAny>>) -> Self {
+        self.background = background;
+        self
     }
 
     fn text(body: impl Into<String>, status: u16) -> Self {
@@ -1290,24 +1541,40 @@ impl ResponsePayload {
 
 impl IntoResponse for ResponsePayload {
     fn into_response(mut self) -> Response {
-        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        if status == StatusCode::NO_CONTENT || status == StatusCode::NOT_MODIFIED {
+        let parsed_status = StatusCode::from_u16(self.status).ok();
+        let invalid_final_status = parsed_status
+            .as_ref()
+            .map(StatusCode::is_informational)
+            .unwrap_or(true);
+        let status = if invalid_final_status {
+            self.body = PayloadBody::Bytes(b"Internal Server Error".to_vec());
+            self.headers.clear();
+            self.content_type = Some("text/plain; charset=utf-8".to_string());
+            StatusCode::INTERNAL_SERVER_ERROR
+        } else {
+            parsed_status.expect("validated status must be present")
+        };
+        if !status_allows_body(status) {
             self.body = PayloadBody::Bytes(Vec::new());
         }
         let body_length = self.body.length();
-        let body_is_empty = body_length == 0;
+        let body_is_empty = body_length == Some(0);
+        let background = self.background.take();
         let body = match self.body {
-            PayloadBody::Bytes(value) => Body::from(value),
-            PayloadBody::File { file, .. } => {
-                Body::from_stream(ReaderStream::new(tokio::fs::File::from_std(file)))
+            PayloadBody::Bytes(value) => bytes_response_body(value, background),
+            PayloadBody::File { file, length } => {
+                let reader = tokio::fs::File::from_std(file).take(length);
+                file_response_body(ReaderStream::new(reader), background)
             }
+            PayloadBody::Stream { response, .. } => stream_response_body(response, background),
         };
         let mut response = Response::new(body);
         *response.status_mut() = status;
-        if !body_is_empty && status != StatusCode::NO_CONTENT && status != StatusCode::NOT_MODIFIED
-        {
-            if let Ok(value) = HeaderValue::from_str(&body_length.to_string()) {
-                response.headers_mut().insert(CONTENT_LENGTH, value);
+        if !body_is_empty && status_allows_body(status) {
+            if let Some(body_length) = body_length {
+                if let Ok(value) = HeaderValue::from_str(&body_length.to_string()) {
+                    response.headers_mut().insert(CONTENT_LENGTH, value);
+                }
             }
         }
 
@@ -1317,12 +1584,24 @@ impl IntoResponse for ResponsePayload {
             }
         }
 
+        let connection_options: HashSet<String> = self
+            .headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("connection"))
+            .flat_map(|(_, value)| value.split(','))
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect();
+
         for (name, value) in self.headers {
             if let (Ok(header_name), Ok(header_value)) = (
                 HeaderName::from_bytes(name.as_bytes()),
                 HeaderValue::from_str(&value),
             ) {
-                if header_name == CONTENT_LENGTH {
+                if header_name == CONTENT_LENGTH
+                    || is_hop_by_hop_header(&header_name)
+                    || connection_options.contains(header_name.as_str())
+                {
                     continue;
                 }
                 if header_name == CONTENT_TYPE {
@@ -1335,11 +1614,137 @@ impl IntoResponse for ResponsePayload {
             }
         }
 
-        if status == StatusCode::NO_CONTENT || status == StatusCode::NOT_MODIFIED {
+        if !status_allows_body(status) {
             response.headers_mut().remove(CONTENT_LENGTH);
         }
         response
     }
+}
+
+fn bytes_response_body(value: Vec<u8>, background: Option<Py<PyAny>>) -> Body {
+    let Some(background) = background else {
+        return Body::from(value);
+    };
+    let body_stream = stream::unfold(
+        (Some(value), Some(background)),
+        |(chunk, background)| async move {
+            if let Some(chunk) = chunk {
+                return Some((
+                    Ok::<Bytes, io::Error>(Bytes::from(chunk)),
+                    (None, background),
+                ));
+            }
+            run_background_task(background).await;
+            None
+        },
+    );
+    Body::from_stream(body_stream)
+}
+
+fn file_response_body(
+    reader: ReaderStream<tokio::io::Take<tokio::fs::File>>,
+    background: Option<Py<PyAny>>,
+) -> Body {
+    let Some(background) = background else {
+        return Body::from_stream(reader);
+    };
+    let body_stream = stream::unfold(
+        (reader, Some(background)),
+        |(mut reader, background)| async move {
+            match reader.next().await {
+                Some(Ok(chunk)) => Some((Ok(chunk), (reader, background))),
+                Some(Err(error)) => {
+                    run_background_task(background).await;
+                    Some((Err(error), (reader, None)))
+                }
+                None => {
+                    run_background_task(background).await;
+                    None
+                }
+            }
+        },
+    );
+    Body::from_stream(body_stream)
+}
+
+fn stream_response_body(response: Py<PyAny>, background: Option<Py<PyAny>>) -> Body {
+    let body_stream = stream::unfold(
+        (Some(response), background),
+        |(response, background)| async move {
+            let Some(response) = response else {
+                run_background_task(background).await;
+                return None;
+            };
+            let next = tokio::task::spawn_blocking(move || {
+                Python::attach(|py| -> PyResult<(Py<PyAny>, Option<Vec<u8>>)> {
+                    let chunk = response.call_method0(py, "_next_chunk")?;
+                    if chunk.bind(py).is_none() {
+                        Ok((response, None))
+                    } else {
+                        let value = chunk.extract::<Vec<u8>>(py)?;
+                        Ok((response, Some(value)))
+                    }
+                })
+            })
+            .await;
+            match next {
+                Ok(Ok((response, Some(chunk)))) => Some((
+                    Ok::<Bytes, io::Error>(Bytes::from(chunk)),
+                    (Some(response), background),
+                )),
+                Ok(Ok((_response, None))) => {
+                    run_background_task(background).await;
+                    None
+                }
+                Ok(Err(error)) => {
+                    let message = format!("Python streaming response failed: {error}");
+                    eprintln!("higuma {message}");
+                    run_background_task(background).await;
+                    Some((Err(io::Error::other(message)), (None, None)))
+                }
+                Err(error) => {
+                    let message = format!("Python streaming task failed: {error}");
+                    eprintln!("higuma {message}");
+                    run_background_task(background).await;
+                    Some((Err(io::Error::other(message)), (None, None)))
+                }
+            }
+        },
+    );
+    Body::from_stream(body_stream)
+}
+
+async fn run_background_task(background: Option<Py<PyAny>>) {
+    let Some(background) = background else {
+        return;
+    };
+    match tokio::task::spawn_blocking(move || Python::attach(|py| background.call0(py).map(|_| ())))
+        .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("higuma background task error: {error}"),
+        Err(error) => eprintln!("higuma background task failed: {error}"),
+    }
+}
+
+fn status_allows_body(status: StatusCode) -> bool {
+    !status.is_informational()
+        && status != StatusCode::NO_CONTENT
+        && status != StatusCode::RESET_CONTENT
+        && status != StatusCode::NOT_MODIFIED
+}
+
+fn is_hop_by_hop_header(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "connection"
+            | "keep-alive"
+            | "proxy-connection"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+    )
 }
 
 #[pymodule]
@@ -1408,5 +1813,129 @@ mod tests {
             &headers,
             &["https://evil.example".to_string()]
         ));
+    }
+
+    #[test]
+    fn route_converters_match_python_lexical_rules() {
+        let (integer, _) = parse_route_pattern("/values/<int:value>").unwrap();
+        assert!(match_segments(&integer, "/values/92233720368547758081234567890").is_some());
+        assert!(match_segments(&integer, "/values/-12").is_some());
+        assert!(match_segments(&integer, "/values/+12").is_none());
+
+        let (float, _) = parse_route_pattern("/values/<float:value>").unwrap();
+        for value in ["12", "-12", "12.", ".5", "-.5", "-0.25"] {
+            assert!(
+                match_segments(&float, &format!("/values/{value}")).is_some(),
+                "expected {value:?} to be accepted"
+            );
+        }
+        for value in ["+12", "1e3", "NaN", "inf", ".", "--1", "1.2.3"] {
+            assert!(
+                match_segments(&float, &format!("/values/{value}")).is_none(),
+                "expected {value:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn websocket_preflight_requires_internal_no_content_response() {
+        for status in [100, 200, 201, 302, 400, 500] {
+            assert!(!websocket_preflight_allows_upgrade(&ResponsePayload::new(
+                Vec::new(),
+                status,
+                Vec::new(),
+                None,
+            )));
+        }
+        assert!(websocket_preflight_allows_upgrade(&ResponsePayload::new(
+            Vec::new(),
+            StatusCode::NO_CONTENT.as_u16(),
+            Vec::new(),
+            None,
+        )));
+    }
+
+    #[test]
+    fn bodyless_statuses_and_head_use_safe_content_lengths() {
+        for status in [204, 205, 304] {
+            let response = ResponsePayload::new(
+                b"must not be sent".to_vec(),
+                status,
+                Vec::new(),
+                Some("text/plain".to_string()),
+            )
+            .into_response();
+            assert!(!response.headers().contains_key(CONTENT_LENGTH));
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let body = runtime
+                .block_on(to_bytes(response.into_body(), usize::MAX))
+                .unwrap();
+            assert!(body.is_empty());
+        }
+
+        let informational = ResponsePayload::new(
+            b"must not leak".to_vec(),
+            103,
+            vec![("x-private".to_string(), "must not leak".to_string())],
+            None,
+        )
+        .into_response();
+        assert_eq!(informational.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(!informational.headers().contains_key("x-private"));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let body = runtime
+            .block_on(to_bytes(informational.into_body(), usize::MAX))
+            .unwrap();
+        assert_eq!(body, "Internal Server Error");
+
+        let state = SharedState {
+            routes: Arc::new(RwLock::new(RouteTable::default())),
+            websocket_routes: Arc::new(RwLock::new(RouteTable::default())),
+            fallback: Arc::new(RwLock::new(None)),
+            template_env: Arc::new(RwLock::new(Environment::new())),
+            max_body_size: DEFAULT_MAX_BODY_SIZE,
+            server_header: Arc::new(String::new()),
+            websocket_slots: Arc::new(Semaphore::new(1)),
+        };
+        let head = finalize_response(
+            ResponsePayload::new(b"hello".to_vec(), 200, Vec::new(), None),
+            &state,
+            true,
+        );
+        assert_eq!(head.headers().get(CONTENT_LENGTH).unwrap(), "5");
+
+        let head_no_content = finalize_response(
+            ResponsePayload::new(b"ignored".to_vec(), 204, Vec::new(), None),
+            &state,
+            true,
+        );
+        assert!(!head_no_content.headers().contains_key(CONTENT_LENGTH));
+    }
+
+    #[test]
+    fn drops_application_controlled_framing_headers() {
+        let response = ResponsePayload::new(
+            b"hello".to_vec(),
+            200,
+            vec![
+                ("content-length".to_string(), "999".to_string()),
+                ("transfer-encoding".to_string(), "chunked".to_string()),
+                ("connection".to_string(), "x-private".to_string()),
+                ("x-private".to_string(), "secret".to_string()),
+                ("x-safe".to_string(), "visible".to_string()),
+            ],
+            None,
+        )
+        .into_response();
+
+        assert_eq!(response.headers().get(CONTENT_LENGTH).unwrap(), "5");
+        assert!(!response.headers().contains_key("transfer-encoding"));
+        assert!(!response.headers().contains_key("connection"));
+        assert!(!response.headers().contains_key("x-private"));
+        assert_eq!(response.headers().get("x-safe").unwrap(), "visible");
     }
 }

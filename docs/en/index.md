@@ -1,12 +1,12 @@
 # higuma
 
-**A Flask-inspired Python web framework backed by a Rust HTTP core.**
+**Write in Python, serve with Rust.**
 
 [日本語ドキュメント](../index.md){ .md-button }
 [Get started](getting-started.md){ .md-button .md-button--primary }
 
 ```bash
-pip install higuma
+python -m pip install -U higuma
 ```
 
 ```python
@@ -23,29 +23,53 @@ def index():
 app.run()
 ```
 
-## Highlights in 0.3.0
+## Design
 
-- Rust HTTP core powered by axum and Tokio
-- Flask-like routing, blueprints, middleware, and hooks
-- MiniJinja SSR with a compiled template cache
-- WebSockets with auth preflight, origin checks, and bounded queues
-- Multipart file uploads
-- WSGI and ASGI application mounting
-- Automatic OpenAPI 3.1 and Swagger UI
-- Dependency-free built-in SQLite ORM
-- Multi-process supervisor with bounded worker restarts
-- Session authentication, password hashing, CSRF, and rate limiting
-- OAuth 2.0 clients for Google, LINE, Discord, and custom providers
-- Streaming file responses and automatic gzip
-- Trusted proxy handling and strict response/session validation
+higuma combines a Flask-inspired decorator API with a built-in HTTP server
+powered by axum and Tokio. Application logic stays in Python; the Rust core
+handles sockets, route matching, file streaming, gzip, and WebSockets.
+
+higuma is neither a drop-in Flask replacement nor an ASGI application passed
+to a separate ASGI server. Existing WSGI and ASGI applications can be mounted
+under a higuma route.
+
+## Features in 0.4.0
+
+- `Annotated` typed inputs, dependency injection, response models, and structured 422s
+- Typed converters, automatic HEAD/OPTIONS, sync/async handlers, and class-based views
+- Blueprints, middleware, request/response hooks, and lifespan
+- MiniJinja SSR, context processors, and a compiled template cache
+- Sync/async streaming, SSE, background tasks, range/ETag files, and automatic gzip
+- Text, binary, and JSON WebSockets with same-origin and auth preflight checks
+- Multipart uploads and a safe filename helper
+- OpenAPI 3.1 / Swagger UI schemas for dataclasses, TypedDicts, enums, and more
+- SQLite ORM with transactions and pagination
+- Signed sessions, login, roles/permissions, and OAuth 2.0 with PKCE
+- Password, token, CSRF, CORS, rate-limit, trusted-host, and proxy helpers
+- In-process testing, CLI commands, and a multi-process supervisor
+
+!!! important "OpenAPI and input validation"
+    Markers such as `Annotated[..., Body()]` validate and convert runtime input
+    and generate OpenAPI from the same declaration. `response_model` validates
+    output. The legacy `request_body=` option and a return annotation by itself
+    remain schema metadata.
+
+## Supported scope
+
+- CPython 3.10 or newer
+- ABI3 wheels for Windows, Linux, and macOS
+- The built-in ORM supports SQLite only
+- A reverse proxy is recommended for TLS, buffering, and network-level limits
 
 ## Continue
 
+- [Getting started](getting-started.md)
 - [Feature guide](features.md)
 - [Authentication and security](security-auth.md)
 - [Examples](examples.md)
 - [API reference](api.md)
+- [Deployment](deployment.md)
 
-!!! note
-    higuma is under active development. Run load tests and a security review
-    before adopting it for a production service.
+!!! warning
+    higuma is under active development. Run workload-specific load, failure,
+    and security tests before adopting it in production.

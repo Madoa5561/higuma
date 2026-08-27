@@ -5,21 +5,24 @@ updates:
     schedule:
       interval: weekly
     groups:
-      rust-dependencies:
+      rust-minor-and-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
     groups:
-      python-dependencies:
+      python-minor-and-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     groups:
-      github-actions:
+      github-actions-minor-and-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]

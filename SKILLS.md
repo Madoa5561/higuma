@@ -44,9 +44,17 @@ python app.py
 | Realtime connection | `@app.websocket("/ws")` |
 | HTML SSR | `app.render_template("page.html", value=value)` |
 | JSON | return `dict`/`list` or call `app.jsonify(...)` |
-| Uploaded files | `request.files["file"]` |
-| Form values | `request.form["name"]` |
-| OpenAPI metadata | route options `summary`, `tags`, `request_body`, `responses` |
+| Typed query/header/cookie/path | `Annotated[T, QueryParam/Header/Cookie/PathParam(...)]` |
+| Typed JSON/form/file | `Annotated[T, Body/Form/File(...)]` |
+| Dependency injection | `Annotated[T, Depends(callable)]` |
+| Validated output | route option `response_model=Type` |
+| Streaming / SSE | `StreamingResponse` / `EventSourceResponse` |
+| After-response work | injected `BackgroundTasks` or `BackgroundTask` |
+| Class-based routes | `View` or `MethodView` with `add_url_rule` |
+| Application lifecycle | `Higuma(..., lifespan=context_manager)` |
+| Uploaded files, dynamic access | `request.files["file"]` |
+| Form values, dynamic access | `request.form["name"]` |
+| OpenAPI metadata | route options `summary`, `tags`, `responses` |
 | OpenAPI JSON / UI | `/openapi.json` and `/docs` |
 | Existing WSGI app | `app.mount_wsgi("/legacy", wsgi_app)` |
 | Existing ASGI app | `app.mount_asgi("/service", asgi_app)` |
@@ -62,14 +70,22 @@ python app.py
 
 ## Request and response rules
 
-- Import the request proxy with `from higuma import request`.
-- Use `request.args` for query parameters and `request.json` for JSON bodies.
-- Use `request.form` and `request.files` for multipart requests.
+- Prefer `Annotated` parameter markers for public API boundaries that benefit
+  from conversion, structured 422 errors, and generated schemas.
+- Import the request proxy with `from higuma import request` for dynamic access.
+- Use `request.args`, `request.json`, `request.form`, and `request.files` when
+  the shape is intentionally dynamic.
 - A route may return `str`, `bytes`, `dict`, `list`, `Response`, or
   `(body, status, headers)`.
 - Use typed path converters: `<int:id>`, `<float:value>`, `<uuid:id>`,
   `<path:filename>`, and `<string:name>`.
 - Do not manually serialize JSON unless a custom encoding is required.
+- Use `response_model` when output must be validated or filtered. A return
+  annotation by itself is schema metadata.
+- Use `StreamingResponse` for incremental sync/async output and
+  `EventSourceResponse` for SSE. Do not buffer streams into a list first.
+- Keep background tasks short and non-durable; use a job queue for retries or
+  delivery guarantees.
 - Do not access private `_core` APIs from application code.
 - Use `request.raw_headers` only when duplicate header byte pairs are required
   for ASGI/WSGI interoperability.
@@ -148,6 +164,9 @@ with db.session() as session:
 
 ```python
 from dataclasses import dataclass
+from typing import Annotated
+
+from higuma import Body, QueryParam
 
 
 @dataclass
@@ -159,15 +178,20 @@ class CreateUser:
     "/users",
     summary="Create user",
     tags=("users",),
-    request_body=CreateUser,
-    responses={"201": {"description": "Created"}},
+    response_model=CreateUser,
+    status_code=201,
 )
-def create_user():
-    return request.json, 201
+def create_user(
+    payload: Annotated[CreateUser, Body()],
+    notify: Annotated[bool, QueryParam()] = False,
+):
+    return payload
 ```
 
 Prefer real Python annotations and dataclasses. higuma resolves postponed
-annotations and converts them to OpenAPI 3.1 schemas.
+annotations and converts them to OpenAPI 3.1 schemas. Parameter markers enable
+runtime input validation; `response_model` enables runtime output validation.
+The legacy `request_body=` option is metadata-only.
 
 ## Verification checklist
 
@@ -178,8 +202,8 @@ python -m ruff format --check python tests examples
 python -m ruff check python tests examples
 python -m pytest
 cargo fmt --check
-cargo check
-cargo test --target x86_64-pc-windows-msvc
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
 mkdocs build --strict
 ```
 
@@ -192,6 +216,10 @@ supervisor, streaming, and proxy changes.
 - `src/lib.rs`: Rust HTTP, routing, WebSocket, SSR execution core
 - `python/higuma/app.py`: public application API and dispatch
 - `python/higuma/request.py`: request, multipart, uploaded files
+- `python/higuma/parameters.py`: typed parameters, dependency injection, validation
+- `python/higuma/response.py`: response types, streaming, SSE, cookies, files
+- `python/higuma/background.py`: after-response tasks
+- `python/higuma/views.py`: class-based views
 - `python/higuma/database.py`: built-in SQLite ORM
 - `python/higuma/auth.py`: sessions, login, OAuth
 - `python/higuma/security.py`: password, token, CSRF, rate limit helpers

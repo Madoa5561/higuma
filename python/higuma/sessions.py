@@ -12,6 +12,8 @@ from .request import Request
 from .response import Response, ResponseValue, make_response
 from .security import _validate_secret_key
 
+_MISSING = object()
+
 
 class Session(dict[str, Any]):
     def __init__(
@@ -40,20 +42,44 @@ class Session(dict[str, Any]):
         super().__setitem__(key, value)
 
     def __delitem__(self, key: str) -> None:
-        self.modified = True
         super().__delitem__(key)
+        self.modified = True
 
     def clear(self) -> None:
-        self.modified = True
+        if self:
+            self.modified = True
         super().clear()
 
-    def pop(self, key: str, default: Any = None) -> Any:
+    def pop(self, key: str, default: Any = _MISSING) -> Any:
+        if key in self:
+            value = super().pop(key)
+            self.modified = True
+            return value
+        if default is _MISSING:
+            raise KeyError(key)
+        return default
+
+    def popitem(self) -> tuple[str, Any]:
+        value = super().popitem()
         self.modified = True
-        return super().pop(key, default)
+        return value
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        if key in self:
+            return super().__getitem__(key)
+        super().__setitem__(key, default)
+        self.modified = True
+        return default
 
     def update(self, *args: Any, **kwargs: Any) -> None:
-        self.modified = True
-        super().update(*args, **kwargs)
+        values = dict(*args, **kwargs)
+        if values:
+            self.modified = True
+        super().update(values)
+
+    def __ior__(self, other: Any) -> Session:  # noqa: PYI034 - Python 3.10 has no typing.Self
+        self.update(other)
+        return self
 
 
 class SessionMiddleware:

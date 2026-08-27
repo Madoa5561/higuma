@@ -124,11 +124,9 @@ class UploadFile:
 
 
 def secure_filename(filename: str, *, fallback: str = "upload") -> str:
-    value = unicodedata.normalize("NFKC", str(filename))
-    value = value.replace("\\", "/").rsplit("/", 1)[-1]
-    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip(" ._")
+    value = _sanitize_filename_component(filename)
     if not value:
-        value = fallback
+        value = _sanitize_filename_component(fallback) or "upload"
     stem = value.split(".", 1)[0].upper()
     if stem in _WINDOWS_RESERVED_NAMES:
         value = f"_{value}"
@@ -137,7 +135,13 @@ def secure_filename(filename: str, *, fallback: str = "upload") -> str:
         suffix = Path(value).suffix[:20]
         stem_bytes = Path(value).stem.encode("utf-8")[: 240 - len(suffix.encode("utf-8"))]
         value = stem_bytes.decode("utf-8", errors="ignore").rstrip(" .") + suffix
-    return value or fallback
+    return value or "upload"
+
+
+def _sanitize_filename_component(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value))
+    normalized = normalized.replace("\\", "/").rsplit("/", 1)[-1]
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", normalized).strip(" ._")
 
 
 class Headers(Mapping[str, str]):
@@ -216,6 +220,19 @@ class Request:
     @property
     def content_length(self) -> int | None:
         return len(self.body)
+
+    @property
+    def host(self) -> str:
+        return str(self.headers.get("host", ""))
+
+    @property
+    def base_url(self) -> str:
+        return f"{self.scheme}://{self.host}/"
+
+    @property
+    def url(self) -> str:
+        query = f"?{self.query_string}" if self.query_string else ""
+        return f"{self.scheme}://{self.host}{self.path}{query}"
 
     @property
     def is_json(self) -> bool:

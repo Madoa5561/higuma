@@ -7,6 +7,67 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-27
+
+### Added
+
+- Runtime-validated `Annotated` inputs for query, header, cookie, path, JSON,
+  form, and uploaded-file values with structured HTTP 422 errors
+- Nested sync, async, and yield dependencies with request caching and test
+  overrides through `Depends` and `app.dependency_overrides`
+- Runtime `response_model` validation, conversion, field filtering, and route
+  `status_code` declarations
+- Sync and async `StreamingResponse`, `EventSourceResponse` / `ServerSentEvent`,
+  and ordered after-response background tasks
+- Sync and async application lifespan context managers with `app.state` and
+  lifecycle-aware test-client context managers
+- Flask-style `View` and `MethodView` class-based routes
+- Modern request URLs, redirect following/history, partitioned-cookie support
+  on Python 3.14+, and JSON serialization for standard typed values
+- Real-socket HTTP, WebSocket, streaming, SSE, background-task, file-range, and
+  framing regression suites
+- Comprehensive Japanese and English API reference plus typed API, streaming,
+  SSE, lifespan, background-task, and class-based-view examples
+
+### Changed
+
+- Static and direct file byte ranges are streamed from Rust with bounded seek/read instead of
+  loading the selected range into Python memory
+- Streaming responses preserve their captured request context through lazy
+  iteration and skip gzip for SSE and partial-content responses
+- OpenAPI 3.1 now derives parameters, request bodies, validation responses, and
+  constrained schemas from typed inputs and dependencies
+- CI covers CPython 3.10 through 3.14 and Windows, Linux, Intel macOS, Apple
+  Silicon, and Linux ARM64 release artifacts
+- Rust dependencies were refreshed to maintained axum, Tokio, PyO3, MiniJinja,
+  tower-http, futures-util, and serde_json releases
+
+### Fixed
+
+- HEAD and bodyless status framing, duplicate response headers, hop-by-hop
+  header filtering, final informational responses, and Rust/Python path
+  converter parity
+- WebSocket preflight status handling, bounded handler/task queues, close/error
+  codes, and reader/writer task shutdown
+- Session modification tracking, custom CSRF fields, response status mutation,
+  ORM default/type/numeric validation, and async request-context isolation
+- Test-client redirect method/body semantics and streamed/file response reading
+
+### Security
+
+- OAuth state, PKCE verifier, and OIDC nonce values are session-bound per
+  authorization request, bounded for parallel login tabs, single-use on
+  success, and protected from caller parameter replacement
+- Authenticated OAuth token and userinfo requests share the configured HTTP
+  session, limits, and headers
+- Password hasher parameters and encoded salt lengths are strictly validated
+- Validation errors redact cookie, password, token, secret, authorization, and
+  API-key inputs
+- `secure_filename()` produces a safe fallback for empty and traversal-only
+  names
+- Release automation verifies version/tag alignment, smoke-tests every built
+  artifact, and publishes GitHub releases only after successful PyPI upload
+
 ## [0.3.0] - 2026-07-29
 
 ### Added

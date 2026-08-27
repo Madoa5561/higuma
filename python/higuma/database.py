@@ -4,6 +4,7 @@ import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import date, datetime
+from math import isfinite
 from pathlib import Path
 from threading import RLock
 from typing import Any, Generic, TypeVar
@@ -73,12 +74,29 @@ class Integer(Field):
             return f"{quote_identifier(self.name)} INTEGER PRIMARY KEY AUTOINCREMENT"
         return super().ddl()
 
+    def to_database(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"{self.name} must be an integer")
+        return value
+
     def from_database(self, value: Any) -> int | None:
         return None if value is None else int(value)
 
 
 class Float(Field):
     sql_type = "REAL"
+
+    def to_database(self, value: Any) -> float | None:
+        if value is None:
+            return None
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise TypeError(f"{self.name} must be a number")
+        converted = float(value)
+        if not isfinite(converted):
+            raise ValueError(f"{self.name} must be finite")
+        return converted
 
     def from_database(self, value: Any) -> float | None:
         return None if value is None else float(value)
@@ -134,7 +152,7 @@ class Date(Field):
     def to_database(self, value: Any) -> str | None:
         if value is None:
             return None
-        if not isinstance(value, date):
+        if not isinstance(value, date) or isinstance(value, datetime):
             raise TypeError(f"{self.name} must be a date")
         return value.isoformat()
 
@@ -234,11 +252,15 @@ class Query(Generic[ModelT]):
         return self._clone(ordering=f"{quote_identifier(field)} {direction}")
 
     def limit(self, value: int) -> Query[ModelT]:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError("limit must be an integer")
         if value < 0:
             raise ValueError("limit must be non-negative")
         return self._clone(limit_value=value)
 
     def offset(self, value: int) -> Query[ModelT]:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError("offset must be an integer")
         if value < 0:
             raise ValueError("offset must be non-negative")
         return self._clone(offset_value=value)
@@ -342,14 +364,17 @@ class Session:
             fields.append(name)
             values.append(field.to_database(value))
 
-        columns = ", ".join(quote_identifier(name) for name in fields)
-        placeholders = ", ".join("?" for _ in fields)
         table = quote_identifier(model.__tablename__)
-        # All identifiers pass quote_identifier; all values use placeholders.
-        cursor = self.execute(
-            f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",  # nosec B608
-            values,
-        )
+        if fields:
+            columns = ", ".join(quote_identifier(name) for name in fields)
+            placeholders = ", ".join("?" for _ in fields)
+            # All identifiers pass quote_identifier; all values use placeholders.
+            cursor = self.execute(
+                f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",  # nosec B608
+                values,
+            )
+        else:
+            cursor = self.execute(f"INSERT INTO {table} DEFAULT VALUES")  # nosec B608
         primary_key = model.__primary_key__
         if (
             primary_key is not None

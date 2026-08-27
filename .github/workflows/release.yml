@@ -1,22 +1,62 @@
-name: Build release wheels
+name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing GitHub Release tag to attach distributions to
-        required: false
+        description: Existing vX.Y.Z tag to rebuild
+        required: true
         type: string
+      publish_to_pypi:
+        description: Publish rebuilt files to PyPI (normally leave disabled)
+        required: true
+        default: false
+        type: boolean
+      replace_release_assets:
+        description: Replace same-named assets on an existing GitHub Release
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+  cancel-in-progress: false
+
 jobs:
+  guard:
+    name: Verify release identity
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Verify tag, manifests, runtime, lockfile, and changelog
+        id: identity
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+        run: |
+          python tools/verify_release.py --tag "$RELEASE_TAG"
+          test "$(git tag --points-at HEAD --list "$RELEASE_TAG")" = "$RELEASE_TAG"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
   wheels:
     name: Wheel (${{ matrix.platform.name }})
+    needs: guard
     strategy:
+      fail-fast: false
       matrix:
         platform:
           - name: linux-x86_64
@@ -24,7 +64,7 @@ jobs:
             target: x86_64
             manylinux: auto
           - name: linux-aarch64
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04-arm
             target: aarch64
             manylinux: auto
           - name: musllinux-x86_64
@@ -46,6 +86,8 @@ jobs:
     runs-on: ${{ matrix.platform.runner }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.guard.outputs.tag }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
@@ -56,32 +98,45 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --locked --compatibility pypi --out dist
           manylinux: ${{ matrix.platform.manylinux }}
+      - name: Install and smoke-test wheel
+        run: >-
+          python tools/smoke_package.py
+          --wheel-dir dist
+          --expected-version "${{ needs.guard.outputs.version }}"
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.platform.name }}
-          path: dist/*
+          path: dist/*.whl
           if-no-files-found: error
 
   source:
     name: Source distribution
+    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.guard.outputs.tag }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
       - uses: dtolnay/rust-toolchain@stable
-      - run: python -m pip install maturin
+      - run: python -m pip install "maturin>=1.6,<2.0"
       - run: maturin sdist --out dist
+      - name: Verify source distribution name
+        env:
+          PACKAGE_VERSION: ${{ needs.guard.outputs.version }}
+        run: test -f "dist/higuma-${PACKAGE_VERSION}.tar.gz"
       - uses: actions/upload-artifact@v7
         with:
           name: source
-          path: dist/*
+          path: dist/*.tar.gz
           if-no-files-found: error
 
   publish:
     name: Publish to PyPI
-    needs: [wheels, source]
+    if: github.event_name == 'push' || inputs.publish_to_pypi == true
+    needs: [guard, wheels, source]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -95,17 +150,21 @@ jobs:
           merge-multiple: true
       - name: List distributions
         run: ls -lh dist
-      - name: Publish distributions
+      - name: Publish immutable distributions
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           print-hash: true
-          skip-existing: true
 
   release-assets:
-    name: Attach distributions to GitHub Release
-    if: github.event_name == 'release' || inputs.release_tag != ''
-    needs: [wheels, source]
+    name: Create GitHub Release and attach distributions
+    if: >-
+      always() &&
+      needs.guard.result == 'success' &&
+      needs.wheels.result == 'success' &&
+      needs.source.result == 'success' &&
+      (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    needs: [guard, wheels, source, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -114,8 +173,18 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Upload release assets
+      - name: Create release after artifacts are validated
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          RELEASE_TAG: ${{ needs.guard.outputs.tag }}
+          PACKAGE_VERSION: ${{ needs.guard.outputs.version }}
+          REPLACE_ASSETS: ${{ inputs.replace_release_assets }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --title "higuma $PACKAGE_VERSION" --generate-notes --repo "$GITHUB_REPOSITORY"
+          fi
+          if [[ "$REPLACE_ASSETS" == "true" ]]; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY"
+          fi

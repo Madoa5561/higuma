@@ -13,12 +13,15 @@ class HTTPException(Exception):
         detail: str | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> None:
-        self.status_code = status_code or self.status_code
+        resolved_status = self.status_code if status_code is None else int(status_code)
+        if not 200 <= resolved_status <= 599:
+            raise ValueError("final HTTP status code must be between 200 and 599")
+        self.status_code = resolved_status
         try:
             default_detail = HTTPStatus(self.status_code).phrase
         except ValueError:
             default_detail = "HTTP Error"
-        self.detail = detail or default_detail
+        self.detail = default_detail if detail is None else str(detail)
         self.headers = dict(headers or {})
         super().__init__(self.detail)
 

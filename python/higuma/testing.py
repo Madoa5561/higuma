@@ -5,16 +5,44 @@ import secrets
 from collections.abc import Mapping
 from http.cookies import SimpleCookie
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 from urllib.parse import urlencode, urlsplit
 
-from .response import FileResponse, HTMLResponse, Response, TemplateResponse, make_response
+from .response import (
+    FileResponse,
+    HTMLResponse,
+    Response,
+    StreamingResponse,
+    TemplateResponse,
+    make_response,
+)
 
 
 class TestClient:
     def __init__(self, app: Any) -> None:
         self.app = app
         self.cookies: dict[str, str] = {}
+        self._lifespan_context: Any = None
+
+    def __enter__(self) -> TestClient:  # noqa: PYI034 - Python 3.10 has no typing.Self
+        if self._lifespan_context is not None:
+            raise RuntimeError("TestClient context is already active")
+        self._lifespan_context = self.app.lifespan()
+        self._lifespan_context.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        if self._lifespan_context is None:
+            return False
+        context = self._lifespan_context
+        self._lifespan_context = None
+        return bool(context.__exit__(exc_type, exc_value, traceback))
 
     def open(
         self,
@@ -26,7 +54,11 @@ class TestClient:
         data: str | bytes | Mapping[str, Any] | None = None,
         json: Any = None,
         files: Mapping[str, Any] | None = None,
+        follow_redirects: bool = False,
+        max_redirects: int = 20,
     ) -> Response:
+        if max_redirects < 1:
+            raise ValueError("max_redirects must be positive")
         method = method.upper()
         split = urlsplit(path)
         query_string = split.query
@@ -86,11 +118,85 @@ class TestClient:
         if method == "HEAD":
             response.headers.setdefault("content-length", str(len(response.body)))
             response.body = b""
-        elif response.status_code in {204, 304}:
+        elif response.status_code in {204, 205, 304}:
             response.headers.pop("content-length", None)
             response.body = b""
         self._update_cookies(response)
+        if response.background is not None:
+            response.background()
+            response.background = None
+        if follow_redirects:
+            return self._follow_redirects(
+                response,
+                method=method,
+                headers=headers,
+                data=data,
+                json=json,
+                files=files,
+                max_redirects=max_redirects,
+            )
         return response
+
+    def _follow_redirects(
+        self,
+        response: Response,
+        *,
+        method: str,
+        headers: Mapping[str, str] | None,
+        data: str | bytes | Mapping[str, Any] | None,
+        json: Any,
+        files: Mapping[str, Any] | None,
+        max_redirects: int,
+    ) -> Response:
+        history: list[Response] = []
+        visited: set[tuple[str, str]] = set()
+        current = response
+        current_method = method
+        current_data = data
+        current_json = json
+        current_files = files
+        current_headers = dict(headers or {})
+
+        while current.status_code in {301, 302, 303, 307, 308} and "location" in current.headers:
+            if len(history) >= max_redirects:
+                raise RuntimeError(f"redirect limit exceeded ({max_redirects})")
+            location = current.headers["location"]
+            split = urlsplit(location)
+            target = split.path or "/"
+            if split.query:
+                target = f"{target}?{split.query}"
+            if split.netloc:
+                current_headers["host"] = split.netloc
+
+            if current.status_code == 303 or (
+                current.status_code in {301, 302} and current_method not in {"GET", "HEAD"}
+            ):
+                current_method = "HEAD" if current_method == "HEAD" else "GET"
+                current_data = None
+                current_json = None
+                current_files = None
+                current_headers.pop("content-type", None)
+                current_headers.pop("Content-Type", None)
+                current_headers.pop("content-length", None)
+                current_headers.pop("Content-Length", None)
+
+            key = (current_method, location)
+            if key in visited:
+                raise RuntimeError(f"redirect loop detected at {location!r}")
+            visited.add(key)
+            history.append(current)
+            current = self.open(
+                target,
+                method=current_method,
+                headers=current_headers,
+                data=current_data,
+                json=current_json,
+                files=current_files,
+                follow_redirects=False,
+            )
+
+        current.history = tuple(history)
+        return current
 
     def get(self, path: str, **kwargs: Any) -> Response:
         return self.open(path, method="GET", **kwargs)
@@ -115,17 +221,38 @@ class TestClient:
 
     def _materialize(self, value: Any) -> Response:
         response = make_response(value)
-        if isinstance(response, TemplateResponse):
-            html = self.app._core.render_template(response.template, response.context_json)
-            materialized = HTMLResponse(html, response.status_code, response.headers)
-            materialized._extra_headers.extend(response._extra_headers)
-            return materialized
-        if isinstance(response, FileResponse):
+        if isinstance(response, StreamingResponse):
+            chunks = []
+            while True:
+                chunk = response._next_chunk()
+                if chunk is None:
+                    break
+                chunks.append(chunk)
             materialized = Response(
-                Path(response.path).read_bytes(),
+                b"".join(chunks),
                 response.status_code,
                 response.headers,
                 response.media_type,
+                response.background,
+            )
+            materialized._extra_headers.extend(response._extra_headers)
+            return materialized
+        if isinstance(response, TemplateResponse):
+            html = self.app._core.render_template(response.template, response.context_json)
+            materialized = HTMLResponse(html, response.status_code, response.headers)
+            materialized.background = response.background
+            materialized._extra_headers.extend(response._extra_headers)
+            return materialized
+        if isinstance(response, FileResponse):
+            with Path(response.path).open("rb") as handle:
+                handle.seek(response.offset)
+                body = handle.read(response.length)
+            materialized = Response(
+                body,
+                response.status_code,
+                response.headers,
+                response.media_type,
+                response.background,
             )
             materialized._extra_headers.extend(response._extra_headers)
             return materialized

@@ -4,6 +4,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from .parameters import cache_parameter_hints
+
 
 @dataclass
 class _DeferredRoute:
@@ -49,6 +51,16 @@ class Blueprint:
         method_tuple = tuple(method.upper() for method in (methods or ("GET",)))
 
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
+            import inspect
+
+            frame = inspect.currentframe()
+            try:
+                cache_parameter_hints(
+                    view_func,
+                    frame.f_back.f_locals if frame is not None and frame.f_back is not None else {},
+                )
+            finally:
+                del frame
             self._routes.append(
                 _DeferredRoute(
                     rule=rule,

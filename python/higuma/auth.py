@@ -21,6 +21,7 @@ from .sessions import SessionMiddleware
 
 UserT = TypeVar("UserT")
 _current_user: ContextVar[Any] = ContextVar("higuma_current_user", default=None)
+_MAX_PENDING_OAUTH_STATES = 16
 
 
 class AnonymousUser:
@@ -213,46 +214,64 @@ class OAuth2Client:
     def authorization_url(self, **params: str) -> str:
         nonce = secrets.token_urlsafe(24)
         state = self.signer.dumps({"nonce": nonce})
-        active_session = _active_session()
-        verifier = None
-        if active_session is not None:
-            verifier = secrets.token_urlsafe(48)
-            active_session[self._oauth_session_key] = {
-                "nonce": nonce,
-                "verifier": verifier,
-            }
+        active_session = _require_active_session()
+        verifier = secrets.token_urlsafe(48)
+        pending = active_session.get(self._oauth_session_key)
+        pending_states = dict(pending) if isinstance(pending, dict) else {}
+        pending_states[nonce] = {"verifier": verifier}
+        while len(pending_states) > _MAX_PENDING_OAUTH_STATES:
+            pending_states.pop(next(iter(pending_states)))
+        active_session[self._oauth_session_key] = pending_states
         query = {
+            **self.extra_authorize_params,
+            **params,
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
             "response_type": "code",
             "scope": " ".join(self.scopes),
             "state": state,
             "nonce": nonce,
-            **self.extra_authorize_params,
-            **params,
         }
-        if verifier is not None:
-            challenge = hashlib.sha256(verifier.encode("ascii")).digest()
-            query["code_challenge"] = _urlsafe_b64(challenge)
-            query["code_challenge_method"] = "S256"
+        challenge = hashlib.sha256(verifier.encode("ascii")).digest()
+        query["code_challenge"] = _urlsafe_b64(challenge)
+        query["code_challenge_method"] = "S256"
         return f"{self.authorize_url}?{urlencode(query)}"
 
     def validate_state(self, state: str, *, max_age: int = 600) -> None:
         value = self.signer.loads(state, max_age=max_age)
-        if not isinstance(value, dict) or "nonce" not in value:
-            raise ValueError("invalid OAuth state")
-        active_session = _active_session()
-        if active_session is None:
-            return
-        expected = active_session.pop(self._oauth_session_key, None)
-        if not isinstance(expected, dict) or not secrets.compare_digest(
-            str(value["nonce"]),
-            str(expected.get("nonce", "")),
-        ):
-            raise ValueError("OAuth state does not match this session")
-        active_session[self._oauth_verifier_key] = expected.get("verifier")
+        if not isinstance(value, dict) or not isinstance(value.get("nonce"), str):
+            raise ValueError("invalid OAuth state")  # noqa: TRY004 - state value is invalid
+        active_session = _require_active_session()
+        pending = active_session.get(self._oauth_session_key)
+        if not isinstance(pending, dict):
+            raise ValueError(  # noqa: TRY004 - state value is invalid
+                "OAuth state does not match this session"
+            )
+        nonce = value["nonce"]
+        matched_nonce = next(
+            (
+                candidate
+                for candidate in pending
+                if isinstance(candidate, str) and secrets.compare_digest(nonce, candidate)
+            ),
+            None,
+        )
+        expected = pending.get(matched_nonce) if matched_nonce is not None else None
+        if not isinstance(expected, dict) or not isinstance(expected.get("verifier"), str):
+            raise ValueError(  # noqa: TRY004 - state value is invalid
+                "OAuth state does not match this session"
+            )
+
+        pending_states = dict(pending)
+        del pending_states[matched_nonce]
+        if pending_states:
+            active_session[self._oauth_session_key] = pending_states
+        else:
+            active_session.pop(self._oauth_session_key, None)
+        request.state[self._oauth_verifier_key] = expected["verifier"]
 
     def fetch_token(self, code: str) -> dict[str, Any]:
+        _require_active_session()
         data = {
             "grant_type": "authorization_code",
             "code": code,
@@ -260,11 +279,10 @@ class OAuth2Client:
             "client_secret": self.client_secret,
             "redirect_uri": self.redirect_uri,
         }
-        active_session = _active_session()
-        if active_session is not None:
-            verifier = active_session.pop(self._oauth_verifier_key, None)
-            if verifier:
-                data["code_verifier"] = str(verifier)
+        verifier = request.state.pop(self._oauth_verifier_key, None)
+        if not verifier:
+            raise RuntimeError("validate_state() must be called before fetch_token()")
+        data["code_verifier"] = str(verifier)
         return self._request_json(
             self.token_url,
             method="POST",
@@ -355,6 +373,13 @@ def _active_session() -> MutableMapping[str, Any] | None:
     except (AttributeError, RuntimeError):
         return None
     return value if isinstance(value, MutableMapping) else None
+
+
+def _require_active_session() -> MutableMapping[str, Any]:
+    active_session = _active_session()
+    if active_session is None:
+        raise RuntimeError("OAuth2Client requires SessionMiddleware and an active request")
+    return active_session
 
 
 def _urlsafe_b64(value: bytes) -> str:

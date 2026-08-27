@@ -6,19 +6,28 @@ import inspect
 import logging
 import traceback
 from collections.abc import Callable, Iterable, Mapping
-from contextvars import ContextVar, Token
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar, Token, copy_context
 from functools import wraps
 from html import escape
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
+from types import TracebackType
 from typing import Any
 
 from ._core import HigumaCore
+from .background import BackgroundTask, BackgroundTasks
 from .blueprint import Blueprint
 from .config import Config
 from .exceptions import HTTPException, MethodNotAllowed, NotFound
 from .mounts import asgi_view, wsgi_view
 from .openapi import generate_openapi, swagger_ui_html
+from .parameters import (
+    RequestValidationError,
+    cache_parameter_hints,
+    coerce_response_model,
+    resolve_arguments,
+)
 from .request import LocalProxy, Request, _pop_request, _push_request
 from .response import (
     FileResponse,
@@ -32,7 +41,7 @@ from .response import (
 from .routing import Rule, normalize_rule
 from .websocket import WebSocket
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -63,6 +72,7 @@ class Higuma:
         debug: bool = False,
         openapi_url: str | None = "/openapi.json",
         docs_url: str | None = "/docs",
+        lifespan: Callable[[Higuma], Any] | None = None,
     ) -> None:
         if max_content_length <= 0:
             raise ValueError("max_content_length must be positive")
@@ -75,6 +85,8 @@ class Higuma:
         self.static_url_path = normalize_rule(static_url_path)
         self.debug = debug
         self.logger = logging.getLogger(import_name)
+        self.state: dict[str, Any] = {}
+        self._lifespan_handler = lifespan
         self.config = Config(
             DEBUG=debug,
             TESTING=False,
@@ -96,6 +108,7 @@ class Higuma:
         self._startup_handlers: list[Callable[..., Any]] = []
         self._shutdown_handlers: list[Callable[..., Any]] = []
         self._context_processors: list[Callable[[], Mapping[str, Any]]] = []
+        self.dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = {}
 
         self._core = HigumaCore(
             self.template_folder,
@@ -156,11 +169,21 @@ class Higuma:
         tags: Iterable[str] | None = None,
         responses: Mapping[str, Any] | None = None,
         request_body: Any = None,
+        response_model: Any = None,
+        status_code: int | None = None,
         operation_id: str | None = None,
         include_in_schema: bool = True,
         openapi_extra: Mapping[str, Any] | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
+            frame = inspect.currentframe()
+            try:
+                cache_parameter_hints(
+                    view_func,
+                    frame.f_back.f_locals if frame is not None and frame.f_back is not None else {},
+                )
+            finally:
+                del frame
             self.add_url_rule(
                 rule,
                 endpoint=endpoint or view_func.__name__,
@@ -171,6 +194,8 @@ class Higuma:
                 tags=tags,
                 responses=responses,
                 request_body=request_body,
+                response_model=response_model,
+                status_code=status_code,
                 operation_id=operation_id,
                 include_in_schema=include_in_schema,
                 openapi_extra=openapi_extra,
@@ -200,21 +225,26 @@ class Higuma:
         *,
         endpoint: str,
         view_func: Callable[..., Any],
-        methods: Iterable[str] = ("GET",),
+        methods: Iterable[str] | None = None,
         summary: str | None = None,
         description: str | None = None,
         tags: Iterable[str] | None = None,
         responses: Mapping[str, Any] | None = None,
         request_body: Any = None,
+        response_model: Any = None,
+        status_code: int | None = None,
         operation_id: str | None = None,
         include_in_schema: bool = True,
         openapi_extra: Mapping[str, Any] | None = None,
     ) -> None:
-        method_tuple = tuple(dict.fromkeys(method.upper() for method in methods))
+        declared_methods = methods or getattr(view_func, "methods", None) or ("GET",)
+        method_tuple = tuple(dict.fromkeys(method.upper() for method in declared_methods))
         if not method_tuple:
             raise ValueError("methods must not be empty")
         if endpoint in self._endpoint_rules:
             raise ValueError(f"endpoint {endpoint!r} is already registered")
+        if status_code is not None:
+            Response(b"", status_code)
         normalized_rule = normalize_rule(rule)
         for existing in self._routes:
             duplicate_methods = set(existing.methods) & set(method_tuple)
@@ -235,6 +265,8 @@ class Higuma:
                     "tags": tuple(tags) if tags else None,
                     "responses": dict(responses) if responses else None,
                     "request_body": request_body,
+                    "response_model": response_model,
+                    "status_code": status_code,
                     "operation_id": operation_id,
                     "openapi_extra": dict(openapi_extra or {}),
                 }.items()
@@ -367,6 +399,35 @@ class Higuma:
     def on_shutdown(self, func: Callable[..., Any]) -> Callable[..., Any]:
         self._shutdown_handlers.append(func)
         return func
+
+    @contextmanager
+    def lifespan(self):
+        manager: Any = nullcontext(None)
+        if self._lifespan_handler is not None:
+            context = self._lifespan_handler(self)
+            if hasattr(context, "__aenter__") and hasattr(context, "__aexit__"):
+                manager = _AsyncContextManagerAdapter(context)
+            elif hasattr(context, "__enter__") and hasattr(context, "__exit__"):
+                manager = context
+            else:
+                raise TypeError("lifespan must return a sync or async context manager")
+
+        with manager as lifespan_state:
+            if lifespan_state is not None:
+                if not isinstance(lifespan_state, Mapping):
+                    raise TypeError("lifespan must yield a mapping or None")
+                self.state.update(lifespan_state)
+            for handler in self._startup_handlers:
+                _resolve_awaitable(
+                    handler(self) if inspect.signature(handler).parameters else handler()
+                )
+            try:
+                yield self
+            finally:
+                for handler in reversed(self._shutdown_handlers):
+                    _resolve_awaitable(
+                        handler(self) if inspect.signature(handler).parameters else handler()
+                    )
 
     def render_template(
         self,
@@ -510,13 +571,8 @@ class Higuma:
                 restart_window=restart_window,
             ).run()
             return
-        for handler in self._startup_handlers:
-            _resolve_awaitable(handler())
-        try:
+        with self.lifespan():
             self._core.run(host, port, workers)
-        finally:
-            for handler in reversed(self._shutdown_handlers):
-                _resolve_awaitable(handler())
 
     def _dispatch_websocket(
         self,
@@ -597,6 +653,7 @@ class Higuma:
         *,
         run_hooks: bool = True,
     ) -> Any:
+        request.state["_higuma_dependency_overrides"] = self.dependency_overrides
         request_token = _push_request(request)
         app_token: Token[Higuma | None] = _app_context.set(self)
 
@@ -636,44 +693,73 @@ class Higuma:
                         response = make_response(_call_after_hook(hook, request, response))
                 except Exception as exc:  # noqa: BLE001 - after hook exception boundary
                     response = make_response(self._handle_exception(exc, request))
+            response = self._prepare_file_response(request, response)
+            background_tasks = request.state.get("_higuma_background_tasks")
+            if isinstance(background_tasks, BackgroundTasks) and background_tasks:
+                if response.background is None:
+                    response.background = background_tasks
+                elif response.background is not background_tasks:
+                    combined = BackgroundTasks([BackgroundTask(response.background)])
+                    combined.tasks.extend(background_tasks.tasks)
+                    response.background = combined
+            dependency_cleanups = request.state.pop("_higuma_dependency_cleanups", [])
+            if dependency_cleanups:
+                response.background = BackgroundTask(
+                    self._finish_response_work,
+                    response.background,
+                    dependency_cleanups,
+                )
             return response
         finally:
+            self._run_dependency_cleanups(request.state.pop("_higuma_dependency_cleanups", []))
             _app_context.reset(app_token)
             _pop_request(request_token)
 
+    def _finish_response_work(
+        self,
+        background: Callable[[], Any] | None,
+        cleanups: list[Callable[[], Any]],
+    ) -> None:
+        try:
+            if background is not None:
+                background()
+        finally:
+            self._run_dependency_cleanups(cleanups)
+
+    def _run_dependency_cleanups(self, cleanups: list[Callable[[], Any]]) -> None:
+        for cleanup in reversed(cleanups):
+            try:
+                _resolve_awaitable(cleanup())
+            except BaseException:
+                self.logger.exception("dependency cleanup failed")
+
     def _invoke_view(self, route: Rule, request: Request) -> Any:
-        signature = inspect.signature(route.view_func)
-        params = signature.parameters
-        args: list[Any] = []
-        kwargs: dict[str, Any] = {}
-        accepts_kwargs = any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in params.values()
+        args, kwargs = resolve_arguments(
+            route.view_func,
+            request,
+            request.path_params,
+            _resolve_awaitable,
         )
-
-        for name, value in request.path_params.items():
-            if name in params or accepts_kwargs:
-                kwargs[name] = value
-
-        if "request" in params:
-            kwargs["request"] = request
-        else:
-            missing_positional = [
-                parameter
-                for parameter in params.values()
-                if parameter.kind
-                in (
-                    inspect.Parameter.POSITIONAL_ONLY,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                )
-                and parameter.default is inspect.Parameter.empty
-                and parameter.name not in kwargs
-            ]
-            if missing_positional:
-                args.append(request)
-
-        return _resolve_awaitable(route.view_func(*args, **kwargs))
+        result = _resolve_awaitable(route.view_func(*args, **kwargs))
+        response_model = route.openapi.get("response_model")
+        declared_status = route.openapi.get("status_code")
+        if response_model is not None:
+            if isinstance(result, tuple) and len(result) in (2, 3):
+                body, *metadata = result
+                if not isinstance(body, Response):
+                    result = (coerce_response_model(body, response_model), *metadata)
+            elif not isinstance(result, Response):
+                result = coerce_response_model(result, response_model)
+        if declared_status is not None and not isinstance(result, tuple):
+            if isinstance(result, Response):
+                result.status_code = declared_status
+            else:
+                result = (result, declared_status)
+        return result
 
     def _handle_exception(self, error: BaseException, request: Request) -> ResponseValue:
+        if isinstance(error, RequestValidationError):
+            return JSONResponse({"detail": error.errors}, 422)
         handler = self._find_error_handler(error)
         if handler is not None:
             try:
@@ -745,24 +831,68 @@ class Higuma:
                     },
                 )
             start, end = parsed_range
-            with candidate.open("rb") as handle:
-                handle.seek(start)
-                body = handle.read(end - start + 1)
-            return Response(
-                body,
-                206,
-                {
+            return FileResponse(
+                candidate,
+                status=206,
+                headers={
                     **common_headers,
                     "accept-ranges": "bytes",
                     "content-range": f"bytes {start}-{end}/{stat.st_size}",
                 },
-                _guess_media_type(candidate),
+                media_type=_guess_media_type(candidate),
+                offset=start,
+                length=end - start + 1,
             )
 
         return FileResponse(
             candidate,
             headers={**common_headers, "accept-ranges": "bytes"},
         )
+
+    def _prepare_file_response(self, request: Request, response: Response) -> Response:
+        if (
+            not isinstance(response, FileResponse)
+            or response.status_code != 200
+            or request.method not in {"GET", "HEAD"}
+        ):
+            return response
+        path = Path(response.path)
+        try:
+            stat = path.stat()
+        except OSError:
+            return response
+        if response.offset != 0 or response.length != stat.st_size:
+            return response
+
+        etag = f'"{hashlib.sha256(f"{stat.st_mtime_ns}:{stat.st_size}".encode()).hexdigest()[:24]}"'
+        response.headers.setdefault("etag", etag)
+        response.headers.setdefault("accept-ranges", "bytes")
+        if request.headers.get("if-none-match") == response.headers["etag"]:
+            headers = dict(response.headers)
+            headers.pop("content-length", None)
+            conditional = Response(b"", 304, headers, background=response.background)
+            conditional._extra_headers.extend(response._extra_headers)
+            return conditional
+
+        range_header = request.headers.get("range")
+        if not range_header or not str(range_header).startswith("bytes="):
+            return response
+        parsed_range = _parse_range(str(range_header), stat.st_size)
+        if parsed_range is None:
+            headers = dict(response.headers)
+            headers.pop("content-length", None)
+            headers["content-range"] = f"bytes */{stat.st_size}"
+            unsatisfied = Response(b"", 416, headers, background=response.background)
+            unsatisfied._extra_headers.extend(response._extra_headers)
+            return unsatisfied
+
+        start, end = parsed_range
+        response.status_code = 206
+        response.offset = start
+        response.length = end - start + 1
+        response.headers["content-range"] = f"bytes {start}-{end}/{stat.st_size}"
+        response.headers["content-length"] = str(response.length)
+        return response
 
     def _match_route(
         self, path: str, method: str
@@ -825,12 +955,13 @@ def _resolve_awaitable(value: Any) -> Any:
         return asyncio.run(value)
 
     result: list[Any] = []
-    errors: list[Exception] = []
+    errors: list[BaseException] = []
+    context = copy_context()
 
     def runner() -> None:
         try:
-            result.append(asyncio.run(value))
-        except Exception as exc:  # noqa: BLE001 - propagate async task failures
+            result.append(context.run(asyncio.run, value))
+        except BaseException as exc:  # noqa: BLE001 - propagate async task failures
             errors.append(exc)
 
     thread = Thread(target=runner, daemon=True)
@@ -863,7 +994,9 @@ def _parse_range(value: str, size: int) -> tuple[int, int] | None:
     if size <= 0:
         return None
     try:
-        spec = value.removeprefix("bytes=").split(",", 1)[0]
+        spec = value.removeprefix("bytes=")
+        if "," in spec:
+            return None
         start_text, end_text = spec.split("-", 1)
         if not start_text:
             length = int(end_text)
@@ -883,3 +1016,50 @@ def _guess_media_type(path: Path) -> str:
     import mimetypes
 
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+class _AsyncContextManagerAdapter:
+    def __init__(self, context: Any) -> None:
+        self.context = context
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.ready = Event()
+        self.thread = Thread(target=self._run_loop, daemon=True, name="higuma-lifespan")
+
+    def _run_loop(self) -> None:
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.ready.set()
+        self.loop.run_forever()
+        self.loop.run_until_complete(self.loop.shutdown_asyncgens())
+        self.loop.close()
+
+    def _submit(self, awaitable: Any) -> Any:
+        self.ready.wait()
+        if self.loop is None:
+            raise RuntimeError("lifespan event loop failed to start")
+        return asyncio.run_coroutine_threadsafe(awaitable, self.loop).result()
+
+    def __enter__(self) -> Any:
+        self.thread.start()
+        try:
+            return self._submit(self.context.__aenter__())
+        except BaseException:
+            self._stop()
+            raise
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        try:
+            return bool(self._submit(self.context.__aexit__(exc_type, exc_value, traceback)))
+        finally:
+            self._stop()
+
+    def _stop(self) -> None:
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        if self.thread.is_alive():
+            self.thread.join()

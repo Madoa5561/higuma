@@ -240,9 +240,8 @@ class FeatureTests(unittest.TestCase):
             redirect_uri="https://example.com/callback",
             secret_key="state-secret-that-is-at-least-32-bytes",
         )
-        url = oauth.authorization_url(prompt="consent")
-        self.assertIn("accounts.google.com", url)
-        self.assertIn("state=", url)
+        with self.assertRaisesRegex(RuntimeError, "SessionMiddleware"):
+            oauth.authorization_url(prompt="consent")
 
         app = self.make_app()
         app.add_middleware(
@@ -264,6 +263,8 @@ class FeatureTests(unittest.TestCase):
 
         client = app.test_client()
         authorization_url = client.get("/oauth/start").json["url"]
+        self.assertIn("accounts.google.com", authorization_url)
+        self.assertIn("state=", authorization_url)
         query = parse_qs(urlsplit(authorization_url).query)
         self.assertEqual(query["code_challenge_method"], ["S256"])
         state = query["state"][0]

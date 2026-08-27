@@ -30,6 +30,24 @@ class PasswordHasher:
         salt_bytes: int = 16,
         key_bytes: int = 32,
     ) -> None:
+        if not isinstance(n, int) or isinstance(n, bool) or n < 2**10 or n > 2**20 or n & (n - 1):
+            raise ValueError("n must be a power of two between 2**10 and 2**20")
+        if not isinstance(r, int) or isinstance(r, bool) or not 1 <= r <= 32:
+            raise ValueError("r must be an integer between 1 and 32")
+        if not isinstance(p, int) or isinstance(p, bool) or not 1 <= p <= 16:
+            raise ValueError("p must be an integer between 1 and 16")
+        if (
+            not isinstance(salt_bytes, int)
+            or isinstance(salt_bytes, bool)
+            or not 8 <= salt_bytes <= 64
+        ):
+            raise ValueError("salt_bytes must be an integer between 8 and 64")
+        if (
+            not isinstance(key_bytes, int)
+            or isinstance(key_bytes, bool)
+            or not 16 <= key_bytes <= 128
+        ):
+            raise ValueError("key_bytes must be an integer between 16 and 128")
         self.n = n
         self.r = r
         self.p = p
@@ -96,12 +114,14 @@ class PasswordHasher:
 
     def needs_rehash(self, encoded: str) -> bool:
         try:
-            _, algorithm, n, r, p, _, digest = encoded.split("$")
+            marker, algorithm, n, r, p, salt, digest = encoded.split("$")
             return (
-                algorithm != "scrypt"
+                marker != "higuma"
+                or algorithm != "scrypt"
                 or int(n) != self.n
                 or int(r) != self.r
                 or int(p) != self.p
+                or len(_unb64(salt)) != self.salt_bytes
                 or len(_unb64(digest)) != self.key_bytes
             )
         except (ValueError, TypeError, binascii.Error):
@@ -151,9 +171,11 @@ class CSRFProtection:
         field_name: str = "_csrf_token",
         safe_methods: tuple[str, ...] = ("GET", "HEAD", "OPTIONS"),
     ) -> None:
+        if not header_name or not field_name:
+            raise ValueError("header_name and field_name must not be empty")
         self.header_name = header_name
         self.field_name = field_name
-        self.safe_methods = safe_methods
+        self.safe_methods = tuple(method.upper() for method in safe_methods)
 
     def __call__(
         self,
@@ -163,6 +185,7 @@ class CSRFProtection:
         session = getattr(current, "session", None)
         if session is None:
             raise RuntimeError("CSRFProtection requires SessionMiddleware")
+        current.state["_higuma_csrf_field_name"] = self.field_name
         expected = session.get(self.field_name)
         if expected is None:
             expected = secrets.token_urlsafe(32)
@@ -249,14 +272,21 @@ def validate_user_id(value: str) -> bool:
     return bool(_USER_ID_RE.fullmatch(value))
 
 
-def csrf_token() -> str:
+def csrf_token(field_name: str | None = None) -> str:
     session = getattr(request, "session", None)
     if session is None:
         raise RuntimeError("csrf_token requires SessionMiddleware")
-    token = session.get("_csrf_token")
+    resolved_field_name = (
+        field_name
+        if field_name is not None
+        else request.state.get("_higuma_csrf_field_name", "_csrf_token")
+    )
+    if not resolved_field_name:
+        raise ValueError("field_name must not be empty")
+    token = session.get(resolved_field_name)
     if token is None:
         token = secrets.token_urlsafe(32)
-        session["_csrf_token"] = token
+        session[resolved_field_name] = token
     return str(token)
 
 
