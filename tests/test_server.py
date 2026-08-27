@@ -15,6 +15,7 @@ import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Protocol
 
 _APPLICATION = r"""
 import asyncio
@@ -220,9 +221,11 @@ def _masked_frame(opcode: int, payload: bytes) -> bytes:
     return bytes((0x80 | opcode, 0x80 | len(payload))) + mask + masked
 
 
-def _read_frame(connection: socket.socket, initial: bytes = b"") -> tuple[int, bytes]:
-    buffer = bytearray(initial)
+class _ReadableSocket(Protocol):
+    def recv(self, buffer_size: int) -> bytes: ...
 
+
+def _read_frame(connection: _ReadableSocket, buffer: bytearray) -> tuple[int, bytes]:
     def take(length: int) -> bytes:
         while len(buffer) < length:
             chunk = connection.recv(4096)
@@ -244,6 +247,26 @@ def _read_frame(connection: socket.socket, initial: bytes = b"") -> tuple[int, b
     if second & 0x80:
         raise AssertionError("server frames must not be masked")
     return first & 0x0F, take(length)
+
+
+class WebSocketFrameReaderTests(unittest.TestCase):
+    def test_preserves_coalesced_frames(self) -> None:
+        class CoalescedSocket:
+            def __init__(self, data: bytes) -> None:
+                self.data = data
+                self.calls = 0
+
+            def recv(self, _: int) -> bytes:
+                self.calls += 1
+                data, self.data = self.data, b""
+                return data
+
+        connection = CoalescedSocket(b"\x81\x03one\x88\x02\x03\xe8")
+        buffer = bytearray()
+
+        self.assertEqual(_read_frame(connection, buffer), (0x1, b"one"))
+        self.assertEqual(_read_frame(connection, buffer), (0x8, b"\x03\xe8"))
+        self.assertEqual(connection.calls, 1)
 
 
 class RealServerTests(unittest.TestCase):
@@ -565,10 +588,11 @@ class RealServerTests(unittest.TestCase):
             self.assertEqual(status, 101)
             self.assertEqual(headers.get("upgrade", "").lower(), "websocket")
             self.assertEqual(remainder, b"")
+            frame_buffer = bytearray(remainder)
             connection.sendall(_masked_frame(0x1, b"hello"))
-            opcode, payload = _read_frame(connection)
+            opcode, payload = _read_frame(connection, frame_buffer)
             self.assertEqual((opcode, payload), (0x1, b"echo:hello"))
-            opcode, payload = _read_frame(connection)
+            opcode, payload = _read_frame(connection, frame_buffer)
             self.assertEqual(opcode, 0x8)
             self.assertEqual(struct.unpack("!H", payload[:2])[0], 1000)
             self.assertEqual(payload[2:], b"complete")
@@ -585,7 +609,7 @@ class RealServerTests(unittest.TestCase):
             self.assertEqual(remainder, b"")
             close_payload = struct.pack("!H", 1000) + b"client done"
             connection.sendall(_masked_frame(0x8, close_payload))
-            opcode, payload = _read_frame(connection)
+            opcode, payload = _read_frame(connection, bytearray(remainder))
             self.assertEqual((opcode, payload), (0x8, close_payload))
 
     def test_websocket_preflight_must_return_no_content(self) -> None:
