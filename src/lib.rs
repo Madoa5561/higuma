@@ -7,6 +7,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
+    time::Duration,
 };
 
 use axum::{
@@ -43,6 +44,7 @@ use url::form_urlencoded;
 
 const DEFAULT_MAX_BODY_SIZE: usize = 8 * 1024 * 1024;
 const MAX_CONCURRENT_WEBSOCKET_HANDLERS: usize = 128;
+const WEBSOCKET_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug)]
 enum Converter {
@@ -578,10 +580,31 @@ async fn handle_websocket(
     });
 
     let mut writer_task = tokio::spawn(async move {
-        while let Some(outgoing) = outgoing_rx.recv().await {
+        let mut close_deadline = None;
+        loop {
+            let outgoing = if let Some(deadline) = close_deadline {
+                tokio::select! {
+                    outgoing = outgoing_rx.recv() => outgoing,
+                    _ = tokio::time::sleep_until(deadline) => {
+                        let _ = socket_sender.flush().await;
+                        break;
+                    }
+                }
+            } else {
+                outgoing_rx.recv().await
+            };
+            let Some(outgoing) = outgoing else {
+                break;
+            };
             let message = match outgoing {
-                OutgoingMessage::Text(value) => Message::Text(value.into()),
-                OutgoingMessage::Binary(value) => Message::Binary(value.into()),
+                OutgoingMessage::Text(value) if close_deadline.is_none() => {
+                    Message::Text(value.into())
+                }
+                OutgoingMessage::Binary(value) if close_deadline.is_none() => {
+                    Message::Binary(value.into())
+                }
+                OutgoingMessage::Text(_) | OutgoingMessage::Binary(_) => continue,
+                OutgoingMessage::Close(_, _) if close_deadline.is_some() => continue,
                 OutgoingMessage::Close(code, reason) => Message::Close(Some(CloseFrame {
                     code,
                     reason: reason.into(),
@@ -593,8 +616,11 @@ async fn handle_websocket(
                 OutgoingMessage::Disconnect => break,
             };
             let is_close = matches!(message, Message::Close(_));
-            if socket_sender.send(message).await.is_err() || is_close {
+            if socket_sender.send(message).await.is_err() {
                 break;
+            }
+            if is_close {
+                close_deadline = Some(tokio::time::Instant::now() + WEBSOCKET_CLOSE_TIMEOUT);
             }
         }
     });

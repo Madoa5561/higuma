@@ -216,7 +216,10 @@ def _read_frame(connection: socket.socket, initial: bytes = b"") -> tuple[int, b
 
     def take(length: int) -> bytes:
         while len(buffer) < length:
-            buffer.extend(connection.recv(4096))
+            chunk = connection.recv(4096)
+            if not chunk:
+                raise EOFError(f"socket closed before a {length}-byte WebSocket frame section")
+            buffer.extend(chunk)
         result = bytes(buffer[:length])
         del buffer[:length]
         return result

@@ -238,16 +238,39 @@ def split_parameter_annotation(
     annotation: Any,
     default: Any = inspect.Parameter.empty,
 ) -> tuple[Any, Parameter | Depends | None]:
-    metadata: tuple[Any, ...] = ()
-    if get_origin(annotation) is Annotated:
-        annotation, *metadata_values = get_args(annotation)
-        metadata = tuple(metadata_values)
+    annotation, metadata = _unwrap_parameter_annotation(annotation)
     markers = [item for item in metadata if isinstance(item, (Parameter, Depends))]
     if isinstance(default, (Parameter, Depends)):
         markers.append(default)
     if len(markers) > 1:
         raise TypeError("a parameter may declare only one higuma input marker")
     return annotation, markers[0] if markers else None
+
+
+def _unwrap_parameter_annotation(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        base_annotation, *metadata = get_args(annotation)
+        return base_annotation, tuple(metadata)
+    if origin not in (types.UnionType, Union):
+        return annotation, ()
+
+    options: list[Any] = []
+    metadata: list[Any] = []
+    changed = False
+    for option in get_args(annotation):
+        base_annotation, option_metadata = _unwrap_parameter_annotation(option)
+        options.append(base_annotation)
+        metadata.extend(option_metadata)
+        changed = changed or bool(option_metadata)
+    if not changed:
+        return annotation, ()
+
+    unique_options = list(dict.fromkeys(options))
+    base_annotation = unique_options[0]
+    for option in unique_options[1:]:
+        base_annotation = base_annotation | option
+    return base_annotation, tuple(metadata)
 
 
 def resolved_parameter_hints(func: Callable[..., Any]) -> dict[str, Any]:

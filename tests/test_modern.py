@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Optional
 from uuid import UUID
 
 from higuma import (
@@ -159,6 +159,17 @@ class ModernApiTests(unittest.TestCase):
         self.assertEqual(
             app.test_client().get("/multiple?values=1&values=2").json,
             {"values": [1, 2]},
+        )
+
+        @app.get("/nested-optional")
+        def nested_optional(
+            values: Optional[Annotated[list[int], QueryParam()]] = None,  # noqa: UP045
+        ):
+            return {"values": values}
+
+        self.assertEqual(
+            app.test_client().get("/nested-optional?values=3&values=4").json,
+            {"values": [3, 4]},
         )
 
     def test_form_file_and_dependency_override(self) -> None:
