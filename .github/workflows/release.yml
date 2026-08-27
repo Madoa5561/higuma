@@ -35,7 +35,7 @@ jobs:
       tag: ${{ steps.identity.outputs.tag }}
       version: ${{ steps.identity.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
           fetch-depth: 0
@@ -85,7 +85,7 @@ jobs:
             manylinux: auto
     runs-on: ${{ matrix.platform.runner }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.guard.outputs.tag }}
       - uses: actions/setup-python@v6
@@ -114,7 +114,7 @@ jobs:
     needs: guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.guard.outputs.tag }}
       - uses: actions/setup-python@v6
