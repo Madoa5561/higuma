@@ -536,6 +536,7 @@ async fn handle_websocket(
     });
 
     let mut close_deadline = None;
+    let mut outgoing_open = true;
     loop {
         let event = tokio::select! {
             incoming = socket.recv() => match incoming {
@@ -543,7 +544,7 @@ async fn handle_websocket(
                 Some(Err(error)) => WebSocketEvent::ReceiveError(error.to_string()),
                 None => WebSocketEvent::Disconnected,
             },
-            outgoing = outgoing_rx.recv() => match outgoing {
+            outgoing = outgoing_rx.recv(), if outgoing_open => match outgoing {
                 Some(message) => WebSocketEvent::Outgoing(message),
                 None => WebSocketEvent::OutgoingClosed,
             },
@@ -644,7 +645,13 @@ async fn handle_websocket(
                 close_deadline = Some(tokio::time::Instant::now() + WEBSOCKET_CLOSE_TIMEOUT);
             }
             WebSocketEvent::Outgoing(_) => {}
-            WebSocketEvent::OutgoingClosed | WebSocketEvent::CloseTimeout => {
+            WebSocketEvent::OutgoingClosed => {
+                outgoing_open = false;
+                if close_deadline.is_none() {
+                    break;
+                }
+            }
+            WebSocketEvent::CloseTimeout => {
                 let _ = socket.flush().await;
                 break;
             }
