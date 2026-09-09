@@ -41,7 +41,7 @@ from .response import (
 from .routing import Rule, normalize_rule
 from .websocket import WebSocket
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
