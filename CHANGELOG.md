@@ -7,6 +7,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Revalidate dataclass response instances and filter subclass fields recursively,
+  including models nested in collections, unions, and TypedDicts.
+- Apply Annotated constraints to nested input and output values.
+- Report float conversion overflow as a validation error instead of HTTP 500.
+
 ### Security
 
 - Reject OAuth token/userinfo redirects to prevent credential forwarding.

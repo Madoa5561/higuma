@@ -61,6 +61,11 @@ and per-request caching. Tests can replace dependencies through
 `app.dependency_overrides`. `response_model` validates and converts runtime output
 and filters undeclared fields.
 
+Dataclass instances are revalidated, and fields declared only on subclasses are
+excluded from output. This applies recursively inside collections and TypedDicts
+without modifying the original instance. Annotated constraints on nested values,
+including dataclass fields, are checked for both input and output.
+
 ## Request data
 
 ```python

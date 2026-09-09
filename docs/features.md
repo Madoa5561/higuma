@@ -58,6 +58,10 @@ optionalを再帰的に変換し、不正な入力は構造化されたJSON 422�
 testでは`app.dependency_overrides`で差し替えられます。`response_model`は出力を実行時に検証・変換し、
 宣言外fieldを除外します。
 
+dataclassインスタンスを返す場合も再検証し、サブクラスだけが持つfieldは出力しません。
+この処理はcollectionやTypedDict内のモデルにも適用され、元のインスタンスは変更しません。
+dataclassのfieldなどに付けた `Annotated` の制約も、入力・出力の両方で検証します。
+
 ## Request data
 
 ```python

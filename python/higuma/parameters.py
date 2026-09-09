@@ -320,12 +320,7 @@ def serialize_json_value(value: Any) -> Any:
 
 def coerce_response_model(value: Any, annotation: Any) -> Any:
     try:
-        if is_dataclass(annotation) and isinstance(value, Mapping):
-            names = {field.name for field in fields(annotation) if field.init}
-            value = {key: item for key, item in value.items() if key in names}
-        elif _is_typed_dict(annotation) and isinstance(value, Mapping):
-            value = {key: item for key, item in value.items() if key in annotation.__annotations__}
-        return serialize_json_value(_convert_value(value, annotation))
+        return serialize_json_value(_convert_value(value, annotation, response=True))
     except (TypeError, ValueError) as exc:
         raise ResponseValidationError(f"response model validation failed: {exc}") from exc
 
@@ -436,16 +431,21 @@ def _finish_async_generator(generator: Any, await_value: Callable[[Any], Any]) -
     raise RuntimeError("async dependency generator yielded more than once")
 
 
-def _convert_value(value: Any, annotation: Any) -> Any:
+def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> Any:
     if annotation in (Any, inspect.Parameter.empty, inspect.Signature.empty):
         return value
     if get_origin(annotation) is Annotated:
-        annotation = get_args(annotation)[0]
+        annotation, *metadata = get_args(annotation)
+        converted = _convert_value(value, annotation, response=response)
+        for marker in metadata:
+            if isinstance(marker, Parameter):
+                _validate_constraints(converted, marker)
+        return converted
 
     origin = get_origin(annotation)
     args = get_args(annotation)
     if str(origin) in {"typing.Required", "typing.NotRequired"}:
-        return _convert_value(value, args[0] if args else Any)
+        return _convert_value(value, args[0] if args else Any, response=response)
     if origin in (types.UnionType, Union):
         if value is None and type(None) in args:
             return None
@@ -454,14 +454,14 @@ def _convert_value(value: Any, annotation: Any) -> Any:
             if option is type(None):
                 continue
             try:
-                return _convert_value(value, option)
+                return _convert_value(value, option, response=response)
             except (TypeError, ValueError) as exc:
                 failures.append(str(exc))
         raise ValueError("value does not match any allowed type: " + "; ".join(failures))
     if origin is Literal:
         for allowed in args:
             try:
-                converted = _convert_value(value, type(allowed))
+                converted = _convert_value(value, type(allowed), response=response)
             except (TypeError, ValueError):
                 continue
             if converted == allowed:
@@ -469,7 +469,9 @@ def _convert_value(value: Any, annotation: Any) -> Any:
         raise ValueError(f"value must be one of {args!r}")
     if origin in (list, set, frozenset, Sequence):
         values = value if isinstance(value, (list, tuple, set, frozenset)) else [value]
-        converted = [_convert_value(item, args[0] if args else Any) for item in values]
+        converted = [
+            _convert_value(item, args[0] if args else Any, response=response) for item in values
+        ]
         if origin is set:
             return set(converted)
         if origin is frozenset:
@@ -478,18 +480,19 @@ def _convert_value(value: Any, annotation: Any) -> Any:
     if origin is tuple:
         values = value if isinstance(value, (list, tuple)) else [value]
         if len(args) == 2 and args[1] is Ellipsis:
-            return tuple(_convert_value(item, args[0]) for item in values)
+            return tuple(_convert_value(item, args[0], response=response) for item in values)
         if args and len(values) != len(args):
             raise ValueError(f"tuple requires {len(args)} items")
         return tuple(
-            _convert_value(item, args[index] if args else Any) for index, item in enumerate(values)
+            _convert_value(item, args[index] if args else Any, response=response)
+            for index, item in enumerate(values)
         )
     if origin in (dict, Mapping):
         if not isinstance(value, Mapping):
             raise TypeError("value must be an object")
         key_type, value_type = args if len(args) == 2 else (Any, Any)
         return {
-            _convert_value(key, key_type): _convert_value(item, value_type)
+            _convert_value(key, key_type): _convert_value(item, value_type, response=response)
             for key, item in value.items()
         }
 
@@ -527,7 +530,7 @@ def _convert_value(value: Any, annotation: Any) -> Any:
             raise TypeError("value must be a number")
         try:
             converted = float(value)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("value must be a number") from exc
         if not math.isfinite(converted):
             raise ValueError("value must be finite")
@@ -566,16 +569,31 @@ def _convert_value(value: Any, annotation: Any) -> Any:
             except KeyError as exc:
                 raise ValueError(f"value must be a valid {annotation.__name__}") from exc
     if _is_typed_dict(annotation):
-        return _convert_typed_dict(value, annotation)
+        return _convert_typed_dict(value, annotation, response=response)
     if is_dataclass(annotation):
-        return _convert_dataclass(value, annotation)
+        return _convert_dataclass(value, annotation, response=response)
     if inspect.isclass(annotation) and isinstance(value, annotation):
         return value
     return value
 
 
-def _convert_dataclass(value: Any, annotation: Any) -> Any:
+def _convert_dataclass(value: Any, annotation: Any, *, response: bool = False) -> Any:
     if isinstance(value, annotation):
+        if response:
+            try:
+                hints = get_type_hints(annotation, include_extras=True)
+            except (NameError, TypeError):
+                hints = {}
+            validated = object.__new__(annotation)
+            for field in fields(annotation):
+                object.__setattr__(
+                    validated,
+                    field.name,
+                    _convert_value(
+                        getattr(value, field.name), hints.get(field.name, field.type), response=True
+                    ),
+                )
+            return validated
         return value
     if not isinstance(value, Mapping):
         raise TypeError("value must be an object")
@@ -585,7 +603,7 @@ def _convert_dataclass(value: Any, annotation: Any) -> Any:
         hints = {}
     known = {field.name for field in fields(annotation) if field.init}
     extra = set(value) - known
-    if extra:
+    if extra and not response:
         raise ValueError(f"unexpected fields: {', '.join(sorted(map(str, extra)))}")
     converted = {}
     for field in fields(annotation):
@@ -593,14 +611,15 @@ def _convert_dataclass(value: Any, annotation: Any) -> Any:
             continue
         if field.name in value:
             converted[field.name] = _convert_value(
-                value[field.name], hints.get(field.name, field.type)
+                value[field.name], hints.get(field.name, field.type), response=response
             )
         elif field.default is MISSING and field.default_factory is MISSING:
             raise ValueError(f"missing field: {field.name}")
-    return annotation(**converted)
+    instance = annotation(**converted)
+    return _convert_dataclass(instance, annotation, response=True) if response else instance
 
 
-def _convert_typed_dict(value: Any, annotation: Any) -> dict[str, Any]:
+def _convert_typed_dict(value: Any, annotation: Any, *, response: bool = False) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise TypeError("value must be an object")
     try:
@@ -608,12 +627,16 @@ def _convert_typed_dict(value: Any, annotation: Any) -> dict[str, Any]:
     except (NameError, TypeError):
         hints = dict(annotation.__annotations__)
     extra = set(value) - set(hints)
-    if extra:
+    if extra and not response:
         raise ValueError(f"unexpected fields: {', '.join(sorted(map(str, extra)))}")
     missing = set(getattr(annotation, "__required_keys__", ())) - set(value)
     if missing:
         raise ValueError(f"missing fields: {', '.join(sorted(missing))}")
-    return {key: _convert_value(item, hints[key]) for key, item in value.items() if key in hints}
+    return {
+        key: _convert_value(item, hints[key], response=response)
+        for key, item in value.items()
+        if key in hints
+    }
 
 
 def _validate_constraints(value: Any, marker: Parameter) -> None:
