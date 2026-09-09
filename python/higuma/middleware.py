@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable
 from ipaddress import ip_address, ip_network
 
@@ -115,12 +116,20 @@ class TrustedHostMiddleware:
 
     def __call__(self, request: Request, call_next: NextHandler) -> ResponseValue:
         raw_host = str(request.headers.get("host", "")).lower()
-        host = (
-            raw_host[1 : raw_host.find("]")]
-            if raw_host.startswith("[") and "]" in raw_host
-            else raw_host.split(":", 1)[0]
-        )
-        if host and not any(self._matches(host, pattern) for pattern in self.allowed_hosts):
+        match = re.fullmatch(r"(?:\[([0-9a-f:.]+)\]|([a-z0-9._-]+))(?::([0-9]{1,5}))?", raw_host)
+        if match is None:
+            raise Forbidden(detail="invalid Host header")
+        ipv6, name, port = match.groups()
+        if port is not None and int(port) > 65535:
+            raise Forbidden(detail="invalid Host port")
+        if ipv6 is not None:
+            try:
+                if ip_address(ipv6).version != 6:
+                    raise ValueError("expected IPv6")
+            except ValueError as exc:
+                raise Forbidden(detail="invalid Host address") from exc
+        host = ipv6 or name
+        if not any(self._matches(host, pattern) for pattern in self.allowed_hosts):
             raise Forbidden(detail="untrusted Host header")
         return call_next(request)
 

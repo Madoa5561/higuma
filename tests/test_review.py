@@ -376,7 +376,7 @@ class ReviewRegressionTests(unittest.TestCase):
                 return b"x" * size
 
         with (
-            patch("higuma.auth.urlopen", return_value=LargeResponse()),
+            patch("urllib.request.OpenerDirector.open", return_value=LargeResponse()),
             self.assertRaisesRegex(RuntimeError, "exceeded"),
         ):
             oauth.userinfo("token")

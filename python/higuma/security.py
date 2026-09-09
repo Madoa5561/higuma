@@ -192,7 +192,14 @@ class CSRFProtection:
             session[self.field_name] = expected
         if current.method not in self.safe_methods:
             supplied = current.headers.get(self.header_name) or current.form.get(self.field_name)
-            if not supplied or not hmac.compare_digest(str(expected), str(supplied)):
+            if (
+                not isinstance(expected, str)
+                or not isinstance(supplied, str)
+                or not supplied
+                or not expected.isascii()
+                or not supplied.isascii()
+                or not hmac.compare_digest(expected, supplied)
+            ):
                 raise Forbidden(detail="invalid or missing CSRF token")
         return call_next(current)
 
@@ -303,6 +310,8 @@ def _unb64(value: str) -> bytes:
 
 
 def _validate_secret_key(secret_key: str | bytes) -> bytes:
+    if not isinstance(secret_key, (str, bytes)):
+        raise TypeError("secret_key must be str or bytes")
     secret = secret_key.encode("utf-8") if isinstance(secret_key, str) else bytes(secret_key)
     if len(secret) < 32:
         raise ValueError("secret_key must contain at least 32 bytes")

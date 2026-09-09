@@ -209,6 +209,13 @@ Never read `X-Forwarded-For` directly without this trust boundary. See
 
 ## Checklist
 
+Signing keys must be `str` or `bytes` containing at least 32 bytes; implicit
+conversion from integers or arrays is rejected. Invalid non-ASCII CSRF tokens
+return 403. `TrustedHostMiddleware` also rejects missing hosts, malformed ports,
+and invalid IPv6 syntax. OAuth token and userinfo requests never follow redirects;
+configure the provider's final HTTPS URL to avoid forwarding credentials to
+another host or an HTTP endpoint.
+
 - Never log passwords, sessions, OAuth tokens, or secrets
 - Use HTTPS, secure/HTTP-only cookies, and an appropriate SameSite policy
 - Use exact credentialed CORS and WebSocket origins

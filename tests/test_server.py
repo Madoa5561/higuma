@@ -26,6 +26,7 @@ from typing import Annotated
 
 from higuma import (
     BackgroundTasks,
+    CSRFProtection,
     Depends,
     EventSourceResponse,
     FileResponse,
@@ -33,7 +34,10 @@ from higuma import (
     Response,
     ServerSentEvent,
     StreamingResponse,
+    SessionMiddleware,
+    TrustedHostMiddleware,
     WebSocketDisconnect,
+    csrf_token,
     request,
 )
 
@@ -56,6 +60,26 @@ def reject_one_websocket(current, call_next):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+security_session = SessionMiddleware("real-server-security-secret-at-least-32-bytes")
+security_csrf = CSRFProtection()
+security_host = TrustedHostMiddleware(("127.0.0.1",))
+
+
+@app.middleware
+def protect_security_route(current, call_next):
+    if current.path == "/security":
+        return security_host(
+            current,
+            lambda req: security_session(req, lambda req: security_csrf(req, call_next)),
+        )
+    return call_next(current)
+
+
+@app.route("/security", methods=("GET", "POST"))
+def security_route():
+    return {"token": csrf_token()}
 
 
 @app.get("/typed/<int:number>/<float:ratio>")
@@ -370,6 +394,22 @@ class RealServerTests(unittest.TestCase):
             yield connection, status, response_headers, remainder
         finally:
             connection.close()
+
+    def test_security_middleware_over_real_http(self) -> None:
+        for host in ("", "127.0.0.1:bad", "127.0.0.1:65536", "evil.test"):
+            with self.subTest(host=host):
+                status, _, _ = self.request("GET", "/security", headers={"host": host})
+                self.assertEqual(status, 403)
+        status, headers, body = self.request("GET", "/security")
+        self.assertEqual(status, 200)
+        token = json.loads(body)["token"]
+        cookie = dict(headers)["set-cookie"].split(";", 1)[0]
+        for supplied, expected_status in (("é", 403), ("wrong", 403), (token, 200)):
+            with self.subTest(token=supplied):
+                status, _, _ = self.request(
+                    "POST", "/security", headers={"cookie": cookie, "x-csrf-token": supplied}
+                )
+                self.assertEqual(status, expected_status)
 
     def test_http_methods_head_and_typed_routes(self) -> None:
         status, headers, body = self.request("GET", "/health")

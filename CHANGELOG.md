@@ -7,6 +7,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- Reject OAuth token/userinfo redirects to prevent credential forwarding.
+- Reject implicit signing-key conversion from integers or other non-string/bytes values.
+- Return HTTP 403 for non-ASCII CSRF tokens instead of an unhandled exception.
+- Reject missing or malformed Host authorities in TrustedHostMiddleware.
+
 ## [0.4.0] - 2026-08-27
 
 ### Added

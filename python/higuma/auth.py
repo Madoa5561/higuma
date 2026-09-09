@@ -10,8 +10,8 @@ from functools import wraps
 from typing import Any, Generic, TypeVar
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
+from urllib.request import HTTPRedirectHandler, build_opener
 from urllib.request import Request as URLRequest
-from urllib.request import urlopen
 
 from .exceptions import Forbidden, Unauthorized
 from .request import Request, request
@@ -22,6 +22,11 @@ from .sessions import SessionMiddleware
 UserT = TypeVar("UserT")
 _current_user: ContextVar[Any] = ContextVar("higuma_current_user", default=None)
 _MAX_PENDING_OAUTH_STATES = 16
+
+
+class _RejectOAuthRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class AnonymousUser:
@@ -347,9 +352,10 @@ class OAuth2Client:
             },
         )
         try:
-            with urlopen(request_object, timeout=10) as response:  # nosec B310
+            with build_opener(_RejectOAuthRedirects()).open(request_object, timeout=10) as response:
                 payload = response.read(1024 * 1024 + 1)
         except HTTPError as exc:
+            exc.close()
             raise RuntimeError(f"OAuth provider returned HTTP {exc.code}") from exc
         if len(payload) > 1024 * 1024:
             raise RuntimeError("OAuth provider response exceeded 1 MiB")

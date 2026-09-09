@@ -201,6 +201,12 @@ multi-process supervisorのclient IP制約は[デプロイ](deployment.md)を参
 
 ## Checklist
 
+秘密鍵は32バイト以上の `str` または `bytes` を指定します。整数や配列からの暗黙変換は
+拒否します。CSRFトークンの不正な非ASCII入力は403になります。
+`TrustedHostMiddleware` は空のHost、不正なポートやIPv6構文も拒否します。
+OAuthのtoken・userinfo HTTPリクエストはリダイレクトを追跡しません。
+認証情報の別ホストやHTTPへの転送を防ぐため、プロバイダーの最終HTTPS URLを設定してください。
+
 - password、session、OAuth token、secretをlogしない
 - HTTPS、secure / httponly cookie、適切なSameSiteを使う
 - credential付きCORSとWebSocket Originをexact matchにする
