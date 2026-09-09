@@ -12,6 +12,13 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 ## Signed cookie sessions
 
+SessionMiddleware adds `Vary: Cookie` to responses so caches distinguish cookie
+values, preserving existing Vary fields. Applications should additionally set
+`Cache-Control: no-store` for sensitive responses that must not be stored.
+
+JSON request nesting is limited to 128 levels. Excessive nesting and parser
+integer-limit failures return 400; `get_json(silent=True)` returns `None` instead.
+
 ```python
 from higuma import SessionMiddleware
 

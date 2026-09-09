@@ -109,6 +109,10 @@ class SessionMiddleware:
         request.session = session
         response = make_response(call_next(request))
 
+        vary = response.headers.get("vary", "")
+        if not {"cookie", "*"} & {item.strip().lower() for item in vary.split(",")}:
+            response.headers["vary"] = f"{vary}, Cookie" if vary else "Cookie"
+
         if session.modified:
             if session:
                 response.set_cookie(

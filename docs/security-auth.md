@@ -12,6 +12,13 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 ## Signed cookie session
 
+SessionMiddlewareを通るレスポンスには `Vary: Cookie` を付加し、Cookieごとに
+キャッシュを分離します。既存のVary指定は保持します。機密情報を保存させたくない
+レスポンスには、アプリケーション側で `Cache-Control: no-store` も指定してください。
+
+JSONリクエストの入れ子は128階層までです。上限超過やパーサーの数値制限に
+違反する入力は400になります。`get_json(silent=True)` はこれらの場合も `None` を返します。
+
 ```python
 from higuma import SessionMiddleware
 

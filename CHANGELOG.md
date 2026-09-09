@@ -9,6 +9,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Add Vary: Cookie to session middleware responses to isolate cached user content.
+- Reject excessive JSON nesting and parser integer-limit failures as HTTP 400,
+  honoring silent parsing without caching rejected input.
+
 - Revalidate dataclass response instances and filter subclass fields recursively,
   including models nested in collections, unions, and TypedDicts.
 - Apply Annotated constraints to nested input and output values.

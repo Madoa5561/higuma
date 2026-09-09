@@ -264,11 +264,24 @@ class Request:
                 return None
             raise UnsupportedMediaType(detail="request Content-Type must be application/json")
         try:
-            self._json_cache = json.loads(self.text)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            value = json.loads(self.text)
+            pending = [iter((value,))]
+            while pending:
+                try:
+                    item = next(pending[-1])
+                except StopIteration:
+                    pending.pop()
+                    continue
+                if isinstance(item, (dict, list)):
+                    if len(pending) > 128:
+                        raise ValueError("JSON nesting exceeds 128 levels")
+                    children = item.values() if isinstance(item, dict) else item
+                    pending.append(iter(children))
+        except (ValueError, RecursionError) as exc:
             if silent:
                 return None
             raise BadRequest(detail="invalid JSON request body") from exc
+        self._json_cache = value
         return self._json_cache
 
     @property
