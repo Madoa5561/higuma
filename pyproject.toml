@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "higuma"
-version = "0.4.1"
+version = "0.5.0"
 description = "A fast, Flask-inspired Python web framework with a Rust HTTP core and SSR."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -41,6 +41,8 @@ Changelog = "https://github.com/Madoa5561/higuma/blob/main/CHANGELOG.md"
 higuma = "higuma.cli:main"
 
 [project.optional-dependencies]
+compat = ["Flask>=3.1,<4"]
+security = ["pip-audit>=2.9,<3"]
 dev = [
   "maturin>=1.6,<2.0",
   "pytest>=8",

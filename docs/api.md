@@ -1,5 +1,8 @@
 # APIリファレンス
 
+0.5.0のcontext・session・flash・URL生成・header・factory互換APIは
+[Flask互換性のAPI一覧](flask-compat.md#flask-style-api)にまとめています。
+
 ここに記載する名前は、特記がなければ`from higuma import ...`でimportできます。
 インストール中の版は`higuma.__version__`で確認できます。
 

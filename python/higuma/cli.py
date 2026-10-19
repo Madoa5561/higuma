@@ -12,6 +12,7 @@ def load_app(reference: str) -> Higuma:
     module_name, separator, object_name = reference.partition(":")
     if not separator:
         object_name = "app"
+    object_name = object_name.removesuffix("()")
     module = importlib.import_module(module_name)
     app_object: Any = getattr(module, object_name)
     if callable(app_object) and not isinstance(app_object, Higuma):

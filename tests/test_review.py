@@ -406,7 +406,10 @@ class ReviewRegressionTests(unittest.TestCase):
             }
             middleware(Request(raw), lambda _request: Response("ok"))
         self.assertEqual(len(middleware._requests), 2)
-        self.assertNotIn("192.0.2.1", middleware._requests)
+        self.assertIn("192.0.2.1", middleware._requests)
+        self.assertIn("192.0.2.2", middleware._requests)
+        self.assertNotIn("192.0.2.3", middleware._requests)
+        self.assertEqual(len(middleware._overflow), 1)
 
 
 if __name__ == "__main__":

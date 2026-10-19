@@ -37,6 +37,7 @@ nav:
       - ホーム: index.md
       - はじめる: getting-started.md
       - 機能ガイド: features.md
+      - Flask互換性: flask-compat.md
       - 認証とセキュリティ: security-auth.md
       - デプロイ: deployment.md
       - Examples: examples.md
@@ -45,6 +46,7 @@ nav:
       - Home: en/index.md
       - Getting started: en/getting-started.md
       - Feature guide: en/features.md
+      - Flask compatibility: en/flask-compat.md
       - Auth and security: en/security-auth.md
       - Deployment: en/deployment.md
       - Examples: en/examples.md

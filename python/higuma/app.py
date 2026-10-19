@@ -14,12 +14,14 @@ from pathlib import Path
 from threading import Event, Thread
 from types import TracebackType
 from typing import Any
+from urllib.parse import quote, urlencode, urlsplit
 
 from ._core import HigumaCore
 from .background import BackgroundTask, BackgroundTasks
 from .blueprint import Blueprint
 from .config import Config
-from .exceptions import HTTPException, MethodNotAllowed, NotFound
+from .context import _app_context_error, _AppGlobals, _g_context
+from .exceptions import Forbidden, HTTPException, MethodNotAllowed, NotFound
 from .mounts import asgi_view, wsgi_view
 from .openapi import generate_openapi, swagger_ui_html
 from .parameters import (
@@ -41,7 +43,7 @@ from .response import (
 from .routing import Rule, normalize_rule
 from .websocket import WebSocket
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -86,6 +88,7 @@ class Higuma:
         self.debug = debug
         self.logger = logging.getLogger(import_name)
         self.state: dict[str, Any] = {}
+        self.extensions: dict[str, Any] = {}
         self._lifespan_handler = lifespan
         self.config = Config(
             DEBUG=debug,
@@ -108,6 +111,7 @@ class Higuma:
         self._startup_handlers: list[Callable[..., Any]] = []
         self._shutdown_handlers: list[Callable[..., Any]] = []
         self._context_processors: list[Callable[[], Mapping[str, Any]]] = []
+        self._teardown_appcontext: list[Callable[..., Any]] = []
         self.dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = {}
 
         self._core = HigumaCore(
@@ -293,6 +297,7 @@ class Higuma:
         allowed_origins: Iterable[str] | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
+            origins = tuple(allowed_origins or ())
             route_endpoint = endpoint or handler.__name__
             if route_endpoint in self._websocket_rules:
                 raise ValueError(f"WebSocket endpoint {route_endpoint!r} is already registered")
@@ -305,6 +310,7 @@ class Higuma:
                 endpoint=route_endpoint,
                 view_func=handler,
                 include_in_schema=False,
+                openapi={"allowed_origins": origins},
             )
 
             @wraps(handler)
@@ -320,7 +326,7 @@ class Higuma:
                 route.rule,
                 callback,
                 preflight,
-                list(allowed_origins or ()),
+                list(origins),
             )
             self._websocket_rules[route_endpoint] = route
             return handler
@@ -391,6 +397,34 @@ class Higuma:
     ) -> Callable[[], Mapping[str, Any]]:
         self._context_processors.append(func)
         return func
+
+    def register_error_handler(
+        self, code_or_exception: int | type[BaseException], func: ErrorHandler
+    ) -> None:
+        self._error_handlers[code_or_exception] = func
+
+    def teardown_appcontext(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._teardown_appcontext.append(func)
+        return func
+
+    @contextmanager
+    def app_context(self):
+        app_token = _app_context.set(self)
+        globals_token = _g_context.set(_AppGlobals())
+        error_token = _app_context_error.set(None)
+        try:
+            yield self
+        except BaseException as error:
+            _app_context_error.set(error)
+            raise
+        finally:
+            try:
+                for handler in reversed(self._teardown_appcontext):
+                    _resolve_awaitable(handler(_app_context_error.get()))
+            finally:
+                _app_context_error.reset(error_token)
+                _g_context.reset(globals_token)
+                _app_context.reset(app_token)
 
     def on_startup(self, func: Callable[..., Any]) -> Callable[..., Any]:
         self._startup_handlers.append(func)
@@ -471,11 +505,43 @@ class Higuma:
         return make_response(value, status, headers)
 
     def url_for(self, endpoint: str, **values: Any) -> str:
+        from .request import _request_context
+
+        current = _request_context.get()
+        if endpoint.startswith("."):
+            if current is None or not current.blueprint:
+                raise RuntimeError("relative endpoints require a blueprint request")
+            endpoint = current.blueprint + endpoint
+        anchor = values.pop("_anchor", None)
+        external = values.pop("_external", False)
+        scheme = values.pop("_scheme", None)
+        if scheme is not None and not external:
+            raise ValueError("_scheme requires _external=True")
         try:
             rule = self._endpoint_rules[endpoint]
         except KeyError as exc:
             raise KeyError(f"unknown endpoint: {endpoint}") from exc
-        return rule.build(values)
+        result = rule.build(values)
+        query = {
+            key: value
+            for key, value in values.items()
+            if key not in rule.converters and value is not None
+        }
+        if query:
+            result += "?" + urlencode(query, doseq=True)
+        if anchor is not None:
+            result += "#" + quote(str(anchor), safe="")
+        if external:
+            host = self.config.get("SERVER_NAME") or (current.host if current else None)
+            if not host:
+                raise RuntimeError("external URLs require a request or SERVER_NAME")
+            scheme = scheme or (
+                current.scheme if current else self.config.get("PREFERRED_URL_SCHEME", "http")
+            )
+            if scheme not in {"http", "https"}:
+                raise ValueError("URL scheme must be http or https")
+            result = f"{scheme}://{host}{result}"
+        return result
 
     def test_client(self):
         from .testing import TestClient
@@ -583,6 +649,8 @@ class Higuma:
         request = Request(raw_request)
         request.path_params = route.convert_params(request.path_params)
         request.view_args = request.path_params
+        request.endpoint = route.endpoint
+        request.blueprint = route.endpoint.rpartition(".")[0] or None
 
         def endpoint_call() -> Any:
             websocket = WebSocket(session)
@@ -611,10 +679,32 @@ class Higuma:
         request = Request(raw_request)
         request.path_params = route.convert_params(request.path_params)
         request.view_args = request.path_params
+        request.endpoint = route.endpoint
+        request.blueprint = route.endpoint.rpartition(".")[0] or None
 
         def authorize() -> Response:
             from .auth import _run_auth_checks
 
+            origin = request.headers.get("origin")
+            if origin and not route.openapi.get("allowed_origins"):
+                try:
+                    supplied = urlsplit(origin)
+                    expected = urlsplit(f"{request.scheme}://{request.host}")
+                    default_port = 443 if request.scheme == "https" else 80
+                    same_origin = (
+                        supplied.scheme == expected.scheme
+                        and supplied.hostname == expected.hostname
+                        and (supplied.port or default_port) == (expected.port or default_port)
+                        and supplied.username is None
+                        and supplied.password is None
+                        and supplied.path in {"", "/"}
+                        and not supplied.query
+                        and not supplied.fragment
+                    )
+                except ValueError:
+                    same_origin = False
+                if not same_origin:
+                    raise Forbidden(detail="WebSocket origin is not allowed")
             _run_auth_checks(route.view_func)
             return Response(b"", 204)
 
@@ -628,6 +718,8 @@ class Higuma:
         request = Request(raw_request)
         request.path_params = route.convert_params(request.path_params)
         request.view_args = request.path_params
+        request.endpoint = route.endpoint
+        request.blueprint = route.endpoint.rpartition(".")[0] or None
         return self._dispatch(request, lambda: self._invoke_view(route, request))
 
     def _fallback_callback(self, raw_request: Mapping[str, Any]) -> Any:
@@ -653,6 +745,9 @@ class Higuma:
         *,
         run_hooks: bool = True,
     ) -> Any:
+        if _app_context.get() is not self or _g_context.get() is None:
+            with self.app_context():
+                return self._dispatch(request, endpoint_call, run_hooks=run_hooks)
         request.state["_higuma_dependency_overrides"] = self.dependency_overrides
         request_token = _push_request(request)
         app_token: Token[Higuma | None] = _app_context.set(self)
@@ -771,6 +866,7 @@ class Higuma:
             return self._default_http_error(error)
 
         self.logger.exception("unhandled request exception", exc_info=error)
+        _app_context_error.set(error)
         if self.debug:
             detail = traceback.format_exc()
             return HTMLResponse(

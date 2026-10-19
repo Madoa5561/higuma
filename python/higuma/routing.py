@@ -24,8 +24,8 @@ def _converter_pattern(name: str) -> str:
     return {
         "string": r"[^/]+",
         "str": r"[^/]+",
-        "int": r"-?\d+",
-        "float": r"-?(?:\d+(?:\.\d*)?|\.\d+)",
+        "int": r"-?[0-9]+",
+        "float": r"-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)",
         "uuid": r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         "path": r".+",
     }[name]

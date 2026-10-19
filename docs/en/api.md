@@ -1,5 +1,8 @@
 # API reference
 
+See [Flask-style APIs](flask-compat.md#flask-style-apis-in-higuma) for the 0.5.0
+context, session, flash, URL, header, and factory compatibility additions.
+
 Unless noted otherwise, every name below is importable with `from higuma import ...`.
 Use `higuma.__version__` to inspect the installed version.
 

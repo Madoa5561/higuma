@@ -124,7 +124,12 @@ class SessionMiddleware:
                     samesite=self.samesite,
                 )
             else:
-                response.delete_cookie(self.cookie_name)
+                response.delete_cookie(
+                    self.cookie_name,
+                    secure=self.secure,
+                    httponly=self.httponly,
+                    samesite=self.samesite,
+                )
         return response
 
     def _dump(self, session: Session) -> str:

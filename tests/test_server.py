@@ -31,6 +31,7 @@ from higuma import (
     EventSourceResponse,
     FileResponse,
     Higuma,
+    ProxyHeadersMiddleware,
     Response,
     ServerSentEvent,
     StreamingResponse,
@@ -48,6 +49,36 @@ app = Higuma(
     static_url_path="/static",
     max_content_length=16,
 )
+app.add_middleware(ProxyHeadersMiddleware, trusted_proxies=("127.0.0.1",))
+
+try:
+    import flask
+except ImportError:
+    flask = None
+
+if flask is not None:
+    legacy = flask.Flask(__name__)
+
+    @legacy.get("/hello/<name>")
+    def legacy_hello(name):
+        return {"name": name, "url": flask.url_for("legacy_hello", name=name)}
+
+    app.mount_wsgi("/legacy", legacy)
+
+
+@app.get("/flask-available")
+def flask_available():
+    return {"available": flask is not None}
+
+
+@app.websocket("/ws-origin")
+def websocket_origin(ws):
+    ws.close()
+
+
+@app.websocket("/ws-explicit", allowed_origins=("https://other.example",))
+def websocket_explicit(ws):
+    ws.close()
 
 
 @app.middleware
@@ -365,7 +396,7 @@ class RealServerTests(unittest.TestCase):
     @classmethod
     @contextmanager
     def websocket_handshake(
-        cls, path: str
+        cls, path: str, headers: dict[str, str] | None = None
     ) -> Iterator[tuple[socket.socket, int, dict[str, str], bytes]]:
         connection = socket.create_connection(("127.0.0.1", cls.port), timeout=5)
         connection.settimeout(5)
@@ -377,7 +408,8 @@ class RealServerTests(unittest.TestCase):
             "Connection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {key}\r\n"
             "Sec-WebSocket-Version: 13\r\n"
-            "\r\n"
+            + "".join(f"{name}: {value}\r\n" for name, value in (headers or {}).items())
+            + "\r\n"
         )
         connection.sendall(request.encode("ascii"))
         status, header_items, remainder = _read_http_headers(connection)
@@ -622,6 +654,48 @@ class RealServerTests(unittest.TestCase):
         self.assertEqual(status, 416)
         self.assertEqual(body, b"")
         self.assertEqual(dict(headers)["content-range"], f"bytes */{len(self.asset)}")
+
+    def test_flask_wsgi_unicode_over_real_http(self) -> None:
+        _, _, body = self.request("GET", "/flask-available")
+        if not json.loads(body)["available"]:
+            self.skipTest("install higuma[compat] to test real Flask integration")
+        status, _, body = self.request("GET", "/legacy/hello/%E6%97%A5%E6%9C%AC")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            json.loads(body),
+            {
+                "name": "日本",
+                "url": "/legacy/hello/%E6%97%A5%E6%9C%AC",
+            },
+        )
+
+    def test_websocket_origin_effective_scheme_over_real_socket(self) -> None:
+        for origin_scheme, expected in (("http", 403), ("https", 101)):
+            with (
+                self.subTest(scheme=origin_scheme),
+                self.websocket_handshake(
+                    "/ws-origin",
+                    {
+                        "Origin": f"{origin_scheme}://127.0.0.1:{self.port}",
+                        "X-Forwarded-Proto": "https",
+                    },
+                ) as (_, status, _, _),
+            ):
+                self.assertEqual(status, expected)
+        with self.websocket_handshake(
+            "/ws-explicit",
+            {
+                "Origin": "https://other.example",
+            },
+        ) as (_, status, _, _):
+            self.assertEqual(status, 101)
+        with self.websocket_handshake(
+            "/ws-explicit",
+            {
+                "Origin": f"http://127.0.0.1:{self.port}",
+            },
+        ) as (_, status, _, _):
+            self.assertEqual(status, 403)
 
     def test_websocket_echo_and_server_close(self) -> None:
         with self.websocket_handshake("/ws") as (connection, status, headers, remainder):

@@ -31,6 +31,9 @@ jobs:
   guard:
     name: Verify release identity
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
       version: ${{ steps.identity.outputs.version }}
@@ -51,6 +54,15 @@ jobs:
           test "$(git tag --points-at HEAD --list "$RELEASE_TAG")" = "$RELEASE_TAG"
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Require successful CI and dependency audit for the exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          commit="$(git rev-parse HEAD)"
+          for workflow in ci.yml security.yml; do
+            conclusion="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$commit" --json status,conclusion,updatedAt --jq 'sort_by(.updatedAt) | last | select(.status == "completed" and .conclusion == "success") | .conclusion')"
+            test "$conclusion" = success || { echo "Latest $workflow run for $commit is not successful"; exit 1; }
+          done
 
   wheels:
     name: Wheel (${{ matrix.platform.name }})

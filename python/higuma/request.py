@@ -184,6 +184,8 @@ class Request:
         self.body = bytes(raw.get("body", b""))
         self.path_params = dict(raw.get("path_params", {}))
         self.view_args = self.path_params
+        self.endpoint: str | None = None
+        self.blueprint: str | None = None
         self.route_pattern = raw.get("route_pattern")
         self.route_error_status = int(raw.get("route_error_status", 404))
         self.allowed_methods = tuple(raw.get("allowed_methods", ()))

@@ -1,5 +1,9 @@
 # higuma
 
+0.5.0: Flask風context・session・flash・URL生成と実Flask接続を拡充しました。
+対応範囲は[日本語ガイド](https://higuma.moyashi.xyz/flask-compat/) /
+[English guide](https://higuma.moyashi.xyz/en/flask-compat/)を参照してください。
+
 Rust HTTPコアと、書き慣れたPython APIを組み合わせたWebフレームワークです。
 
 [日本語ドキュメント](https://higuma.moyashi.xyz/) / [English documentation](https://higuma.moyashi.xyz/en/)

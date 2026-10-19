@@ -220,6 +220,7 @@ class RateLimitMiddleware:
         self.key = key or self._default_key
         self.max_keys = max_keys
         self._requests: OrderedDict[str, deque[float]] = OrderedDict()
+        self._overflow: deque[float] = deque()
         self._lock = Lock()
         self._last_cleanup = time.monotonic()
 
@@ -240,10 +241,13 @@ class RateLimitMiddleware:
                 self._last_cleanup = now
             bucket = self._requests.get(identity)
             if bucket is None:
-                if len(self._requests) >= self.max_keys:
-                    self._requests.popitem(last=False)
-                bucket = deque()
-                self._requests[identity] = bucket
+                while self._overflow and self._overflow[0] <= now - self.window:
+                    self._overflow.popleft()
+                if len(self._requests) >= self.max_keys or self._overflow:
+                    bucket = self._overflow
+                else:
+                    bucket = deque()
+                    self._requests[identity] = bucket
             else:
                 self._requests.move_to_end(identity)
             while bucket and bucket[0] <= now - self.window:

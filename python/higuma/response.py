@@ -48,6 +48,25 @@ class _ResponseHeaders(dict[str, str]):
         normalized, text = _validate_header(name, value)
         super().__setitem__(normalized, text)
 
+    def __getitem__(self, name: str) -> str:
+        return super().__getitem__(name.lower())
+
+    def get(self, name: str, default: Any = None) -> Any:
+        return super().get(name.lower(), default)
+
+    def __contains__(self, name: object) -> bool:
+        return isinstance(name, str) and super().__contains__(name.lower())
+
+    def __delitem__(self, name: str) -> None:
+        super().__delitem__(name.lower())
+
+    def pop(self, name: str, *default: Any) -> Any:
+        return super().pop(name.lower(), *default)
+
+    def __ior__(self, other: Mapping[str, str]) -> _ResponseHeaders:  # noqa: PYI034 - Python 3.10
+        self.update(other)
+        return self
+
     def setdefault(self, name: str, value: str = "") -> str:
         normalized, text = _validate_header(name, value)
         return super().setdefault(normalized, text)
@@ -170,7 +189,17 @@ class Response:
             morsel["partitioned"] = True
         self.append_header("set-cookie", morsel.OutputString())
 
-    def delete_cookie(self, key: str, *, path: str = "/", domain: str | None = None) -> None:
+    def delete_cookie(
+        self,
+        key: str,
+        *,
+        path: str = "/",
+        domain: str | None = None,
+        secure: bool = False,
+        httponly: bool = False,
+        samesite: str | None = "Lax",
+        partitioned: bool = False,
+    ) -> None:
         self.set_cookie(
             key,
             "",
@@ -178,6 +207,10 @@ class Response:
             expires=datetime(1970, 1, 1, tzinfo=timezone.utc),
             path=path,
             domain=domain,
+            secure=secure or partitioned or key.startswith(("__Secure-", "__Host-", "__Http-")),
+            httponly=httponly or key.startswith(("__Http-", "__Host-Http-")),
+            samesite=samesite,
+            partitioned=partitioned,
         )
 
 
@@ -524,6 +557,15 @@ def redirect(location: str, status: int = 302) -> RedirectResponse:
 
 
 def render_template(template: str, /, **context: Any) -> TemplateResponse:
+    from .app import current_app
+    from .context import has_app_context
+
+    if has_app_context():
+        merged: dict[str, Any] = {}
+        for processor in current_app._context_processors:
+            merged.update(processor())
+        merged.update(context)
+        context = merged
     return TemplateResponse(template=template, context=context)
 
 

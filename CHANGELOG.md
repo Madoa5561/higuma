@@ -7,6 +7,37 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-19
+
+### Added
+
+- Flask-style application contexts, isolated `g`, session proxy, flash messages,
+  context checks, `app.extensions`, teardown callbacks, and direct error registration.
+- URL generation with blueprint-relative endpoints, repeated query values,
+  fragments, and explicit external URL/scheme options; request endpoint metadata.
+- Real Flask integration tests and optional `compat` extra, executable Flask
+  migration/context examples, and Japanese/English compatibility documentation.
+- Scheduled Python/Rust dependency audits and a release gate requiring the latest
+  CI and dependency-audit runs for the exact release commit to succeed.
+
+### Fixed
+
+- Preserve Secure/HttpOnly/SameSite when deleting session cookies, including
+  browser-enforced secure cookie prefixes.
+- Keep active rate-limit histories under identity churn and overflow promotion,
+  while bounding stored identities and request histories.
+- Compare effective WebSocket Origin scheme after trusted proxy processing;
+  retain explicit origin allowlists and non-browser clients without Origin.
+- Decode mounted WSGI/ASGI Unicode paths according to their protocols and drop
+  underscore-named WSGI request headers to prevent normalization collisions.
+- Make response header access case-insensitive and validate in-place header unions.
+- Apply template context processors through the top-level helper without consuming
+  existing template variables named `status` or `headers`.
+- Align Python numeric path matching with the Rust core's ASCII converters.
+- Accept no-argument `module:create_app()` CLI factory syntax without expression evaluation.
+- Require passwords and CSRF in the token/roles example and remove its unsupported
+  login argument. Integrate Dependabot PR #12's Rust dependency lock updates.
+
 ## [0.4.1] - 2026-10-19
 
 ### Fixed

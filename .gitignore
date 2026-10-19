@@ -18,6 +18,7 @@ dist-review/
 dist-review-x64/
 site/
 build/
+audit-requirements.txt
 *.egg-info/
 
 # Editors and operating systems

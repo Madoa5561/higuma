@@ -15,17 +15,25 @@
 | `websocket_chat.py` | JSON WebSocket echo | WebSocket clientが必要 |
 | `multipart_upload.py` | 安全なfile uploadと保存 | request時に`uploads/`へ作成 |
 | `mounted_apps.py` | WSGI / ASGI mount | HTTP scopeのみ |
+| `flask_mount.py` | 実際のFlaskアプリをWSGI接続、日本語URL | `pip install "higuma[compat]"` |
+| `flask_compat.py` | g、session、flash、url_for、CSRF | secret環境変数が必要 |
 | `openapi_api.py` | 従来形式のdataclassとOpenAPI metadata | metadataのみの形式 |
 | `orm_blog.py` | SQLite ORM CRUD | 起動時に`blog.sqlite3`を作成 |
 | `orm_fields.py` | 全ORM field、query、save | in-memory SQLiteのみ |
 | `authentication.py` | login、CSRF、password、session | secret環境変数が必要 |
-| `security_tokens_roles.py` | signed token、role、permission | secret環境変数が必要 |
+| `security_tokens_roles.py` | password login、CSRF、signed token、role、permission | secretとpassword hash環境変数が必要 |
 | `oauth_login.py` | Google OAuth + PKCE/state | credentialsと外部通信が必要 |
 | `security_hardened.py` | CORS、host、header、proxy、rate limit | proxy trustを環境に合わせる |
 | `testing_client.py` | JSON、cookie jar、multipartのtest | serverを起動せずassertを実行 |
 | `supervised_app.py` | multi-process Supervisor | workerからpeerはloopbackに見える |
 
 ## 基本の実行
+
+追加APIと制限は[Flask互換性](flask-compat.md)を参照してください。
+`security_tokens_roles.py`では`HIGUMA_SECRET_KEY`に加えて、
+`PasswordHasher().hash(...)`で作った値を`HIGUMA_DEMO_PASSWORD_HASH`に設定します。
+GET `/csrf-token`のCookieとtokenを保持し、POSTへ`X-CSRF-Token` headerと
+`{"user_id": "usr_example123", "password": "your-password"}`を送ります。
 
 repository rootからeditable installした後に実行します。
 

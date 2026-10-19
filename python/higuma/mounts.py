@@ -4,6 +4,7 @@ import io
 import sys
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import unquote, unquote_to_bytes
 
 from .request import Request
 from .response import Response
@@ -91,8 +92,8 @@ def _wsgi_environ(request: Request, prefix: str) -> dict[str, Any]:
     host, port = _server_address(str(request.headers.get("host", "localhost")), request.scheme)
     environ: dict[str, Any] = {
         "REQUEST_METHOD": request.method,
-        "SCRIPT_NAME": "" if prefix == "/" else prefix,
-        "PATH_INFO": _mounted_path(request.path, prefix),
+        "SCRIPT_NAME": "" if prefix == "/" else prefix.encode("utf-8").decode("latin-1"),
+        "PATH_INFO": unquote_to_bytes(_mounted_path(request.path, prefix)).decode("latin-1"),
         "QUERY_STRING": request.query_string,
         "SERVER_NAME": host,
         "SERVER_PORT": port or "80",
@@ -113,6 +114,8 @@ def _wsgi_environ(request: Request, prefix: str) -> dict[str, Any]:
     combined_headers: dict[str, list[str]] = {}
     for raw_key, raw_value in request.raw_headers:
         key = raw_key.decode("latin-1")
+        if "_" in key:
+            continue
         value = raw_value.decode("latin-1")
         normalized = key.upper().replace("-", "_")
         if normalized not in {"CONTENT_TYPE", "CONTENT_LENGTH"}:
@@ -131,7 +134,7 @@ def _asgi_scope(request: Request, prefix: str) -> dict[str, Any]:
         "http_version": "1.1",
         "method": request.method,
         "scheme": request.scheme,
-        "path": _mounted_path(request.path, prefix),
+        "path": unquote(_mounted_path(request.path, prefix)),
         "raw_path": _mounted_path(request.path, prefix).encode(),
         "root_path": "" if prefix == "/" else prefix,
         "query_string": request.query_string.encode(),

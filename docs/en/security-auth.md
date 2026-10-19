@@ -1,5 +1,22 @@
 # Authentication and security
 
+## Security changes in 0.5.0
+
+Session deletion preserves Secure/HttpOnly/SameSite, including secure cookie
+prefixes. Rate limits retain active histories under identity churn and keep users
+in the shared overflow quota until that history expires. Default WebSocket Origin
+checks include the effective scheme after trusted proxy processing. WSGI excludes
+underscore-named input headers to prevent normalization collisions.
+
+Scheduled CI runs Rust/Python dependency advisory checks, including optional
+extras. Editable higuma itself is excluded from the registry lookup because its
+version may be unpublished; its source requires review and tests instead.
+The review covers Python/Rust runtime paths, tests, examples, and CI, not every
+production configuration, external service, or real-browser cookie implementation.
+Passing tests/audits does not prove absence of vulnerabilities. Use HTTPS, trusted
+hosts, CSRF, explicit origins, narrow proxy trust, and gateway-level limits for
+multiple processes. See [compatibility boundaries](flask-compat.md#compatibility-boundaries).
+
 ## Secret keys
 
 Secrets used for sessions, signed tokens, and OAuth state must contain at least

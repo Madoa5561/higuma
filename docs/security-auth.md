@@ -206,7 +206,25 @@ app.add_middleware(
 `ProxyHeadersMiddleware`を設定せず`X-Forwarded-For`を直接読むことは禁止です。
 multi-process supervisorのclient IP制約は[デプロイ](deployment.md)を参照してください。
 
-## Checklist
+## 0.5.0のセキュリティ修正と監査
+
+- session削除Cookieは`Secure`・`HttpOnly`・`SameSite`を維持します。
+  `__Host-` / `__Secure-` prefixの削除もSecureとして送信します。
+- rate limitはidentityの入れ替えで有効履歴を消しません。共有枠の履歴が有効な間は、
+  空いた個別枠へ移行しません。共有枠の利用者が同じquotaになる点は運用上の制約です。
+- WebSocketの既定Origin検証は、信頼したproxy情報を適用したscheme・host・portを
+  照合します。本番では引き続き明示的な`allowed_origins`を推奨します。
+- WSGIのheader正規化で別のheaderが同名になることを避けるため、underscore名を除外します。
+- 定期CIで`cargo audit`と`pip-audit`を実行します。開発用editableのhiguma自身を除き、
+  optional extrasを含む外部依存を照合します。ソース自体は別途レビューとテストが必要です。
+
+監査対象はPython/Rustの実行コードと関連テスト・examples・CIです。利用先の本番設定、
+外部サービス、実ブラウザーの全Cookie実装を網羅した保証ではありません。
+依存監査の成功や自動テストだけで「脆弱性なし」とは判断しないでください。
+複数processを跨ぐrate limitはproxy/gatewayで行い、HTTPS・Host制限・CSRF・
+明示Origin・最小限のproxy信頼範囲を組み合わせます。
+
+## 本番チェックリスト
 
 秘密鍵は32バイト以上の `str` または `bytes` を指定します。整数や配列からの暗黙変換は
 拒否します。CSRFトークンの不正な非ASCII入力は403になります。

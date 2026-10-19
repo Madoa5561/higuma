@@ -11,6 +11,15 @@ from .auth import (
 )
 from .background import BackgroundTask, BackgroundTasks
 from .blueprint import Blueprint
+from .context import (
+    flash,
+    g,
+    get_flashed_messages,
+    has_app_context,
+    has_request_context,
+    session,
+    url_for,
+)
 from .database import (
     Blob,
     Boolean,
@@ -170,8 +179,13 @@ __all__ = [
     "csrf_token",
     "current_app",
     "current_user",
+    "flash",
     "fresh_login_required",
+    "g",
     "generate_user_id",
+    "get_flashed_messages",
+    "has_app_context",
+    "has_request_context",
     "jsonify",
     "login_required",
     "make_response",
@@ -182,5 +196,7 @@ __all__ = [
     "roles_required",
     "secure_filename",
     "send_file",
+    "session",
+    "url_for",
     "validate_user_id",
 ]
