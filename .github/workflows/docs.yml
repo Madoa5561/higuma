@@ -7,12 +7,16 @@ on:
       - "README.md"
       - "docs/**"
       - "mkdocs.yml"
+      - "tools/docs_hooks.py"
+      - "overrides/**"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "README.md"
       - "docs/**"
       - "mkdocs.yml"
+      - "tools/docs_hooks.py"
+      - "overrides/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 

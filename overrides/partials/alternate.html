@@ -1,0 +1,20 @@
+<div class="md-header__option">
+  <div class="md-select">
+    {% set icon = config.theme.icon.alternate or "material/translate" %}
+    <button class="md-header__button md-icon" aria-label="{{ lang.t('select.language') }}">
+      {% include ".icons/" ~ icon ~ ".svg" %}
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        {% for alt in higuma_alternates %}
+          <li class="md-select__item">
+            {# Keep the build-resolved target instead of Material's sitemap-based rewrite. #}
+            <a href="{{ alt.link | url }}" hreflang="{{ alt.lang }}" target="_self" class="md-select__link">
+              {{ alt.name }}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>

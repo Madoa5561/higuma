@@ -4,10 +4,13 @@ import asyncio
 import hashlib
 import inspect
 import logging
+import re
 import traceback
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, Token, copy_context
+from datetime import timezone
+from email.utils import formatdate, parsedate_to_datetime
 from functools import wraps
 from html import escape
 from pathlib import Path
@@ -41,9 +44,10 @@ from .response import (
     make_response,
 )
 from .routing import Rule, normalize_rule
+from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -104,6 +108,7 @@ class Higuma:
         self._routes: list[Rule] = []
         self._endpoint_rules: dict[str, Rule] = {}
         self._websocket_rules: dict[str, Rule] = {}
+        self._file_endpoints: set[str] = set()
         self._before_request: list[Callable[..., ResponseValue | None]] = []
         self._after_request: list[Callable[..., ResponseValue]] = []
         self._middlewares: list[Middleware] = []
@@ -569,6 +574,93 @@ class Higuma:
     ) -> None:
         self._mount_application(prefix, wsgi_view(application, normalize_rule(prefix)), name)
 
+    def mount_static(
+        self,
+        prefix: str,
+        directory: str | Path,
+        *,
+        name: str = "static_files",
+        html: bool = False,
+        index_file: str = "index.html",
+        max_age: int = 3600,
+        immutable: bool = False,
+        headers: Mapping[str, str] | None = None,
+    ) -> StaticFiles:
+        files = StaticFiles(
+            directory,
+            html=html,
+            index_file=index_file,
+            max_age=max_age,
+            immutable=immutable,
+            headers=headers,
+        )
+        self._mount_files(prefix, files, name)
+        return files
+
+    def mount_spa(
+        self,
+        prefix: str,
+        directory: str | Path,
+        *,
+        name: str = "spa",
+        index_file: str = "index.html",
+        api_prefixes: Iterable[str] = ("/api",),
+        asset_prefixes: Iterable[str] = ("/assets",),
+        max_age: int = 3600,
+        immutable: bool = False,
+        headers: Mapping[str, str] | None = None,
+    ) -> SPAFiles:
+        files = SPAFiles(
+            directory,
+            index_file=index_file,
+            api_prefixes=api_prefixes,
+            asset_prefixes=asset_prefixes,
+            max_age=max_age,
+            immutable=immutable,
+            headers=headers,
+        )
+        self._mount_files(prefix, files, name)
+        return files
+
+    def _mount_files(self, prefix: str, files: StaticFiles, name: str) -> None:
+        prefix = _prefixes((prefix,))[0]
+        endpoints = (f"{name}_root", f"{name}_path")
+        rules = (prefix, f"{prefix.rstrip('/')}/<path:filename>")
+        if any(endpoint in self._endpoint_rules for endpoint in endpoints):
+            raise ValueError(f"file mount endpoint {name!r} is already registered")
+        if any(route.rule in rules and "GET" in route.methods for route in self._routes):
+            raise ValueError(f"file mount overlaps a registered GET route at {prefix!r}")
+
+        def mounted(request: Request, filename: str = "") -> Response:
+            # A catch-all file route must not turn a known POST-only URL into HTML.
+            matching = [
+                route
+                for route in self._routes
+                if route.endpoint not in self._file_endpoints
+                and route.match(request.path) is not None
+            ]
+            allowed = {method for route in matching for method in route.methods}
+            if (
+                allowed
+                and request.method not in allowed
+                and not (request.method == "HEAD" and "GET" in allowed)
+            ):
+                if "GET" in allowed:
+                    allowed.add("HEAD")
+                allowed.add("OPTIONS")
+                raise MethodNotAllowed(headers={"allow": ", ".join(sorted(allowed))})
+            return files(request, filename)
+
+        for rule, endpoint in zip(rules, endpoints):
+            self.add_url_rule(
+                rule,
+                endpoint=endpoint,
+                view_func=mounted,
+                methods=("GET",),
+                include_in_schema=False,
+            )
+        self._file_endpoints.update(endpoints)
+
     def mount_asgi(
         self,
         prefix: str,
@@ -724,6 +816,19 @@ class Higuma:
 
     def _fallback_callback(self, raw_request: Mapping[str, Any]) -> Any:
         request = Request(raw_request)
+        if self._file_endpoints:
+            methods = {
+                method
+                for route in self._routes
+                if route.endpoint not in self._file_endpoints
+                and route.match(request.path) is not None
+                for method in route.methods
+            }
+            if methods:
+                if "GET" in methods:
+                    methods.add("HEAD")
+                methods.add("OPTIONS")
+                request.allowed_methods = tuple(sorted(methods))
 
         def fallback() -> Any:
             if request.method == "OPTIONS" and request.allowed_methods:
@@ -900,50 +1005,10 @@ class Higuma:
     def _serve_static(self, request: Request, filename: str) -> ResponseValue:
         if not self.static_folder:
             raise NotFound()
-        root = Path(self.static_folder).resolve()
-        candidate = (root / filename).resolve()
-        if root != candidate and root not in candidate.parents:
-            raise NotFound()
-        if not candidate.is_file():
-            raise NotFound()
-
-        stat = candidate.stat()
-        etag = f'"{hashlib.sha256(f"{stat.st_mtime_ns}:{stat.st_size}".encode()).hexdigest()[:24]}"'
-        cache_control = f"public, max-age={int(self.config['STATIC_CACHE_MAX_AGE'])}"
-        common_headers = {"etag": etag, "cache-control": cache_control}
-        if request.headers.get("if-none-match") == etag:
-            return Response(b"", 304, common_headers)
-
-        range_header = request.headers.get("range")
-        if range_header and str(range_header).startswith("bytes="):
-            parsed_range = _parse_range(str(range_header), stat.st_size)
-            if parsed_range is None:
-                return Response(
-                    b"",
-                    416,
-                    {
-                        **common_headers,
-                        "content-range": f"bytes */{stat.st_size}",
-                    },
-                )
-            start, end = parsed_range
-            return FileResponse(
-                candidate,
-                status=206,
-                headers={
-                    **common_headers,
-                    "accept-ranges": "bytes",
-                    "content-range": f"bytes {start}-{end}/{stat.st_size}",
-                },
-                media_type=_guess_media_type(candidate),
-                offset=start,
-                length=end - start + 1,
-            )
-
-        return FileResponse(
-            candidate,
-            headers={**common_headers, "accept-ranges": "bytes"},
+        files = StaticFiles(
+            self.static_folder, max_age=int(self.config["STATIC_CACHE_MAX_AGE"]), check_dir=False
         )
+        return files(request, filename)
 
     def _prepare_file_response(self, request: Request, response: Response) -> Response:
         if (
@@ -963,16 +1028,44 @@ class Higuma:
         etag = f'"{hashlib.sha256(f"{stat.st_mtime_ns}:{stat.st_size}".encode()).hexdigest()[:24]}"'
         response.headers.setdefault("etag", etag)
         response.headers.setdefault("accept-ranges", "bytes")
-        if request.headers.get("if-none-match") == response.headers["etag"]:
+        response.headers.setdefault("last-modified", formatdate(stat.st_mtime, usegmt=True))
+
+        def conditional(status: int) -> Response:
             headers = dict(response.headers)
             headers.pop("content-length", None)
-            conditional = Response(b"", 304, headers, background=response.background)
-            conditional._extra_headers.extend(response._extra_headers)
-            return conditional
+            result = Response(b"", status, headers, background=response.background)
+            result._extra_headers.extend(response._extra_headers)
+            return result
+
+        if_match = request.headers.get("if-match")
+        if if_match is not None and not _etag_matches(
+            if_match, response.headers["etag"], weak=False
+        ):
+            return conditional(412)
+        unmodified = _http_timestamp(request.headers.get("if-unmodified-since"))
+        if if_match is None and unmodified is not None and int(stat.st_mtime) > unmodified:
+            return conditional(412)
+        if_none_match = request.headers.get("if-none-match")
+        if if_none_match is not None:
+            if _etag_matches(if_none_match, response.headers["etag"]):
+                return conditional(304)
+        else:
+            modified = _http_timestamp(request.headers.get("if-modified-since"))
+            if modified is not None and int(stat.st_mtime) <= modified:
+                return conditional(304)
 
         range_header = request.headers.get("range")
         if not range_header or not str(range_header).startswith("bytes="):
             return response
+        if_range = request.headers.get("if-range")
+        if if_range is not None:
+            if if_range.startswith('"'):
+                matches = if_range == response.headers["etag"]
+            else:
+                timestamp = _http_timestamp(if_range)
+                matches = timestamp is not None and int(stat.st_mtime) == timestamp
+            if not matches:
+                return response
         parsed_range = _parse_range(str(range_header), stat.st_size)
         if parsed_range is None:
             headers = dict(response.headers)
@@ -1108,10 +1201,46 @@ def _parse_range(value: str, size: int) -> tuple[int, int] | None:
         return None
 
 
-def _guess_media_type(path: Path) -> str:
-    import mimetypes
+def _etag_matches(value: str, etag: str, *, weak: bool = True) -> bool:
+    if value.strip(" \t") == "*":
+        return True
+    # An opaque entity tag may itself contain commas (RFC 9110, section 8.8.3).
+    candidates = []
+    quoted = False
+    start = 0
+    for index, char in enumerate(value):
+        if char == '"':
+            quoted = not quoted
+        elif char == "," and not quoted:
+            candidates.append(value[start:index].strip(" \t"))
+            start = index + 1
+    candidates.append(value[start:].strip(" \t"))
+    if quoted or any(
+        candidate and re.fullmatch(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"', candidate) is None
+        for candidate in candidates
+    ):
+        return False
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if weak:
+            if candidate.removeprefix("W/") == etag.removeprefix("W/"):
+                return True
+        elif not candidate.startswith("W/") and not etag.startswith("W/") and candidate == etag:
+            return True
+    return False
 
-    return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+def _http_timestamp(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = parsedate_to_datetime(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
+    except (ValueError, TypeError, OverflowError, OSError):
+        return None
 
 
 class _AsyncContextManagerAdapter:

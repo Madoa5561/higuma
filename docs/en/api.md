@@ -1,5 +1,30 @@
 # API reference
 
+## Frontend APIs (0.6.0+)
+
+```python
+app.mount_static(prefix, directory, *, name="static_files", html=False,
+                 index_file="index.html", max_age=3600, immutable=False, headers=None)
+app.mount_spa(prefix, directory, *, name="spa", index_file="index.html",
+              api_prefixes=("/api",), asset_prefixes=("/assets",), max_age=3600,
+              immutable=False, headers=None)
+StaticFiles(directory, *, html=False, index_file="index.html", max_age=3600,
+            immutable=False, headers=None, check_dir=True)
+SPAFiles(directory, *, index_file="index.html", api_prefixes=("/api",),
+         asset_prefixes=("/assets",), max_age=3600, immutable=False, headers=None)
+ViteManifest(path, *, base_url="/static/")
+```
+
+Mount methods return their file helper and register GET/HEAD endpoints named
+`{name}_root` and `{name}_path`, excluded from OpenAPI. Direct helpers accept
+`helper(request, filename="")`. Use app mounts for shared middleware, hooks, and
+conditional file processing. `StaticFiles(check_dir=False)` defers directory checks.
+
+`ViteManifest.asset_url(entry)` returns a URL; `entrypoint(entry)` returns `file`,
+`css`, and `imports` URLs; `tags(entry, *, nonce=None)` returns escaped HTML;
+`reload()` replaces the snapshot only after successful validation. See the
+[frontend guide](frontend.md) for all semantics, exceptions, and boundaries.
+
 See [Flask-style APIs](flask-compat.md#flask-style-apis-in-higuma) for the 0.5.0
 context, session, flash, URL, header, and factory compatibility additions.
 

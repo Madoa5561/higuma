@@ -1,5 +1,8 @@
 # Feature guide
 
+See [CSR and frontend integration](frontend.md) for SPA/Vite/static HTML and the
+[capability matrix](capabilities.md) for native/integration/external boundaries.
+
 ## Routing and handlers
 
 ```python

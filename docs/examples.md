@@ -5,6 +5,8 @@
 | File | 内容 | 実行時の注意 |
 | --- | --- | --- |
 | `app.py` | routing、JSON、SSR template | なし |
+| `csr_app.py` | CSR、History API、API JSON、深いURLのreload | 0.6.0以降、`/app/`を開く。npm不要 |
+| `vite_ssr.py` | Python HTML＋Vite CSS/modulepreload | 自分のbuildと`.vite/manifest.json`が必要 |
 | `blueprint_hooks.py` | Blueprint、config、request/lifecycle hook | なし |
 | `routing_async.py` | converter、複数method、async handler | なし |
 | `modern_typed_api.py` | Annotated入力、DI、response model、OpenAPI | なし |
@@ -28,6 +30,11 @@
 | `supervised_app.py` | multi-process Supervisor | workerからpeerはloopbackに見える |
 
 ## 基本の実行
+
+CSRは`higuma run examples.csr_app:create_app`で起動し、`http://127.0.0.1:8000/app/`を開きます。
+`vite_ssr.py`は`HIGUMA_FRONTEND_DIST`に既存のbuild directoryを設定してから起動します。
+manifestはViteの`build.manifest: true`で生成し、baseは`/build/`に合わせます。
+詳細な開発／本番手順は[フロントエンドガイド](frontend.md)を参照してください。
 
 追加APIと制限は[Flask互換性](flask-compat.md)を参照してください。
 `security_tokens_roles.py`では`HIGUMA_SECRET_KEY`に加えて、

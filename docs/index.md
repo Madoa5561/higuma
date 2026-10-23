@@ -1,9 +1,23 @@
+<div class="brand-hero" markdown="1">
+
+![higuma — 日本のヒグマをモチーフにしたロゴ](assets/higuma-mark.png){ .brand-hero__mark width="144" height="132" }
+
 # higuma
 
 **Pythonで書き、Rustで配信するWebフレームワーク。**
 
 [English documentation](en/index.md){ .md-button }
 [5分ではじめる](getting-started.md){ .md-button .md-button--primary }
+
+</div>
+
+API、HTML、リアルタイム通信を、書き慣れたPythonのdecoratorで。
+higumaという名前は日本のヒグマに由来します。
+
+!!! info "0.6.0の新機能"
+    CSR/SPA・複数static root・Vite manifest連携を追加しました。
+    使い方は[フロントエンドガイド](frontend.md)、内蔵機能と外部連携の違いは
+    [機能対応表](capabilities.md)を参照してください。0.5.0から利用する場合はパッケージを更新します。
 
 ```bash
 python -m pip install -U higuma
@@ -32,7 +46,7 @@ file streaming、gzip、WebSocketをRust coreが処理します。
 higumaはFlaskのdrop-in replacementでも、ASGI serverへ渡すASGI applicationでも
 ありません。既存のWSGI / ASGI applicationはroute配下へmountできます。
 
-## 0.4.0の機能
+## 主な機能
 
 - `Annotated`型付き入力、dependency injection、response model、構造化422
 - typed converter、自動HEAD/OPTIONS、sync / async handler、class-based view
@@ -44,8 +58,10 @@ higumaはFlaskのdrop-in replacementでも、ASGI serverへ渡すASGI applicatio
 - OpenAPI 3.1 / Swagger UI、dataclass・TypedDict・enum等のschema
 - transactionとpaginationを備えたSQLite ORM
 - signed session、login、role / permission、OAuth 2.0 + PKCE
+- Flask風application context、`g`、session proxy、flash、URL生成
 - password、token、CSRF、CORS、rate limit、trusted host / proxy
 - in-process test client、CLI、multi-process supervisor
+- CSR/SPA history fallback、複数static root、Vite manifest（0.6.0以降）
 
 !!! important "OpenAPIと入力検証"
     `Annotated[..., Body()]`等はruntimeで入力を検証・Python objectへ変換し、同じ宣言から
@@ -63,10 +79,14 @@ higumaはFlaskのdrop-in replacementでも、ASGI serverへ渡すASGI applicatio
 
 - [はじめる](getting-started.md)
 - [機能ガイド](features.md)
+- [CSR・フロントエンド](frontend.md)
+- [機能対応表](capabilities.md)
+- [Flask互換性](flask-compat.md)
 - [認証とセキュリティ](security-auth.md)
 - [Examples](examples.md)
 - [APIリファレンス](api.md)
 - [デプロイ](deployment.md)
+- [ロゴ・ブランド素材](branding.md)
 
 !!! warning
     higumaは活発に開発中です。本番採用前に、対象applicationで負荷試験、障害試験、

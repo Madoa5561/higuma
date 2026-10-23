@@ -6,11 +6,15 @@ repo_name: Madoa5561/higuma
 edit_uri: edit/main/docs/
 copyright: Copyright &copy; 2026 higuma contributors
 
+hooks:
+  - tools/docs_hooks.py
+
 theme:
   name: material
+  custom_dir: overrides
   language: ja
-  logo: assets/logo.svg
-  favicon: assets/favicon.svg
+  logo: assets/higuma-mark.png
+  favicon: assets/higuma-mark.png
   font:
     text: Noto Sans JP
     code: JetBrains Mono
@@ -37,20 +41,26 @@ nav:
       - ホーム: index.md
       - はじめる: getting-started.md
       - 機能ガイド: features.md
+      - CSR・フロントエンド: frontend.md
+      - 機能対応表: capabilities.md
       - Flask互換性: flask-compat.md
       - 認証とセキュリティ: security-auth.md
       - デプロイ: deployment.md
       - Examples: examples.md
       - APIリファレンス: api.md
+      - ロゴ・ブランド素材: branding.md
   - English:
       - Home: en/index.md
       - Getting started: en/getting-started.md
       - Feature guide: en/features.md
+      - CSR and frontend: en/frontend.md
+      - Capability matrix: en/capabilities.md
       - Flask compatibility: en/flask-compat.md
       - Auth and security: en/security-auth.md
       - Deployment: en/deployment.md
       - Examples: en/examples.md
       - API reference: en/api.md
+      - Brand assets: en/branding.md
   - Changelog: https://github.com/Madoa5561/higuma/blob/main/CHANGELOG.md
 
 markdown_extensions:

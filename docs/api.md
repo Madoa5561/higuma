@@ -38,6 +38,8 @@ Higuma(
 - `add_middleware(middleware, *args, **kwargs)`
 - `render_template`、`jsonify`、`make_response`
 - `mount_wsgi`、`mount_asgi`
+- `mount_static(prefix, directory, *, name="static_files", html=False, index_file="index.html", max_age=3600, immutable=False, headers=None)`
+- `mount_spa(prefix, directory, *, name="spa", index_file="index.html", api_prefixes=("/api",), asset_prefixes=("/assets",), max_age=3600, immutable=False, headers=None)`
 - `openapi()`、`clear_template_cache()`、`init_database()`
 - `test_client()`
 - `run(host="127.0.0.1", port=8000, *, workers=0, processes=1, ...)`
@@ -51,7 +53,29 @@ routeのOpenAPI optionは`summary`、`description`、`tags`、`responses`、
 request context外で参照すると`RuntimeError`になります。`app.config`は設定dictionary、
 `app.state`はlifespanで初期化した共有状態などに使えます。
 
-### `Blueprint`
+### `StaticFiles` / `SPAFiles` / `ViteManifest`（0.6.0以降）
+
+`mount_static`は登録した`StaticFiles`を、`mount_spa`は`SPAFiles`を返します。
+root/pathのendpointは`{name}_root`・`{name}_path`で、OpenAPIから除外します。
+directoryは作業directory基準。prefixはliteralなroot-relative pathです。
+
+```python
+StaticFiles(directory, *, html=False, index_file="index.html", max_age=3600,
+            immutable=False, headers=None, check_dir=True)
+SPAFiles(directory, *, index_file="index.html", api_prefixes=("/api",),
+         asset_prefixes=("/assets",), max_age=3600, immutable=False, headers=None)
+ViteManifest(path, *, base_url="/static/")
+```
+
+file helperは`helper(request, filename="")`で呼べ、app mountを使うと通常のmiddleware・hooksも
+適用されます。`StaticFiles(check_dir=False)`だけは起動時directory存在確認を遅延します。
+直接helperを呼ぶだけではapp共通のconditional処理は実行されないため、通常はmount APIを使います。
+
+Vite methodは`asset_url(entry) -> str`、`entrypoint(entry) -> dict`（`file`・`css`・`imports`）、
+`tags(entry, *, nonce=None) -> str`、`reload() -> None`です。
+全optionの動作・cache・予約prefix・エラー・security境界は[frontend guide](frontend.md)を参照してください。
+
+### `Blueprint`（route group）
 
 `Blueprint(name, import_name, *, url_prefix="")`はroute群をまとめます。`route`、HTTP shortcut、
 `websocket`を持ち、`register_blueprint()`で登録します。

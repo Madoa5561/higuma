@@ -51,6 +51,7 @@ from .exceptions import (
     UnsupportedMediaType,
     abort,
 )
+from .frontend import ViteManifest
 from .middleware import (
     CORSMiddleware,
     ProxyHeadersMiddleware,
@@ -98,6 +99,7 @@ from .security import (
     validate_user_id,
 )
 from .sessions import Session, SessionMiddleware
+from .staticfiles import SPAFiles, StaticFiles
 from .supervisor import Supervisor
 from .views import MethodView, View
 from .websocket import WebSocket, WebSocketDisconnect
@@ -157,10 +159,12 @@ __all__ = [
     "RequestValidationError",
     "Response",
     "ResponseValidationError",
+    "SPAFiles",
     "SecurityHeadersMiddleware",
     "ServerSentEvent",
     "Session",
     "SessionMiddleware",
+    "StaticFiles",
     "StreamingResponse",
     "String",
     "Supervisor",
@@ -172,6 +176,7 @@ __all__ = [
     "UnsupportedMediaType",
     "UploadFile",
     "View",
+    "ViteManifest",
     "WebSocket",
     "WebSocketDisconnect",
     "__version__",

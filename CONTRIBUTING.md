@@ -52,7 +52,27 @@ The generated `audit-requirements.txt` is an audit snapshot, not a runtime lockf
 Before tagging a release, push the exact commit and wait for both CI and Dependency
 security to succeed. The release workflow refuses stale-success-only results.
 
-## Pull requests
+## Frontend verification
+
+```bash
+python -m pytest tests/test_frontend.py tests/test_csr_server.py
+node --check examples/frontend/assets/app.js
+```
+
+Node is optional for the Python runtime; the syntax check runs on the hosted CI
+image. The CSR example itself needs only a browser and higuma. Start
+`higuma run examples.csr_app:create_app`, open `/app/`, navigate to the API page,
+reload `/app/status`, then navigate and use Back. Confirm real JSON, no browser
+errors, and 404 for missing assets/reserved APIs. For a complete integration test,
+build your own Vite project too; manifest fixtures do not prove every compiler,
+plugin, browser, or framework combination.
+
+Symlink tests may skip on Windows without symlink privileges; do not change OS
+security settings just to run them. If an existing pytest temporary root is
+inaccessible, use a new, task-specific `--basetemp` under ignored `target/` rather
+than deleting or changing permissions on another task's temporary directory.
+
+## Pull request checklist
 
 - Keep changes focused and explain the behavior they change.
 - Add tests for bug fixes and new public behavior.

@@ -7,6 +7,37 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-23
+
+### Added
+
+- Native SPA/CSR mounts with subpath support, guarded history fallback, explicit
+  API/asset exclusions, and preservation of known HTTP method contracts.
+- Multiple static mounts, optional HTML directory indexes, safe path resolution,
+  stable web MIME types, cache controls, and dotfile/symlink escape protection.
+- Vite manifest snapshots with hashed asset URLs, recursive CSS/modulepreload
+  resolution, cycle handling, escaped HTML tags, CSP nonces, and explicit reloads.
+- Dependency-free CSR browser example, Vite/Python HTML example, and comprehensive
+  Japanese/English frontend guides and native/integration/external capability tables.
+- Real-socket SPA/API/WebSocket coexistence and conditional file regression tests.
+- An imagegen-created Japanese brown bear logo, shared documentation branding,
+  and a reorganized README with release boundaries and project navigation.
+
+### Fixed
+
+- Parse quoted ETag lists without splitting commas inside entity tags; reject
+  malformed lists instead of matching an accidental fragment in file preconditions.
+- Generate an English sitemap instead of a 404 and resolve language selector links
+  at build time so switching languages preserves the corresponding page.
+
+### Changed
+
+- Share file conditional handling across built-in static, new mounts, and complete
+  FileResponse/send_file responses: ETag lists/weak matching, Last-Modified,
+  If-Modified-Since, If-Match, If-Unmodified-Since, and strong/date If-Range.
+- Built-in static serving now denies hidden files and uses the same safe path
+  policy as new mounts. HTML/service-worker filenames default to revalidation.
+
 ## [0.5.0] - 2026-10-19
 
 ### Added

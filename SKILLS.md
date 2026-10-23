@@ -43,6 +43,9 @@ python app.py
 | HTTP route | `@app.get`, `post`, `put`, `patch`, `delete` |
 | Realtime connection | `@app.websocket("/ws")` |
 | HTML SSR | `app.render_template("page.html", value=value)` |
+| CSR / SPA history fallback | `app.mount_spa("/app", build_dir)` (0.6+) |
+| Multiple static roots / HTML indexes | `app.mount_static("/files", directory, html=True)` |
+| Vite hashed assets / CSS / module preloads | `ViteManifest(path, base_url="/build/").tags("index.html")` |
 | JSON | return `dict`/`list` or call `app.jsonify(...)` |
 | Typed query/header/cookie/path | `Annotated[T, QueryParam/Header/Cookie/PathParam(...)]` |
 | Typed JSON/form/file | `Annotated[T, Body/Form/File(...)]` |
@@ -90,7 +93,18 @@ python app.py
 - Use `request.raw_headers` only when duplicate header byte pairs are required
   for ASGI/WSGI interoperability.
 
-## WebSocket pattern
+## Frontend boundaries
+
+Keep frontend base URLs/router basenames aligned with the mount prefix. SPA
+fallback is only for missing extensionless GET/HEAD paths accepting HTML; reserve
+all API and asset prefixes. Do not catch application errors and return the SPA
+shell. Use immutable caches only for content-addressed assets. Never serve
+credentials, source trees, databases, or writable upload stores as public roots.
+Vite/React/Vue compilers, HMR, Node SSR, service-worker lifecycle, durable jobs,
+and distributed state are external integrations, not built-in promises.
+See docs/frontend.md and docs/capabilities.md (English under docs/en/).
+
+## WebSocket pattern (native)
 
 ```python
 from higuma import Higuma, WebSocketDisconnect

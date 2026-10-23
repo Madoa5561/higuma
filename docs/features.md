@@ -1,5 +1,8 @@
 # 機能ガイド
 
+CSR・SPA・Vite・静的HTMLは[フロントエンドガイド](frontend.md)、
+内蔵／連携／外部構成の違いは[機能対応表](capabilities.md)を参照してください。
+
 ## Routingとhandler
 
 ```python
@@ -180,6 +183,8 @@ MiniJinja environmentとcompiled templateはRust側で共有されます。開�
 `static_folder`が有効なら`static_url_path`配下でfileを配信します。static response、
 `send_file()`、full-fileの`FileResponse`はETag、`If-None-Match`、GET/HEADのsingle byte rangeに
 対応します。file全体やrangeをPython memoryへ読み込まずRustからseek / streamします。
+0.6.0では`mount_static`・`mount_spa`と、更新日時・ETag list・If-Range等の共通処理を追加しました。
+隠しfileとroot外のsymlinkは配信しません。
 
 ## Multipart upload
 

@@ -1,0 +1,8 @@
+Use case: logo-brand
+Asset type: original Higuma open-source Python/Rust web framework logo, used in GitHub README and documentation header.
+Primary request: a Japanese higuma (Hokkaido brown bear), a calm, capable and confident bear symbol, distinctive broad muzzle and small rounded ears. One compact, carefully balanced bear-head silhouette with thoughtful negative space, recognizable at 32 pixels.
+Style/medium: polished flat vector-like graphic, simple bold shapes, exceptionally clean edges, no fine hair texture. Not a teddy bear, panda, or aggressive sports-team mascot.
+Composition/framing: single centered standalone symbol on a genuinely transparent background, balanced modest clear space, no enclosing badge or mockup.
+Color palette: use the existing documentation palette: deep forest green #184c3b, warm rust/brown #c8592a, cream #f7f2e7; restrained two or three flat colors, readable on light or dark surfaces.
+Text: none. No letters or wordmark; the project name will be typeset separately.
+Constraints: original design, strong silhouette, no gradients, no shadows, no glow, no 3D, no watermark, no extra objects, no decorative circuits, no background scene. Actual transparent alpha, not a checkerboard drawing.

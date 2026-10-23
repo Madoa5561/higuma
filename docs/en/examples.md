@@ -1,5 +1,12 @@
 # Examples
 
+The 0.6.0 examples include `csr_app.py` (dependency-free browser CSR,
+History API, fetch; open `/app/`) and `vite_ssr.py` (Python HTML with Vite CSS and
+module preloads). Run `higuma run examples.csr_app:create_app` for the former.
+For the latter, generate your own `.vite/manifest.json` with `build.manifest: true`,
+set Vite's base to `/build/`, and point `HIGUMA_FRONTEND_DIST` to that build.
+See [frontend integration](frontend.md) for development/production instructions.
+
 See [Flask compatibility](flask-compat.md) for `examples/flask_mount.py`
 (install `higuma[compat]`) and `examples/flask_compat.py` (g, sessions, flash,
 URL generation, and CSRF; requires `HIGUMA_SECRET_KEY`).
