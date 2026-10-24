@@ -27,6 +27,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
   Flask/ASGI mounts; expose decoded `request.root_path` and optional ASGI `scope`.
 - Parse split Cookie headers without dropping values, preserve separate response
   Set-Cookie fields, normalize response framing, and close streamed resources.
+- Avoid reverse-DNS-dependent startup in the loopback-only WSGI demonstration.
 
 ### Boundaries
 

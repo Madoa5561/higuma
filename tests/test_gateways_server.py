@@ -38,8 +38,11 @@ def gateway_server(request):
     else:
         command = [
             sys.executable,
-            "-m",
-            "examples.server_modes",
+            "-c",
+            (
+                "import faulthandler, runpy; faulthandler.dump_traceback_later(15); "
+                "runpy.run_module('examples.server_modes', run_name='__main__')"
+            ),
             "--mode",
             mode,
             "--port",
@@ -71,7 +74,9 @@ def gateway_server(request):
                 pass
             time.sleep(0.05)
         else:
-            raise TimeoutError("Gateway server did not start")
+            process.terminate()
+            stdout, stderr = process.communicate(timeout=5)
+            raise TimeoutError(f"Gateway server did not start\n{stdout}\n{stderr}")
         yield mode, port
     finally:
         if process.poll() is None:
@@ -139,3 +144,17 @@ def test_gateway_real_websocket_echo_and_origin(gateway_server):
                 pass
 
     asyncio.run(exercise())
+
+
+def test_wsgi_example_starts_without_reverse_dns(monkeypatch):
+    from wsgiref.simple_server import make_server
+
+    from examples.server_modes import LoopbackWSGIServer, wsgi_app
+
+    def unexpected_lookup(*args):
+        raise AssertionError("loopback example must not require DNS")
+
+    monkeypatch.setattr(socket, "getfqdn", unexpected_lookup)
+    with make_server("127.0.0.1", 0, wsgi_app, server_class=LoopbackWSGIServer) as server:
+        assert server.base_environ["SERVER_NAME"] == "127.0.0.1"
+        assert int(server.base_environ["SERVER_PORT"]) == server.server_address[1]

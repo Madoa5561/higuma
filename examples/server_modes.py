@@ -3,9 +3,18 @@
 import argparse
 import asyncio
 from contextlib import asynccontextmanager
-from wsgiref.simple_server import make_server
+from socketserver import TCPServer
+from wsgiref.simple_server import WSGIServer, make_server
 
 from higuma import EventSourceResponse, Higuma, ServerSentEvent, WebSocketDisconnect, request
+
+
+class LoopbackWSGIServer(WSGIServer):
+    def server_bind(self):
+        # This local-only example does not need HTTPServer's potentially slow reverse DNS lookup.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+        self.setup_environ()
 
 
 @asynccontextmanager
@@ -57,7 +66,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.mode == "wsgi":
         # Reference server for local demonstrations, not a production recommendation.
-        with app.lifespan(), make_server("127.0.0.1", args.port, wsgi_app) as server:
+        with (
+            app.lifespan(),
+            make_server(
+                "127.0.0.1", args.port, wsgi_app, server_class=LoopbackWSGIServer
+            ) as server,
+        ):
             server.serve_forever()
     else:
         app.run(port=args.port)
