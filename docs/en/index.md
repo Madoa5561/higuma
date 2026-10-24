@@ -14,14 +14,11 @@
 Build APIs, HTML pages, and realtime connections with familiar Python decorators.
 The name higuma comes from the Japanese brown bear.
 
-!!! info "New in 0.7.1"
-    Scoped Blueprint hooks, errors and template contexts, request contexts, and body helpers.
-    Session saving after response hooks and JSON parsing are fixed too.
-    See [Flask compatibility](flask-compat.md), [Testing](testing.md), and the
-    [lifecycle example](examples.md#request-lifecycle). For SPA/Vite integration, see
-    [Frontend](frontend.md). Upgrade the package when using an older release.
-    Tokio's I/O-safety advisory is addressed too. 0.7.0 publication was cancelled;
-    upgrade directly from 0.6.0 to 0.7.1.
+!!! info "New in 0.8.0"
+    Deploy through `app.asgi_app` or `app.wsgi_app` as well as the built-in server.
+    ASGI supports HTTP, lifespan, and WebSockets; WSGI supports HTTP.
+    See [Server interfaces](server-interfaces.md) for worker, streaming, proxy,
+    and resource boundaries, and [Testing](testing.md) for verification.
 
 ```bash
 python -m pip install -U higuma
@@ -47,9 +44,9 @@ higuma combines a Flask-inspired decorator API with a built-in HTTP server
 powered by axum and Tokio. Application logic stays in Python; the Rust core
 handles sockets, route matching, file streaming, gzip, and WebSockets.
 
-higuma is neither a drop-in Flask replacement nor an ASGI application passed
-to a separate ASGI server. Existing WSGI and ASGI applications can be mounted
-under a higuma route.
+higuma is not a drop-in Flask replacement. External servers use the explicit
+`asgi_app` / `wsgi_app` entry points; hosting other applications through buffered
+HTTP mounts remains available in the opposite direction.
 
 ## Core features
 
@@ -88,6 +85,7 @@ under a higuma route.
 - [CSR and frontend](frontend.md)
 - [Capability matrix](capabilities.md)
 - [Flask compatibility](flask-compat.md)
+- [ASGI, WSGI, and servers](server-interfaces.md)
 - [Testing and request contexts](testing.md)
 - [Authentication and security](security-auth.md)
 - [Examples](examples.md)

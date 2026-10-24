@@ -1,0 +1,63 @@
+"""One application, native / ASGI / WSGI deployment. See docs/server-interfaces.md."""
+
+import argparse
+import asyncio
+from contextlib import asynccontextmanager
+from wsgiref.simple_server import make_server
+
+from higuma import EventSourceResponse, Higuma, ServerSentEvent, WebSocketDisconnect, request
+
+
+@asynccontextmanager
+async def lifespan(app):
+    yield {"ready": True}
+
+
+app = Higuma(__name__, static_folder=None, lifespan=lifespan)
+
+
+@app.get("/")
+def index():
+    return {"framework": "higuma", "ready": app.state.get("ready", False)}
+
+
+@app.post("/echo")
+async def echo():
+    await asyncio.sleep(0)
+    return {"received": request.get_json()}
+
+
+@app.get("/events")
+def events():
+    async def messages():
+        for number in range(3):
+            yield ServerSentEvent({"number": number}, event="count")
+            await asyncio.sleep(0.05)
+
+    return EventSourceResponse(messages())
+
+
+@app.websocket("/ws")
+async def socket(ws):
+    try:
+        while True:
+            await ws.asend_json({"echo": await ws.areceive_json()})
+    except WebSocketDisconnect:
+        pass
+
+
+asgi_app = app.asgi_app
+wsgi_app = app.wsgi_app
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=("native", "wsgi"), default="native")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    if args.mode == "wsgi":
+        # Reference server for local demonstrations, not a production recommendation.
+        with app.lifespan(), make_server("127.0.0.1", args.port, wsgi_app) as server:
+            server.serve_forever()
+    else:
+        app.run(port=args.port)

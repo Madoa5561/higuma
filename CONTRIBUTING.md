@@ -14,7 +14,7 @@ Requirements:
 python -m venv .venv
 .venv/Scripts/activate
 python -m pip install -U pip
-python -m pip install -e ".[dev,docs,compat,security]"
+python -m pip install -e ".[dev,docs,compat,security,asgi]"
 ```
 
 On macOS or Linux, activate the environment with:
@@ -54,7 +54,20 @@ The generated `audit-requirements.txt` is an audit snapshot, not a runtime lockf
 Before tagging a release, push the exact commit and wait for both CI and Dependency
 security to succeed. The release workflow refuses stale-success-only results.
 
-## Flask-style API verification
+## External server interface verification
+
+```bash
+python -m pytest tests/test_gateways.py tests/test_gateways_server.py
+```
+
+The `asgi` extra is optional for runtime users and installed by CI. Validate
+WSGI with the standard validator and real wsgiref; validate ASGI with protocol
+messages plus real Uvicorn HTTP/WS/SSE. Cover same-loop lifespan/resources,
+ContextVar/yield cleanup, cancellation, backpressure, bounded messages, cookies,
+root paths, and middleware boundaries. No native-performance claim applies
+automatically to an external server. See docs/server-interfaces.md.
+
+## Flask compatibility regression tests
 
 ```bash
 python -m pytest tests/test_flask_helpers.py tests/test_flask_helpers_server.py

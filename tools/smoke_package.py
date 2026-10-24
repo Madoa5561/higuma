@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import http.client
+import io
 import os
 import socket
 import subprocess
@@ -141,6 +143,57 @@ def _exercise_flask_helpers() -> None:
     assert not has_request_context()
 
 
+def _exercise_gateways() -> None:
+    from wsgiref.util import setup_testing_defaults
+    from wsgiref.validate import validator
+
+    from higuma import Higuma
+
+    app = Higuma(__name__, static_folder=None)
+
+    @app.get("/health")
+    async def health():
+        await asyncio.sleep(0)
+        return {"status": "ok"}
+
+    environ = {}
+    setup_testing_defaults(environ)
+    environ.update(PATH_INFO="/health", QUERY_STRING="", CONTENT_LENGTH="0")
+    environ["wsgi.input"] = io.BytesIO()
+    received = []
+
+    def start_response(status, headers, exc_info=None):
+        received.append(status)
+
+    result = validator(app.wsgi_app)(environ, start_response)
+    try:
+        assert b"".join(result) == b'{"status":"ok"}'
+        assert received == ["200 OK"]
+    finally:
+        result.close()
+
+    async def exercise():
+        incoming = asyncio.Queue()
+        incoming.put_nowait({"type": "http.request", "body": b""})
+        events = []
+
+        async def send(event):
+            events.append(event)
+
+        await asyncio.wait_for(
+            app.asgi_app(
+                {"type": "http", "path": "/health", "headers": [(b"host", b"localhost")]},
+                incoming.get,
+                send,
+            ),
+            5,
+        )
+        assert events[0]["status"] == 200
+        assert b"".join(event.get("body", b"") for event in events) == b'{"status":"ok"}'
+
+    asyncio.run(exercise())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test an installed higuma package")
     parser.add_argument("--wheel-dir", type=Path, help="install the single wheel from this folder")
@@ -168,6 +221,7 @@ def main() -> int:
         raise RuntimeError(f"unexpected CLI version output: {cli.stdout!r}")
 
     _exercise_flask_helpers()
+    _exercise_gateways()
 
     port = _free_port()
     application = """

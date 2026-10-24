@@ -45,6 +45,8 @@ Higuma(
 - `mount_spa(prefix, directory, *, name="spa", index_file="index.html", api_prefixes=("/api",), asset_prefixes=("/assets",), max_age=3600, immutable=False, headers=None)`
 - `openapi()`、`clear_template_cache()`、`init_database()`
 - `test_client()`
+- `asgi_app`: ASGI 3 callable property（0.8+）。HTTP・WS・lifespan
+- `wsgi_app`: WSGI callable property（0.8+）。HTTPのみ
 - `run(host="127.0.0.1", port=8000, *, workers=0, processes=1, ...)`
 
 routeのOpenAPI optionは`summary`、`description`、`tags`、`responses`、
@@ -98,6 +100,11 @@ request context外では`RuntimeError`です。callbackはresponseを受け取�
 HTTPエラーや登録handlerで処理済みの例外では通常`None`です。
 `test_request_context`の構築引数と、Flaskとの違いは[テストガイド](testing.md)を参照してください。
 
+### 外部サーバー入口（0.8.0以降）
+
+外部サーバーへの公開例・async実行モデル・設定・制約は
+[ASGI・WSGIガイド](server-interfaces.md)を参照してください。
+
 ### `View` / `MethodView`
 
 `View.as_view(name, *class_args, **class_kwargs)`はclassをview functionへ変換します。
@@ -149,6 +156,7 @@ def create_item(
 
 - `method`、`path`、`query_string`、`scheme`、`host`、`base_url`、`url`
 - `host_url`、`full_path`、`mimetype`、`is_json`（0.7+）
+- `root_path`: decode済みmount prefix。`scope`: ASGI入力scope、他の経路では`None`（0.8+）
 - `args` / `query`: repeated keyを保持する`MultiDict`
 - `values`: GETではqueryのみ、それ以外はquery優先でformと統合（0.7+）
 - `headers`: case-insensitiveな`Headers`
@@ -240,6 +248,11 @@ proxy headerは直接接続元が`trusted_proxies`に含まれる場合だけ信
 `receive_text()`、`receive_bytes()`、`receive_json()`、`close()`を提供します。切断は
 `WebSocketDisconnect(code=1000, reason="")`です。routeの`allowed_origins`を省略すると
 same-originだけを許可します。
+
+0.8.0からasync handlerでは`await ws.asend_text/asend_bytes/asend_json(...)`、
+`await ws.areceive/areceive_text/areceive_bytes/areceive_json()`、
+`await ws.aclose(code=1000, reason="")`を使えます。組み込みとASGIの両方で対応します。
+ASGI loop上で同期WS methodを直接呼び出してはいけません。
 
 ## SQLite ORM
 

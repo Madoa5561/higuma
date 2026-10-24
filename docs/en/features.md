@@ -1,5 +1,8 @@
 # Feature guide
 
+For 0.8.0 ASGI/WSGI exports and differences from native deployment, see
+[Server interfaces](server-interfaces.md).
+
 See [CSR and frontend integration](frontend.md) for SPA/Vite/static HTML and the
 [capability matrix](capabilities.md) for native/integration/external boundaries.
 

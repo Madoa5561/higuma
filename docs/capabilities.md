@@ -22,7 +22,8 @@ HigumaはRust HTTP coreとPython APIを組み合わせた小さなframeworkで�
 | Background task | 内蔵 | response後の軽量処理。永続queue・retry・schedulerは外部 |
 | Lifespan / supervisor | 内蔵 | sync/async lifecycle、複数process。[デプロイ](deployment.md) |
 | Flask compatibility | 部分互換＋WSGI連携 | g/session/flash、request context・Blueprint scoped hooks（0.7）。[対応境界](flask-compat.md)。全extension互換ではない |
-| WSGI / ASGI apps | HTTP連携 | buffered mount。mounted WS、ASGI lifespan、無期限streamは非対応 |
+| 外部サーバーでHigumaを実行 | 内蔵（0.8） | `asgi_app`: HTTP/WS/lifespan、`wsgi_app`: HTTP。[対応境界](server-interfaces.md)。asyncでも同期互換workerを使用 |
+| 他WSGI / ASGI appをmount | HTTP連携 | buffered mount。mounted WS、ASGI lifespan転送、無期限streamは非対応 |
 | GraphQL / RPC | 外部library連携 | HTTP互換範囲のWSGI/ASGI appをmount。subscription転送は保証しない |
 | App cache / Redis / durable jobs | 外部で構成 | lifespanとDIでclientを管理。HTTP cacheとは別の責任 |
 | i18n / email / object storage / payments | 外部で構成 | Python libraryやserviceをview/DIから利用。機密値はserver側だけ |

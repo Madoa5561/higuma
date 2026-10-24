@@ -22,7 +22,8 @@ and **external infrastructure**. Features added in 0.6.0 are marked in the table
 | Background tasks | Native | Lightweight after-response work; durable queues, retries, schedulers are external |
 | Lifespan / supervisor | Native | Sync/async lifecycle and multiple processes. [Deployment](deployment.md) |
 | Flask compatibility | Partial + WSGI integration | g/session/flash, request contexts and scoped Blueprint hooks (0.7). [Boundaries](flask-compat.md); not all extensions |
-| WSGI / ASGI applications | HTTP integration | Buffered HTTP only, not mounted WS, ASGI lifespan, or indefinite streams |
+| Deploy Higuma on external servers | Native (0.8) | `asgi_app`: HTTP/WS/lifespan; `wsgi_app`: HTTP. [Boundaries](server-interfaces.md); async handlers still use coordination workers |
+| Mount other WSGI / ASGI apps | HTTP integration | Buffered HTTP only, not mounted WS, forwarded lifespan, or indefinite streams |
 | GraphQL / RPC | External library integration | Mount compatible HTTP apps; subscription forwarding is not guaranteed |
 | Application caches / Redis / durable jobs | External | Manage clients through lifespan/DI; distinct from HTTP caching |
 | i18n / mail / object storage / payments | External | Call libraries/services from views/DI; keep secrets server-side |

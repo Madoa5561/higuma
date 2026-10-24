@@ -92,7 +92,9 @@ def _wsgi_environ(request: Request, prefix: str) -> dict[str, Any]:
     host, port = _server_address(str(request.headers.get("host", "localhost")), request.scheme)
     environ: dict[str, Any] = {
         "REQUEST_METHOD": request.method,
-        "SCRIPT_NAME": "" if prefix == "/" else prefix.encode("utf-8").decode("latin-1"),
+        "SCRIPT_NAME": (request.root_path + ("" if prefix == "/" else prefix))
+        .encode("utf-8")
+        .decode("latin-1"),
         "PATH_INFO": unquote_to_bytes(_mounted_path(request.path, prefix)).decode("latin-1"),
         "QUERY_STRING": request.query_string,
         "SERVER_NAME": host,
@@ -136,7 +138,7 @@ def _asgi_scope(request: Request, prefix: str) -> dict[str, Any]:
         "scheme": request.scheme,
         "path": unquote(_mounted_path(request.path, prefix)),
         "raw_path": _mounted_path(request.path, prefix).encode(),
-        "root_path": "" if prefix == "/" else prefix,
+        "root_path": request.root_path + ("" if prefix == "/" else prefix),
         "query_string": request.query_string.encode(),
         "headers": list(request.raw_headers),
         "server": (host, int(port)),

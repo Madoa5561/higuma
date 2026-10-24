@@ -13,7 +13,7 @@ from io import BytesIO
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Generic, TypeVar
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, quote
 
 from .exceptions import BadRequest, UnsupportedMediaType
 
@@ -179,6 +179,8 @@ class Request:
     def __init__(self, raw: Mapping[str, Any]) -> None:
         self.method = str(raw.get("method", "GET")).upper()
         self.path = str(raw.get("path", "/"))
+        self.root_path = str(raw.get("root_path", "")).rstrip("/")
+        self.scope = raw.get("scope")
         self.query_string = str(raw.get("query_string", ""))
         self.args = MultiDict(iter(parse_qsl(self.query_string, keep_blank_values=True)))
         self.query = self.args
@@ -192,9 +194,18 @@ class Request:
             )
             for key, value in raw_headers
         )
-        self.headers = Headers(
-            {key.decode("latin-1"): value.decode("latin-1") for key, value in self.raw_headers}
-        )
+        parsed_headers = {
+            key.decode("latin-1"): value.decode("latin-1") for key, value in self.raw_headers
+        }
+        cookie_values = [
+            value.decode("latin-1") for key, value in self.raw_headers if key.lower() == b"cookie"
+        ]
+        if len(cookie_values) > 1:
+            parsed_headers = {
+                key: value for key, value in parsed_headers.items() if key.lower() != "cookie"
+            }
+            parsed_headers["cookie"] = "; ".join(cookie_values)
+        self.headers = Headers(parsed_headers)
         self.body = bytes(raw.get("body", b""))
         self.path_params = dict(raw.get("path_params", {}))
         self.view_args = self.path_params
@@ -260,7 +271,7 @@ class Request:
     @property
     def url(self) -> str:
         query = f"?{self.query_string}" if self.query_string else ""
-        return f"{self.scheme}://{self.host}{self.path}{query}"
+        return f"{self.scheme}://{self.host}{quote(self.root_path, safe='/')}{self.path}{query}"
 
     @property
     def is_json(self) -> bool:

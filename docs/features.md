@@ -1,5 +1,8 @@
 # 機能ガイド
 
+0.8.0のASGI／WSGI公開入口と、組み込みモードとの機能差は
+[サーバーインターフェース](server-interfaces.md)を参照してください。
+
 CSR・SPA・Vite・静的HTMLは[フロントエンドガイド](frontend.md)、
 内蔵／連携／外部構成の違いは[機能対応表](capabilities.md)を参照してください。
 

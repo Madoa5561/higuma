@@ -1,5 +1,10 @@
 # デプロイ
 
+0.8.0以降は組み込みRust serverのほか、`app.asgi_app`／`app.wsgi_app`で外部サーバーへ
+載せられます。[ASGI・WSGIガイド](server-interfaces.md)の実行例と対応境界を先に確認してください。
+以下のSupervisor・CLI設定は**組み込みモード用**です。外部モードのTLS・圧縮・worker・reloadは
+利用するサーバー側で設定します。ASGI実通信はUvicorn、WSGIはwsgirefで検証しています。
+
 ## 構成を選ぶ
 
 単一プロセスは開発や小規模な内部サービス向けです。本番でCPUコアを使う場合は、

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-import inspect
 from collections.abc import Callable, Iterable
 from contextvars import copy_context
-from threading import Thread
 from typing import Any
+
+from .execution import resolve_awaitable
 
 
 class BackgroundTask:
@@ -42,26 +41,4 @@ class BackgroundTasks:
 
 
 def _resolve_awaitable(value: Any) -> Any:
-    if not inspect.isawaitable(value):
-        return value
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(value)
-
-    result: list[Any] = []
-    errors: list[BaseException] = []
-    context = copy_context()
-
-    def runner() -> None:
-        try:
-            result.append(context.run(asyncio.run, value))
-        except BaseException as exc:  # noqa: BLE001 - propagate task failure
-            errors.append(exc)
-
-    thread = Thread(target=runner, daemon=True)
-    thread.start()
-    thread.join()
-    if errors:
-        raise errors[0]
-    return result[0]
+    return resolve_awaitable(value)

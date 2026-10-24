@@ -4,6 +4,11 @@ higuma is an independent Flask-inspired framework, not a drop-in replacement.
 Mount an existing Flask application through WSGI and write new endpoints with
 higuma for a gradual migration.
 
+Since 0.8.0, the opposite direction is available too: export Higuma through
+`app.asgi_app` / `app.wsgi_app`. See [Server interfaces](server-interfaces.md) for
+HTTP, WebSocket, lifespan, and worker boundaries. WSGI compatibility does not
+imply complete Flask internal/extension compatibility.
+
 ## Mount a real Flask application
 
 ```bash

@@ -34,10 +34,10 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
-> **0.7.1** — Blueprint限定hooks・error handler、request context、body helperを追加。
-> sessionの保存時点とJSON処理も改善しました。[Flask互換性](https://higuma.moyashi.xyz/flask-compat/) /
-> [テストガイド](https://higuma.moyashi.xyz/testing/)。CSR/SPA・Vite連携は0.6.0以降で利用できます。
-> Tokioの安全性警告も修正し、0.7.0の配布を見送って0.7.1として公開します。
+> **0.8.0** — ASGI／WSGIの公開入口を追加しました。組み込みRust serverも引き続き選べます。
+> ASGIのHTTP・lifespan・WebSocket、WSGIのHTTPに対応します。
+> [対応範囲と制約](https://higuma.moyashi.xyz/server-interfaces/) /
+> [テストガイド](https://higuma.moyashi.xyz/testing/)
 > [変更履歴](CHANGELOG.md) / [機能対応表](docs/capabilities.md)
 
 [はじめる](#quick-start) · [型付きAPI](#型付きapi) · [機能](#主な機能) ·
@@ -143,6 +143,7 @@ OpenAPI 3.1へ反映されます。
 | Auth | signed cookie session、login/role/permission、OAuth 2.0 + PKCE |
 | Security | scrypt password、signed token、CSRF、CORS、rate limit、trusted host/proxy |
 | Operations | test client、CLI、multi-process supervisor、worker restart limit |
+| Server interfaces（0.8.0以降） | `app.asgi_app`、`app.wsgi_app`、同じASGI loopでのasync lifespan / handler |
 | Frontend（0.6.0以降） | SPA history fallback、複数static root、Vite manifest、cache / MIME制御 |
 
 完全な一覧と注意点は[機能ガイド](https://higuma.moyashi.xyz/features/)および
@@ -178,6 +179,21 @@ React / Vue等のビルド、HMR、Node SSRの実行環境はフロントエン�
 設置パス、cookie認証、CORS、デプロイの注意は
 [フロントエンドガイド](docs/frontend.md)（[English](docs/en/frontend.md)）を参照してください。
 
+## ASGI／WSGIで実行する
+
+既存ASGI基盤には`asgi_app = app.asgi_app`、WSGI基盤には`wsgi_app = app.wsgi_app`を公開します。
+例えばASGIでは、アプリmoduleに`asgi_app`を定義したうえで:
+
+```bash
+python -m pip install "higuma[asgi]"
+uvicorn app:asgi_app --lifespan on --ws websockets-sansio
+```
+
+ASGIでも同期APIとの互換処理に専用workerを使用します。WSGIには標準WebSocket／lifespanがありません。
+外部server利用時の性能や接続数、proxy trust、resourceの扱いは
+[サーバーインターフェースガイド](https://higuma.moyashi.xyz/server-interfaces/)を確認してください。
+Python必須runtime依存0は維持し、ASGI server関連は任意extraです。
+
 ## 対応範囲
 
 - Python: CPython 3.10以降（CIでは3.10〜3.14を検証）
@@ -191,8 +207,8 @@ wheelがないplatformではsource distributionからRust buildが必要です�
 
 ### 互換性と設計上の境界
 
-higumaはFlaskのdrop-in replacementではなく、ASGI serverへ渡すASGI applicationでも
-ありません。組み込みのRust serverで実行します。
+higumaはFlaskのdrop-in replacementではありません。組み込みRust serverに加え、
+0.8.0から`app.asgi_app`／`app.wsgi_app`を外部サーバーへ渡せます。
 
 既存のWSGI / ASGI applicationはHTTPのroute配下へmountできますが、mount先の
 WebSocket、ASGI lifespan、無期限streamingを提供するものではありません。
@@ -220,6 +236,7 @@ WebSocket、ASGI lifespan、無期限streamingを提供するものではあり�
 | session・context・flash | [`flask_compat.py`](examples/flask_compat.py) |
 | Blueprint hooks・CSRF・session保存 | [`flask_lifecycle.py`](examples/flask_lifecycle.py) |
 | 既存Flaskアプリを接続 | [`flask_mount.py`](examples/flask_mount.py) |
+| 組み込み・ASGI・WSGIで同じアプリを実行 | [`server_modes.py`](examples/server_modes.py) |
 | リアルタイムチャット | [`websocket_chat.py`](examples/websocket_chat.py) |
 | streaming・SSE | [`streaming_sse.py`](examples/streaming_sse.py) |
 | SQLiteとtransaction | [`orm_blog.py`](examples/orm_blog.py) |

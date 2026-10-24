@@ -4,6 +4,10 @@ higumaはFlaskに着想を得た独立したフレームワークです。Flask�
 読み込めるdrop-in replacementではありません。既存のFlaskアプリはWSGI mountで
 動かし、新しい部分をhigumaのrouteで書く段階的な移行ができます。
 
+0.8.0からは逆方向に、Higumaを`app.asgi_app`／`app.wsgi_app`として外部サーバーへ渡せます。
+[サーバーインターフェース](server-interfaces.md)にHTTP・WS・lifespan・workerの対応範囲をまとめています。
+WSGI対応はFlask内部API／extensionの完全互換を意味しません。
+
 ## 既存のFlaskアプリを接続する
 
 ```bash
@@ -174,7 +178,8 @@ JSON MIMEは`application/json`または`application/*+json`です。requestのJS
 - Template engineはMiniJinjaです。Flask/Jinja2の全filterやPython callable globalは
   提供しません。URLやflashはviewで生成しtemplateのcontextへ渡します。
 - WSGI/ASGI mountはHTTP request/responseをbufferします。mount内のSSE・無期限stream、
-  WebSocket、ASGI lifespanの代替ではありません。streamはhiguma native APIを使います。
+  WebSocket、ASGI lifespanの代替ではありません。streamはhigumaのresponse APIを使い、
+  組み込みまたは対応する外部サーバーで実行します。
 - ASGIはdecoded `path`と元のpercent-encoded `raw_path`を渡します。
 - WSGI header正規化による衝突を避けるため、名前に`_`を含む入力headerは破棄します。
 - teardownはdispatch/context終了時に実行されます。遅延streamやbackground taskで

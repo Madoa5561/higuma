@@ -95,6 +95,18 @@ Cookie jarは簡易な名前と値の保存であり、browserのDomain/Path/Sec
 
 ## repositoryの回帰テスト
 
+外部サーバー入口の検証は次を使います。`app.test_client()`だけではASGI／WSGIの
+protocolやtransportを通らないため、それだけで外部サーバー対応の確認にはなりません。
+
+```bash
+python -m pytest tests/test_gateways.py tests/test_gateways_server.py
+```
+
+protocol testは標準ライブラリで実行できます（Flask mount比較は任意の`compat` extra）。
+実通信では組み込み・Uvicorn・wsgirefへ同じアプリを起動し、HTTP／SSE／WSを検証します。
+Uvicorn／WS clientのcaseには`asgi` extraが必要です。CIではextra付きで実行します。
+WSGIの標準WebSocket非対応もHTTPテストで固定します。
+
 ```bash
 python -m pytest tests/test_flask_helpers.py tests/test_flask_helpers_server.py
 python -m pytest

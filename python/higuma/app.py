@@ -8,7 +8,7 @@ import re
 import traceback
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager, nullcontext
-from contextvars import ContextVar, Token, copy_context
+from contextvars import ContextVar, Token
 from datetime import timezone
 from email.utils import formatdate, parsedate_to_datetime
 from functools import wraps
@@ -25,6 +25,7 @@ from .blueprint import Blueprint
 from .config import Config
 from .context import _app_context_error, _AppGlobals, _g_context
 from .exceptions import Forbidden, HTTPException, MethodNotAllowed, NotFound
+from .execution import resolve_awaitable
 from .mounts import asgi_view, wsgi_view
 from .openapi import generate_openapi, swagger_ui_html
 from .parameters import (
@@ -47,7 +48,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -139,9 +140,11 @@ class Higuma:
         if docs_url and openapi_url:
 
             def openapi_docs() -> HTMLResponse:
+                current = _request_context.get()
                 return HTMLResponse(
                     swagger_ui_html(
-                        normalize_rule(openapi_url),
+                        (quote(current.root_path, safe="/") if current else "")
+                        + normalize_rule(openapi_url),
                         f"{self.config['OPENAPI_TITLE']} API",
                     ),
                     headers={
@@ -592,7 +595,7 @@ class Higuma:
             rule = self._endpoint_rules[endpoint]
         except KeyError as exc:
             raise KeyError(f"unknown endpoint: {endpoint}") from exc
-        result = rule.build(values)
+        result = (quote(current.root_path, safe="/") if current else "") + rule.build(values)
         query = {
             key: value
             for key, value in values.items()
@@ -620,7 +623,27 @@ class Higuma:
         return TestClient(self)
 
     def openapi(self) -> dict[str, Any]:
-        return generate_openapi(self)
+        document = generate_openapi(self)
+        current = _request_context.get()
+        if current is not None and current.root_path and not document.get("servers"):
+            document["servers"] = [{"url": quote(current.root_path, safe="/")}]
+        return document
+
+    @property
+    def asgi_app(self):
+        from .gateways import ASGIApplication
+
+        if not hasattr(self, "_asgi_application"):
+            self._asgi_application = ASGIApplication(self)
+        return self._asgi_application
+
+    @property
+    def wsgi_app(self):
+        from .gateways import WSGIApplication
+
+        if not hasattr(self, "_wsgi_application"):
+            self._wsgi_application = WSGIApplication(self)
+        return self._wsgi_application
 
     def clear_template_cache(self) -> None:
         self._core.clear_template_cache()
@@ -1240,29 +1263,7 @@ def _resolve_folder(root: Path, folder: str | None) -> str:
 
 
 def _resolve_awaitable(value: Any) -> Any:
-    if not inspect.isawaitable(value):
-        return value
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(value)
-
-    result: list[Any] = []
-    errors: list[BaseException] = []
-    context = copy_context()
-
-    def runner() -> None:
-        try:
-            result.append(context.run(asyncio.run, value))
-        except BaseException as exc:  # noqa: BLE001 - propagate async task failures
-            errors.append(exc)
-
-    thread = Thread(target=runner, daemon=True)
-    thread.start()
-    thread.join()
-    if errors:
-        raise errors[0]
-    return result[0]
+    return resolve_awaitable(value)
 
 
 def _call_hook(func: Callable[..., Any], request: Request) -> Any:

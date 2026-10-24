@@ -31,6 +31,7 @@ cookie and token, then POST with `X-CSRF-Token` and JSON containing
 | `websocket_chat.py` | JSON WebSocket echo | Needs a WebSocket client |
 | `multipart_upload.py` | Safe file upload and persistence | Creates `uploads/` on request |
 | `mounted_apps.py` | WSGI and ASGI mounts | HTTP scopes only |
+| `server_modes.py` | One application on native/ASGI/WSGI, async WS and SSE | ASGI extra is optional; WSGI is HTTP-only |
 | `flask_mount.py` | Real Flask application through WSGI | Requires `higuma[compat]` |
 | `flask_compat.py` | Contexts, sessions, flash, URLs, CSRF | Requires `HIGUMA_SECRET_KEY` |
 | `flask_lifecycle.py` | Scoped Blueprint hooks, teardown, session writes from after callbacks | 0.7.0+, requires `HIGUMA_SECRET_KEY` |
@@ -45,6 +46,11 @@ cookie and token, then POST with `X-CSRF-Token` and JSON containing
 | `supervised_app.py` | Multi-process Supervisor | Workers see the peer as loopback |
 
 ## Basic execution
+
+See [Server interfaces](server-interfaces.md). Try
+`uvicorn examples.server_modes:asgi_app --lifespan on --ws websockets-sansio`,
+`python -m examples.server_modes --mode wsgi`, or `python -m examples.server_modes`
+for the same HTTP endpoints. The reference WSGI server is development-only.
 
 Install from the repository root, then run an example:
 

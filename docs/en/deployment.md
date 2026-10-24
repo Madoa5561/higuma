@@ -1,5 +1,11 @@
 # Deployment
 
+Since 0.8.0, deploy through the built-in Rust server or export `app.asgi_app` /
+`app.wsgi_app`. Read [Server interfaces](server-interfaces.md) for examples and
+boundaries. The Supervisor/CLI settings below apply to **native mode** only.
+External servers own TLS, compression, workers, and reload. Wire tests use
+Uvicorn for ASGI and wsgiref for WSGI.
+
 ## Choose a topology
 
 A single process is suitable for development and small internal services. To

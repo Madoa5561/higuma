@@ -17,6 +17,7 @@
 | `websocket_chat.py` | JSON WebSocket echo | WebSocket clientが必要 |
 | `multipart_upload.py` | 安全なfile uploadと保存 | request時に`uploads/`へ作成 |
 | `mounted_apps.py` | WSGI / ASGI mount | HTTP scopeのみ |
+| `server_modes.py` | 同じアプリを組み込み／ASGI／WSGIで実行、async WS・SSE | ASGIは任意extra、WSGIはHTTPのみ |
 | `flask_mount.py` | 実際のFlaskアプリをWSGI接続、日本語URL | `pip install "higuma[compat]"` |
 | `flask_compat.py` | g、session、flash、url_for、CSRF | secret環境変数が必要 |
 | `flask_lifecycle.py` | Blueprint限定hooks、teardown、after callbackからのsession保存 | 0.7.0以降、secret環境変数が必要 |
@@ -31,6 +32,11 @@
 | `supervised_app.py` | multi-process Supervisor | workerからpeerはloopbackに見える |
 
 ## 基本の実行
+
+外部サーバー対応の例は[ASGI・WSGIガイド](server-interfaces.md)を参照してください。
+`uvicorn examples.server_modes:asgi_app --lifespan on --ws websockets-sansio`、
+`python -m examples.server_modes --mode wsgi`、`python -m examples.server_modes`で
+同じHTTP endpointを3つの実行基盤で試せます。reference WSGI serverは開発用です。
 
 CSRは`higuma run examples.csr_app:create_app`で起動し、`http://127.0.0.1:8000/app/`を開きます。
 `vite_ssr.py`は`HIGUMA_FRONTEND_DIST`に既存のbuild directoryを設定してから起動します。

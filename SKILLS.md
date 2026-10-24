@@ -41,6 +41,8 @@ python app.py
 | Goal | Use |
 | --- | --- |
 | HTTP route | `@app.get`, `post`, `put`, `patch`, `delete` |
+| Export to ASGI server | `asgi_app = app.asgi_app` (0.8+, asyncio HTTP/WS/lifespan) |
+| Export to WSGI server | `wsgi_app = app.wsgi_app` (0.8+, HTTP only) |
 | Context-only utility test | `with app.test_request_context(path, **kwargs):` (0.7+) |
 | Request-local response callback | `@after_this_request` (0.7+) |
 | Scoped hooks / errors / template values | Blueprint hooks, `errorhandler`, `context_processor` (0.7+) |
@@ -109,7 +111,22 @@ python app.py
   accepts Request, not a WSGI environ. Test client contexts run lifespan, not
   preserved request contexts. See docs/testing.md and docs/en/testing.md.
 
-## Frontend boundaries
+## Server interface boundaries (0.8+)
+
+Use explicit `app.asgi_app` / `app.wsgi_app`, not a callable app overload.
+The optional `asgi` extra supplies Uvicorn/websockets; base dependencies stay empty.
+ASGI bridges the synchronous pipeline through a dedicated bounded executor;
+async handlers still occupy coordination workers. Async lifespan and request
+awaitables use the server loop; use one instance per active loop. WSGI has no
+automatic lifespan or WebSocket support. Standard middleware wraps the exported
+entry point; Higuma's synchronous `call_next` is not an async middleware chain API.
+Async WS handlers use `asend_*`, `areceive*`, `aclose`, also supported natively.
+Root prefixes come from trusted server scope/environ, not arbitrary forwarded headers.
+HTTP input remains buffered. Mounted third-party apps remain buffered HTTP-only.
+External transport owns TLS/compression/workers and does not inherit Rust server
+performance guarantees. See docs/server-interfaces.md and its English mirror.
+
+## Frontend integration boundaries
 
 Keep frontend base URLs/router basenames aligned with the mount prefix. SPA
 fallback is only for missing extensionless GET/HEAD paths accepting HTML; reserve
@@ -232,6 +249,7 @@ python -m ruff format --check python tests examples
 python -m ruff check python tests examples
 python -m pytest
 python -m pytest tests/test_flask_helpers.py tests/test_flask_helpers_server.py
+python -m pytest tests/test_gateways.py tests/test_gateways_server.py
 cargo fmt --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-features

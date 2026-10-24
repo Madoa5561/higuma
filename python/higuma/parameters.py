@@ -14,6 +14,7 @@ from uuid import UUID
 
 from .background import BackgroundTasks
 from .exceptions import BadRequest, UnsupportedMediaType
+from .execution import bind_await_resolver
 from .request import Request, UploadFile
 
 
@@ -398,11 +399,12 @@ def _resolve_dependency(
             raise RuntimeError("dependency generator did not yield") from exc
         cleanups.append(lambda: _finish_generator(result))
     elif inspect.isasyncgen(result):
+        dependency_await = bind_await_resolver(await_value)
         try:
-            value = await_value(result.__anext__())
+            value = dependency_await(result.__anext__())
         except StopAsyncIteration as exc:
             raise RuntimeError("async dependency generator did not yield") from exc
-        cleanups.append(lambda: _finish_async_generator(result, await_value))
+        cleanups.append(lambda: _finish_async_generator(result, dependency_await))
     else:
         value = await_value(result)
 

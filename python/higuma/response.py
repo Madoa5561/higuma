@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import mimetypes
 import re
@@ -12,11 +11,11 @@ from datetime import datetime, timezone
 from email.utils import format_datetime
 from http.cookies import SimpleCookie
 from pathlib import Path
-from threading import Thread
 from typing import Any
 from urllib.parse import quote
 
 from .background import BackgroundTask, BackgroundTasks
+from .execution import resolve_awaitable
 from .parameters import serialize_json_value
 
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
@@ -501,26 +500,7 @@ def _sse_single_line(value: Any, field: str) -> str:
 
 
 def _resolve_stream_awaitable(value: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(value)
-
-    result: list[Any] = []
-    errors: list[BaseException] = []
-
-    def runner() -> None:
-        try:
-            result.append(asyncio.run(value))
-        except BaseException as exc:  # noqa: BLE001 - propagate iterator failure
-            errors.append(exc)
-
-    thread = Thread(target=runner, daemon=True)
-    thread.start()
-    thread.join()
-    if errors:
-        raise errors[0]
-    return result[0]
+    return resolve_awaitable(value)
 
 
 ResponseValue = (

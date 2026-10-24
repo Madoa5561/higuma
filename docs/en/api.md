@@ -68,6 +68,8 @@ Main methods:
 - `mount_wsgi` and `mount_asgi`
 - `openapi()`, `clear_template_cache()`, and `init_database()`
 - `test_client()`
+- `asgi_app`: ASGI 3 callable property (0.8+), HTTP/WS/lifespan
+- `wsgi_app`: WSGI callable property (0.8+), HTTP only
 - `run(host="127.0.0.1", port=8000, *, workers=0, processes=1, ...)`
 
 OpenAPI route options are `summary`, `description`, `tags`, `responses`, `request_body`,
@@ -98,6 +100,11 @@ The callback receives and returns a response. `teardown_request(func)` receives
 an unhandled exception or `None` on context exit; handled exceptions and normal
 HTTP errors generally give `None`. See [Testing](testing.md) for request builder
 arguments and differences from Flask.
+
+### External server entry points (0.8.0+)
+
+See [Server interfaces](server-interfaces.md) for external deployment, async
+execution, configuration, and protocol boundaries.
 
 ### `View` / `MethodView`
 
@@ -151,6 +158,7 @@ and `input` only when safe. Password, token, secret, and Cookie values are redac
 
 - `method`, `path`, `query_string`, `scheme`, `host`, `base_url`, and `url`
 - `host_url`, `full_path`, `mimetype`, and `is_json` (0.7+)
+- `root_path`: decoded mount prefix; `scope`: input ASGI scope, otherwise `None` (0.8+)
 - `args` / `query`: a duplicate-preserving `MultiDict`
 - `values`: query only for GET, otherwise query-first combined query/form (0.7+)
 - `headers`: case-insensitive `Headers`
@@ -245,6 +253,11 @@ Trust proxy headers only when the direct peer is in `trusted_proxies`.
 `receive_text()`, `receive_bytes()`, `receive_json()`, and `close()`. Disconnects raise
 `WebSocketDisconnect(code=1000, reason="")`. Omitting `allowed_origins` on a route allows only the
 same origin.
+
+Since 0.8.0, async handlers can await `asend_text/asend_bytes/asend_json`,
+`areceive/areceive_text/areceive_bytes/areceive_json`, and
+`aclose(code=1000, reason="")` in native and ASGI modes. Do not call synchronous
+WS methods directly on the ASGI loop.
 
 ## SQLite ORM
 

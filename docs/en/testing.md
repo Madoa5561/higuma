@@ -98,6 +98,18 @@ Also verify HTTPS, CORS, and cookie restrictions in a real browser.
 
 ## Repository regression tests
 
+Test the exported protocols separately: `app.test_client()` does not exercise
+ASGI/WSGI transport and cannot establish external-server compatibility alone.
+
+```bash
+python -m pytest tests/test_gateways.py tests/test_gateways_server.py
+```
+
+Protocol tests use the standard library (Flask mount comparisons use `compat`).
+Wire tests start the same app on native, Uvicorn, and wsgiref servers for HTTP,
+SSE, and WS. Uvicorn/WS-client cases need the optional `asgi` extra; CI installs
+it. Standard WSGI's lack of WS upgrade is checked as an HTTP boundary test.
+
 ```bash
 python -m pytest tests/test_flask_helpers.py tests/test_flask_helpers_server.py
 python -m pytest

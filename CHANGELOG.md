@@ -7,6 +7,36 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-25
+
+### Added
+
+- Explicit `app.asgi_app` and `app.wsgi_app` exports alongside the built-in Rust
+  server. ASGI 3/asyncio handles HTTP, WebSocket, and lifespan; WSGI handles HTTP.
+- Same-server-loop async lifespan, handlers, dependencies, streams, and background
+  work, with persistent await contexts for generator dependency cleanup.
+- Dedicated bounded ASGI coordination workers, disconnect cancellation,
+  chunk-level response backpressure, and bounded WS messages/receive queues.
+- Awaitable WebSocket send/receive/close helpers for ASGI and native deployment.
+- Optional `asgi` server extra, three-mode runnable example, protocol/real-server
+  tests, and comprehensive Japanese/English deployment boundary documentation.
+
+### Fixed
+
+- Preserve root prefixes through URL generation, Swagger/OpenAPI, and nested
+  Flask/ASGI mounts; expose decoded `request.root_path` and optional ASGI `scope`.
+- Parse split Cookie headers without dropping values, preserve separate response
+  Set-Cookie fields, normalize response framing, and close streamed resources.
+
+### Boundaries
+
+- ASGI still uses coordination workers for sync API compatibility, not a purely
+  coroutine-only pipeline. WSGI has no standard WS/lifespan protocol.
+- Request bodies and third-party application mounts remain buffered. External
+  servers own transport/compression/workers; Rust-native performance is not implied.
+- Higuma/Flask/Starlette internal extension APIs are not made interchangeable by
+  implementing standard server interfaces.
+
 ## [0.7.1] - 2026-10-25
 
 ### Security
