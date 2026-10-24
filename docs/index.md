@@ -14,11 +14,12 @@
 API、HTML、リアルタイム通信を、書き慣れたPythonのdecoratorで。
 higumaという名前は日本のヒグマに由来します。
 
-!!! info "0.7.0の新機能"
+!!! info "0.7.1の新機能"
     Blueprint限定hooks・error handler・template context、request context、body helperを追加し、
     after hookからのsession保存とJSON処理を改善しました。
     [Flask互換性](flask-compat.md)・[テストガイド](testing.md)・[実行例](examples.md#request-lifecycle)を参照してください。
     CSR/SPA・Vite連携は[フロントエンドガイド](frontend.md)へ。旧版を利用している場合はパッケージを更新します。
+    Tokioの安全性警告も修正しました。0.7.0の配布は見送り、0.6.0から0.7.1へ更新できます。
 
 ```bash
 python -m pip install -U higuma

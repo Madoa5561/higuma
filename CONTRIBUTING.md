@@ -38,12 +38,14 @@ python tools/verify_release.py
 mkdocs build --strict
 python -m pip list --format freeze --exclude higuma > audit-requirements.txt
 python -m pip_audit -r audit-requirements.txt --no-deps --disable-pip --strict --progress-spinner off
-cargo audit
+cargo audit --deny unsound
 ```
 
 Install `cargo-audit` with `cargo install cargo-audit --locked --version 0.22.2`.
 Audits access public advisory databases; they do not establish that the code has
-no vulnerabilities. CI includes real Flask compatibility tests and real-socket
+no vulnerabilities. `unsound` warnings fail the Rust audit as well as known
+vulnerabilities; do not treat a warning-only successful run as a clean audit.
+CI includes real Flask compatibility tests and real-socket
 HTTP/WebSocket tests. `unittest discover` alone does not run the full pytest suite.
 Editable higuma itself is excluded from the advisory lookup (it may not have been
 published yet); its source is covered by review/tests, not a PyPI version lookup.

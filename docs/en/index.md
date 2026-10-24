@@ -14,12 +14,14 @@
 Build APIs, HTML pages, and realtime connections with familiar Python decorators.
 The name higuma comes from the Japanese brown bear.
 
-!!! info "New in 0.7.0"
+!!! info "New in 0.7.1"
     Scoped Blueprint hooks, errors and template contexts, request contexts, and body helpers.
     Session saving after response hooks and JSON parsing are fixed too.
     See [Flask compatibility](flask-compat.md), [Testing](testing.md), and the
     [lifecycle example](examples.md#request-lifecycle). For SPA/Vite integration, see
     [Frontend](frontend.md). Upgrade the package when using an older release.
+    Tokio's I/O-safety advisory is addressed too. 0.7.0 publication was cancelled;
+    upgrade directly from 0.6.0 to 0.7.1.
 
 ```bash
 python -m pip install -U higuma

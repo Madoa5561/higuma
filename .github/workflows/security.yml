@@ -30,4 +30,4 @@ jobs:
           python -m pip list --format freeze --exclude higuma > audit-requirements.txt
           python -m pip_audit -r audit-requirements.txt --no-deps --disable-pip --strict --progress-spinner off
       - name: Audit locked Rust dependencies
-        run: cargo audit --json
+        run: cargo audit --deny unsound --json

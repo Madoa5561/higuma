@@ -34,9 +34,10 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
-> **0.7.0** — Blueprint限定hooks・error handler、request context、body helperを追加。
+> **0.7.1** — Blueprint限定hooks・error handler、request context、body helperを追加。
 > sessionの保存時点とJSON処理も改善しました。[Flask互換性](https://higuma.moyashi.xyz/flask-compat/) /
 > [テストガイド](https://higuma.moyashi.xyz/testing/)。CSR/SPA・Vite連携は0.6.0以降で利用できます。
+> Tokioの安全性警告も修正し、0.7.0の配布を見送って0.7.1として公開します。
 > [変更履歴](CHANGELOG.md) / [機能対応表](docs/capabilities.md)
 
 [はじめる](#quick-start) · [型付きAPI](#型付きapi) · [機能](#主な機能) ·

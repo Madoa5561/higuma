@@ -7,7 +7,27 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-25
+
+### Security
+
+- Raise the Tokio dependency floor and locked version to 1.53.3, addressing the
+  upstream I/O-safety warning RUSTSEC-2026-0386. Higuma does not directly use the
+  affected Unix `AsyncFd` constructors; no exploitable Higuma path was confirmed.
+- Fail Rust dependency audits on `unsound` warnings, rather than allowing those
+  informational findings to pass the release gate unnoticed.
+
+### Release
+
+- Ship the Flask-style compatibility, lifecycle, docs, and examples listed under
+  0.7.0 below. Its publication was cancelled before PyPI/GitHub Release creation;
+  the existing source tag is retained without rewriting it. Upgrade from 0.6.0
+  directly to 0.7.1.
+
 ## [0.7.0] - 2026-10-24
+
+Publication cancelled; changes are included in 0.7.1. No 0.7.0 PyPI distributions
+or GitHub Release were published.
 
 ### Added
 
