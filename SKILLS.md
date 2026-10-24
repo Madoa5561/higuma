@@ -41,6 +41,10 @@ python app.py
 | Goal | Use |
 | --- | --- |
 | HTTP route | `@app.get`, `post`, `put`, `patch`, `delete` |
+| Context-only utility test | `with app.test_request_context(path, **kwargs):` (0.7+) |
+| Request-local response callback | `@after_this_request` (0.7+) |
+| Scoped hooks / errors / template values | Blueprint hooks, `errorhandler`, `context_processor` (0.7+) |
+| Request cleanup | `@app.teardown_request` / `@blueprint.teardown_request` (0.7+) |
 | Realtime connection | `@app.websocket("/ws")` |
 | HTML SSR | `app.render_template("page.html", value=value)` |
 | CSR / SPA history fallback | `app.mount_spa("/app", build_dir)` (0.6+) |
@@ -92,6 +96,18 @@ python app.py
 - Do not access private `_core` APIs from application code.
 - Use `request.raw_headers` only when duplicate header byte pairs are required
   for ASGI/WSGI interoperability.
+- `request.values` gives query priority over form (GET uses query only).
+  Within each source, duplicate single-value lookups remain last-value, unlike Flask.
+- Response `get_json()` checks MIME in 0.7+. Use `force=True` only for intentionally
+  mislabeled bodies. Request JSON rejects invalid Unicode rather than replacing it.
+- `after_this_request` callbacks run in registration order, before Blueprint and
+  app after hooks. Session cookies are saved after those hooks, before teardown.
+- Cleanup must tolerate middleware short-circuits. Open new resources inside lazy
+  streams/background work rather than reusing teardown-closed resources.
+- Context helpers do not dispatch hooks/middleware or load sessions. They yield
+  Higuma Request values, not Flask RequestContext wrappers; `request_context`
+  accepts Request, not a WSGI environ. Test client contexts run lifespan, not
+  preserved request contexts. See docs/testing.md and docs/en/testing.md.
 
 ## Frontend boundaries
 
@@ -215,6 +231,7 @@ Run all checks before presenting a change:
 python -m ruff format --check python tests examples
 python -m ruff check python tests examples
 python -m pytest
+python -m pytest tests/test_flask_helpers.py tests/test_flask_helpers_server.py
 cargo fmt --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-features

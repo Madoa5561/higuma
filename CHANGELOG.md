@@ -7,6 +7,40 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-24
+
+### Added
+
+- Flask-style request contexts, request teardown, and request-local
+  `after_this_request` callbacks, with sync/async callback support.
+- Blueprint-scoped before/after/teardown hooks, error handlers, and template
+  context processors; explicit template values retain priority.
+- Query-first `request.values`, MIME/URL helpers, buffered response data helpers,
+  and test-client `query_string`, `base_url`, and `content_type` arguments.
+- Real Flask parity tests, real-HTTP lifecycle/CSRF/session regressions, a runnable
+  lifecycle example, and Japanese/English testing and compatibility guides.
+
+### Fixed
+
+- Save signed sessions and apply `Vary: Cookie` after all response hooks, including
+  response replacements and handled error responses.
+- Parse JSON bytes without replacing invalid Unicode; support UTF-8/16/32 and
+  recognize only application JSON MIME types. Silent failures do not poison reads.
+- Return 500 if an HTTP error handler fails, preserve the actual failure for
+  teardown, and restore request/app contexts even when cleanup raises.
+- Resolve relative test-client redirects against the current URL, preserve HTTPS
+  and 307/308 request bodies, clear entity headers on GET redirects, and reject
+  external hosts.
+
+### Changed
+
+- Response `get_json()`/`.json` is now MIME-aware and returns `None` for non-JSON
+  responses; use `get_json(force=True)` when parsing those bodies intentionally.
+- Reject empty/dotted Blueprint names, dotted local endpoints, and duplicate
+  registered Blueprint names to keep scoped dispatch unambiguous.
+- Existing duplicate-key MultiDict last-value behavior and origin-root
+  `request.base_url` are preserved; differences from Flask are documented.
+
 ## [0.6.0] - 2026-10-23
 
 ### Added

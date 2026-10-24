@@ -19,6 +19,7 @@
 | `mounted_apps.py` | WSGI / ASGI mount | HTTP scopeのみ |
 | `flask_mount.py` | 実際のFlaskアプリをWSGI接続、日本語URL | `pip install "higuma[compat]"` |
 | `flask_compat.py` | g、session、flash、url_for、CSRF | secret環境変数が必要 |
+| `flask_lifecycle.py` | Blueprint限定hooks、teardown、after callbackからのsession保存 | 0.7.0以降、secret環境変数が必要 |
 | `openapi_api.py` | 従来形式のdataclassとOpenAPI metadata | metadataのみの形式 |
 | `orm_blog.py` | SQLite ORM CRUD | 起動時に`blog.sqlite3`を作成 |
 | `orm_fields.py` | 全ORM field、query、save | in-memory SQLiteのみ |
@@ -84,6 +85,39 @@ CSRF付きloginでは、まず`GET /csrf`で同じclient sessionにtokenを作�
 
 OAuth例では追加で`GOOGLE_CLIENT_ID`と`GOOGLE_CLIENT_SECRET`が必要です。
 redirect URIをprovider側にも正確に登録してください。例は実際にGoogleへ通信します。
+
+## request lifecycleを試す {#request-lifecycle}
+
+上の手順で開発用secretを設定し、repository rootから起動します。
+
+```bash
+higuma run examples.flask_lifecycle:create_app --port 8000
+```
+
+同じCookieを保持するclientで`GET /counter/`を呼びます。responseには`count`と`csrf_token`、
+`Server-Timing` headerが含まれます。返されたtokenを`X-CSRF-Token`へ設定し、
+`POST /counter/increment`へ`{"increment": 2}`をJSONで送ります。
+`X-Counter-Saved: yes`と新しいcountを確認し、次のGETでも値が残ることを確かめます。
+tokenなしのPOSTは403、不正なincrementは400です。
+
+serverなしで同じ流れを試す場合:
+
+```python
+from examples.flask_lifecycle import create_app
+
+with create_app().test_client() as client:
+    token = client.get("/counter/").get_json()["csrf_token"]
+    response = client.post(
+        "/counter/increment", json={"increment": 2}, headers={"X-CSRF-Token": token}
+    )
+    assert response.get_json()["count"] == 2
+    assert response.headers["X-Counter-Saved"] == "yes"
+    assert client.get("/counter/").get_json()["count"] == 2
+```
+
+このcountは署名Cookie内のデモ用状態です。永続DBや同時更新に強いcounterではありません。
+本番ではHTTPS、`secure=True`、適切なhost/proxy設定と外部state管理を追加してください。
+hook順・早期応答・contextの制限は[Flask互換性](flask-compat.md)と[テスト](testing.md)を参照してください。
 
 ## fileを作る例
 

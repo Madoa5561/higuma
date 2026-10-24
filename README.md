@@ -34,8 +34,9 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
-> **0.6.0** — CSR/SPA、複数static root、Vite manifest連携を追加しました。
-> Flask風context・session・flash・URL生成は0.5.0から利用できます。
+> **0.7.0** — Blueprint限定hooks・error handler、request context、body helperを追加。
+> sessionの保存時点とJSON処理も改善しました。[Flask互換性](https://higuma.moyashi.xyz/flask-compat/) /
+> [テストガイド](https://higuma.moyashi.xyz/testing/)。CSR/SPA・Vite連携は0.6.0以降で利用できます。
 > [変更履歴](CHANGELOG.md) / [機能対応表](docs/capabilities.md)
 
 [はじめる](#quick-start) · [型付きAPI](#型付きapi) · [機能](#主な機能) ·
@@ -135,6 +136,7 @@ OpenAPI 3.1へ反映されます。
 | Realtime | SSE、text/binary/JSON WebSocket、Origin検証、認証preflight、bounded queue |
 | SSR | MiniJinja、compiled template cache、context processor |
 | 構成 | Blueprint、class-based view、lifespan、WSGI/ASGI mount、startup/shutdown hook |
+| Flask風API（0.7.0以降） | scoped Blueprint hooks/errors/templates、request context、after_this_request、request teardown |
 | API設計 | OpenAPI 3.1、Swagger UI、dataclass/TypedDict/enum/UUID/date schema |
 | Data | dependency-free SQLite ORM、transaction、pagination、typed field |
 | Auth | signed cookie session、login/role/permission、OAuth 2.0 + PKCE |
@@ -215,6 +217,7 @@ WebSocket、ASGI lifespan、無期限streamingを提供するものではあり�
 | --- | --- |
 | 型付きAPI・入力検証 | [`modern_typed_api.py`](examples/modern_typed_api.py) |
 | session・context・flash | [`flask_compat.py`](examples/flask_compat.py) |
+| Blueprint hooks・CSRF・session保存 | [`flask_lifecycle.py`](examples/flask_lifecycle.py) |
 | 既存Flaskアプリを接続 | [`flask_mount.py`](examples/flask_mount.py) |
 | リアルタイムチャット | [`websocket_chat.py`](examples/websocket_chat.py) |
 | streaming・SSE | [`streaming_sse.py`](examples/streaming_sse.py) |

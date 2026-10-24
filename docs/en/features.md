@@ -3,6 +3,11 @@
 See [CSR and frontend integration](frontend.md) for SPA/Vite/static HTML and the
 [capability matrix](capabilities.md) for native/integration/external boundaries.
 
+0.7.0 adds Blueprint-scoped hooks, error handlers, and context processors,
+`after_this_request`, request contexts, and body helpers. See
+[Flask compatibility](flask-compat.md) and [Testing](testing.md) for behavior
+and upgrade notes.
+
 ## Routing and handlers
 
 ```python
@@ -151,8 +156,10 @@ def start_timer():
 
 @app.after_request
 def add_timing(response):
-    elapsed = time.monotonic() - request.state["started"]
-    response.headers["server-timing"] = f"app;dur={elapsed * 1000:.2f}"
+    started = request.state.get("started")
+    if started is not None:
+        elapsed = time.monotonic() - started
+        response.headers["server-timing"] = f"app;dur={elapsed * 1000:.2f}"
     return response
 
 

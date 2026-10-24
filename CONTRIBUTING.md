@@ -52,7 +52,20 @@ The generated `audit-requirements.txt` is an audit snapshot, not a runtime lockf
 Before tagging a release, push the exact commit and wait for both CI and Dependency
 security to succeed. The release workflow refuses stale-success-only results.
 
-## Frontend verification
+## Flask-style API verification
+
+```bash
+python -m pytest tests/test_flask_helpers.py tests/test_flask_helpers_server.py
+```
+
+With the optional `compat` extra, shared cases run against real Flask as well as
+Higuma. Keep intentional differences documented rather than hiding them behind
+skips. No Flask async extra is needed: async-specific cases test Higuma directly.
+The real-HTTP suite exercises the lifecycle example, CSRF, cookie persistence,
+Unicode JSON, scoped hooks, and teardown. Context-only success does not prove
+middleware/session behavior. Read docs/testing.md (English under docs/en/).
+
+## Frontend and browser verification
 
 ```bash
 python -m pytest tests/test_frontend.py tests/test_csr_server.py

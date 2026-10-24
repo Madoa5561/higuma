@@ -21,7 +21,7 @@ HigumaはRust HTTP coreとPython APIを組み合わせた小さなframeworkで�
 | SQLite ORM / transactions | 内蔵 | field/query/commit/rollback。migration、relationships、pool、他DBは専門library |
 | Background task | 内蔵 | response後の軽量処理。永続queue・retry・schedulerは外部 |
 | Lifespan / supervisor | 内蔵 | sync/async lifecycle、複数process。[デプロイ](deployment.md) |
-| Flask compatibility | 部分互換＋WSGI連携 | g/session/flash等。[対応境界](flask-compat.md)。全extension互換ではない |
+| Flask compatibility | 部分互換＋WSGI連携 | g/session/flash、request context・Blueprint scoped hooks（0.7）。[対応境界](flask-compat.md)。全extension互換ではない |
 | WSGI / ASGI apps | HTTP連携 | buffered mount。mounted WS、ASGI lifespan、無期限streamは非対応 |
 | GraphQL / RPC | 外部library連携 | HTTP互換範囲のWSGI/ASGI appをmount。subscription転送は保証しない |
 | App cache / Redis / durable jobs | 外部で構成 | lifespanとDIでclientを管理。HTTP cacheとは別の責任 |
@@ -29,7 +29,7 @@ HigumaはRust HTTP coreとPython APIを組み合わせた小さなframeworkで�
 | PWA / offline / service worker | frontend側 | public file配信可。worker生成・更新・offline戦略は別途必要 |
 | Logs / metrics / tracing | logging＋middleware連携 | request hook、Server-Timing等。監視backend・exporterは外部 |
 | TLS / HTTP2/3 / CDN / edge WAF | 外部で構成 | trusted reverse proxyで終端し、HigumaはHTTP coreとして動かす |
-| Test | 内蔵＋repository suite | test client、実socket HTTP/WS、配布wheel smoke。実browserは別途検証 |
+| Test | 内蔵＋repository suite | test client、request context（0.7）、実Flask比較、実socket HTTP/WS、配布wheel smoke。[テスト](testing.md)。実browserは別途検証 |
 
 ## 機能を追加する判断基準
 

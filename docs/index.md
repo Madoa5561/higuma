@@ -14,10 +14,11 @@
 API、HTML、リアルタイム通信を、書き慣れたPythonのdecoratorで。
 higumaという名前は日本のヒグマに由来します。
 
-!!! info "0.6.0の新機能"
-    CSR/SPA・複数static root・Vite manifest連携を追加しました。
-    使い方は[フロントエンドガイド](frontend.md)、内蔵機能と外部連携の違いは
-    [機能対応表](capabilities.md)を参照してください。0.5.0から利用する場合はパッケージを更新します。
+!!! info "0.7.0の新機能"
+    Blueprint限定hooks・error handler・template context、request context、body helperを追加し、
+    after hookからのsession保存とJSON処理を改善しました。
+    [Flask互換性](flask-compat.md)・[テストガイド](testing.md)・[実行例](examples.md#request-lifecycle)を参照してください。
+    CSR/SPA・Vite連携は[フロントエンドガイド](frontend.md)へ。旧版を利用している場合はパッケージを更新します。
 
 ```bash
 python -m pip install -U higuma
@@ -82,6 +83,7 @@ higumaはFlaskのdrop-in replacementでも、ASGI serverへ渡すASGI applicatio
 - [CSR・フロントエンド](frontend.md)
 - [機能対応表](capabilities.md)
 - [Flask互換性](flask-compat.md)
+- [テストとrequest context](testing.md)
 - [認証とセキュリティ](security-auth.md)
 - [Examples](examples.md)
 - [APIリファレンス](api.md)

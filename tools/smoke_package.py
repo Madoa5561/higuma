@@ -91,6 +91,56 @@ def _exercise_http(port: int) -> None:
     connection.close()
 
 
+def _exercise_flask_helpers() -> None:
+    from higuma import (
+        Blueprint,
+        Higuma,
+        SessionMiddleware,
+        after_this_request,
+        has_request_context,
+        request,
+        session,
+    )
+
+    app = Higuma(__name__, static_folder=None)
+    app.add_middleware(SessionMiddleware, "package-smoke-test-secret-at-least-32-bytes")
+    blueprint = Blueprint("smoke", __name__, url_prefix="/smoke")
+    cleanup_paths = []
+    blueprint.teardown_request(lambda error: cleanup_paths.append(request.path))
+
+    @blueprint.after_request
+    def scoped(response):
+        response.headers["X-Blueprint"] = "smoke"
+        return response
+
+    @blueprint.get("/save")
+    def save():
+        @after_this_request
+        def persist(response):
+            session["saved"] = True
+            return response
+
+        return {"ok": True}
+
+    @blueprint.get("/read")
+    def read():
+        return {"saved": session.get("saved", False)}
+
+    app.register_blueprint(blueprint)
+    with app.test_request_context("/smoke/read", base_url="https://example.test"):
+        assert request.endpoint == "smoke.read"
+        assert request.host_url == "https://example.test/"
+    assert not has_request_context()
+    client = app.test_client()
+    response = client.get("/smoke/save")
+    assert response.is_json and response.get_json() == {"ok": True}
+    assert response.headers["X-Blueprint"] == "smoke"
+    assert "cookie" in response.headers["Vary"].lower()
+    assert client.get("/smoke/read").get_json() == {"saved": True}
+    assert cleanup_paths == ["/smoke/read", "/smoke/save", "/smoke/read"]
+    assert not has_request_context()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test an installed higuma package")
     parser.add_argument("--wheel-dir", type=Path, help="install the single wheel from this folder")
@@ -116,6 +166,8 @@ def main() -> int:
     )
     if f"higuma {higuma.__version__}" not in cli.stdout:
         raise RuntimeError(f"unexpected CLI version output: {cli.stdout!r}")
+
+    _exercise_flask_helpers()
 
     port = _free_port()
     application = """

@@ -7,8 +7,9 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from types import TracebackType
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urljoin, urlsplit
 
+from .request import Request
 from .response import (
     FileResponse,
     HTMLResponse,
@@ -44,37 +45,64 @@ class TestClient:
         self._lifespan_context = None
         return bool(context.__exit__(exc_type, exc_value, traceback))
 
-    def open(
+    def _build_request(
         self,
         path: str,
         *,
         method: str = "GET",
         headers: Mapping[str, str] | None = None,
         query: Mapping[str, Any] | list[tuple[str, Any]] | None = None,
+        query_string: str | bytes | Mapping[str, Any] | list[tuple[str, Any]] | None = None,
+        base_url: str | None = None,
+        content_type: str | None = None,
         data: str | bytes | Mapping[str, Any] | None = None,
         json: Any = None,
         files: Mapping[str, Any] | None = None,
-        follow_redirects: bool = False,
-        max_redirects: int = 20,
-    ) -> Response:
-        if max_redirects < 1:
-            raise ValueError("max_redirects must be positive")
+    ) -> tuple[dict[str, Any], Any]:
+        if query is not None and query_string is not None:
+            raise ValueError("use query or query_string, not both")
+        if json is not None and (data is not None or files):
+            raise ValueError("json cannot be combined with data or files")
         method = method.upper()
         split = urlsplit(path)
-        query_string = split.query
-        if query is not None:
-            query_string = urlencode(query, doseq=True)
+        origin = urlsplit(
+            base_url
+            or (
+                f"{split.scheme or 'http'}://{split.netloc}" if split.netloc else "http://localhost"
+            )
+        )
+        if (
+            origin.scheme not in {"http", "https"}
+            or not origin.hostname
+            or origin.username is not None
+            or origin.password is not None
+            or origin.path not in {"", "/"}
+            or origin.query
+            or origin.fragment
+        ):
+            raise ValueError("base_url must be an HTTP(S) origin without a path or credentials")
+        encoded_query = split.query
+        provided_query = query if query is not None else query_string
+        if provided_query is not None:
+            if isinstance(provided_query, bytes):
+                encoded_query = provided_query.decode("ascii")
+            elif isinstance(provided_query, str):
+                encoded_query = provided_query
+            else:
+                encoded_query = urlencode(provided_query, doseq=True)
 
         request_headers = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
-        request_headers.setdefault("host", "localhost")
+        request_headers.setdefault("host", origin.netloc)
+        if content_type is not None:
+            request_headers["content-type"] = content_type
         if self.cookies and "cookie" not in request_headers:
             request_headers["cookie"] = "; ".join(
                 f"{key}={value}" for key, value in self.cookies.items()
             )
 
         if files:
-            body, content_type = _encode_multipart(data, files)
-            request_headers.setdefault("content-type", content_type)
+            body, multipart_type = _encode_multipart(data, files)
+            request_headers.setdefault("content-type", multipart_type)
         elif json is not None:
             body = json_module.dumps(json, ensure_ascii=False).encode("utf-8")
             request_headers.setdefault("content-type", "application/json")
@@ -87,11 +115,15 @@ class TestClient:
             body = data or b""
         request_headers.setdefault("content-length", str(len(body)))
 
-        route, params, allowed = self.app._match_route(split.path or "/", method)
+        request_path = split.path or "/"
+        if not request_path.startswith("/"):
+            request_path = "/" + request_path
+        route, params, allowed = self.app._match_route(request_path, method)
         raw = {
             "method": method,
-            "path": split.path or "/",
-            "query_string": query_string,
+            "path": request_path,
+            "scheme": origin.scheme,
+            "query_string": encoded_query,
             "query": {},
             "headers": request_headers,
             "raw_headers": [
@@ -106,6 +138,39 @@ class TestClient:
             "allowed_methods": list(allowed),
             "client_addr": "127.0.0.1",
         }
+        return raw, route
+
+    def open(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        headers: Mapping[str, str] | None = None,
+        query: Mapping[str, Any] | list[tuple[str, Any]] | None = None,
+        query_string: str | bytes | Mapping[str, Any] | list[tuple[str, Any]] | None = None,
+        base_url: str | None = None,
+        content_type: str | None = None,
+        data: str | bytes | Mapping[str, Any] | None = None,
+        json: Any = None,
+        files: Mapping[str, Any] | None = None,
+        follow_redirects: bool = False,
+        max_redirects: int = 20,
+    ) -> Response:
+        if max_redirects < 1:
+            raise ValueError("max_redirects must be positive")
+        raw, route = self._build_request(
+            path,
+            method=method,
+            headers=headers,
+            query=query,
+            query_string=query_string,
+            base_url=base_url,
+            content_type=content_type,
+            data=data,
+            json=json,
+            files=files,
+        )
+        method = raw["method"]
 
         if route is not None:
             if route.callback is None:
@@ -126,10 +191,14 @@ class TestClient:
             response.background()
             response.background = None
         if follow_redirects:
+            redirect_headers = dict(headers or {})
+            if content_type is not None:
+                redirect_headers["content-type"] = content_type
             return self._follow_redirects(
                 response,
+                request_url=Request(raw).url,
                 method=method,
-                headers=headers,
+                headers=redirect_headers,
                 data=data,
                 json=json,
                 files=files,
@@ -141,6 +210,7 @@ class TestClient:
         self,
         response: Response,
         *,
+        request_url: str,
         method: str,
         headers: Mapping[str, str] | None,
         data: str | bytes | Mapping[str, Any] | None,
@@ -155,18 +225,20 @@ class TestClient:
         current_data = data
         current_json = json
         current_files = files
-        current_headers = dict(headers or {})
+        current_headers = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
 
         while current.status_code in {301, 302, 303, 307, 308} and "location" in current.headers:
             if len(history) >= max_redirects:
                 raise RuntimeError(f"redirect limit exceeded ({max_redirects})")
             location = current.headers["location"]
-            split = urlsplit(location)
-            target = split.path or "/"
-            if split.query:
-                target = f"{target}?{split.query}"
-            if split.netloc:
-                current_headers["host"] = split.netloc
+            target = urljoin(request_url, location)
+            split = urlsplit(target)
+            if (
+                split.scheme not in {"http", "https"}
+                or split.netloc != urlsplit(request_url).netloc
+            ):
+                raise RuntimeError("test client does not follow external redirects")
+            request_url = target
 
             if current.status_code == 303 or (
                 current.status_code in {301, 302} and current_method not in {"GET", "HEAD"}
@@ -180,7 +252,7 @@ class TestClient:
                 current_headers.pop("content-length", None)
                 current_headers.pop("Content-Length", None)
 
-            key = (current_method, location)
+            key = (current_method, target)
             if key in visited:
                 raise RuntimeError(f"redirect loop detected at {location!r}")
             visited.add(key)

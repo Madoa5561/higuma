@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Callable, Iterator, MutableMapping
 from contextvars import ContextVar
 from types import SimpleNamespace
 from typing import Any
@@ -87,6 +87,14 @@ def has_app_context() -> bool:
     from .app import _app_context
 
     return _app_context.get() is not None
+
+
+def after_this_request(func: Callable[..., Any]) -> Callable[..., Any]:
+    current = _request_context.get()
+    if current is None:
+        raise RuntimeError("after_this_request requires a request context")
+    current.state.setdefault("_higuma_after_request", []).append(func)
+    return func
 
 
 def url_for(endpoint: str, **values: Any) -> str:

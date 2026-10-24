@@ -33,7 +33,7 @@ from .parameters import (
     coerce_response_model,
     resolve_arguments,
 )
-from .request import LocalProxy, Request, _pop_request, _push_request
+from .request import LocalProxy, Request, _pop_request, _push_request, _request_context
 from .response import (
     FileResponse,
     HTMLResponse,
@@ -47,7 +47,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -109,6 +109,7 @@ class Higuma:
         self._endpoint_rules: dict[str, Rule] = {}
         self._websocket_rules: dict[str, Rule] = {}
         self._file_endpoints: set[str] = set()
+        self._blueprints: dict[str, Blueprint] = {}
         self._before_request: list[Callable[..., ResponseValue | None]] = []
         self._after_request: list[Callable[..., ResponseValue]] = []
         self._middlewares: list[Middleware] = []
@@ -117,6 +118,7 @@ class Higuma:
         self._shutdown_handlers: list[Callable[..., Any]] = []
         self._context_processors: list[Callable[[], Mapping[str, Any]]] = []
         self._teardown_appcontext: list[Callable[..., Any]] = []
+        self._teardown_request: list[Callable[..., Any]] = []
         self.dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = {}
 
         self._core = HigumaCore(
@@ -345,6 +347,9 @@ class Higuma:
         url_prefix: str | None = None,
         name_prefix: str = "",
     ) -> None:
+        registered_name = f"{name_prefix}{blueprint.name}"
+        if registered_name in self._blueprints:
+            raise ValueError(f"blueprint {registered_name!r} is already registered")
         prefix = (url_prefix if url_prefix is not None else blueprint.url_prefix).rstrip("/")
         for deferred in blueprint._routes:
             full_rule = f"{prefix}{deferred.rule}"
@@ -364,6 +369,7 @@ class Higuma:
                 endpoint=endpoint,
                 **deferred.options,
             )(deferred.view_func)
+        self._blueprints[registered_name] = blueprint
 
     def before_request(self, func: Callable[..., ResponseValue | None]):
         self._before_request.append(func)
@@ -411,6 +417,54 @@ class Higuma:
     def teardown_appcontext(self, func: Callable[..., Any]) -> Callable[..., Any]:
         self._teardown_appcontext.append(func)
         return func
+
+    def teardown_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._teardown_request.append(func)
+        return func
+
+    def _do_teardown_request(self, error: BaseException | None) -> None:
+        current = _request_context.get()
+        blueprint = self._blueprints.get(current.blueprint) if current is not None else None
+        if blueprint is not None:
+            for handler in reversed(blueprint._teardown_request):
+                _resolve_awaitable(handler(error))
+        for handler in reversed(self._teardown_request):
+            _resolve_awaitable(handler(error))
+
+    @contextmanager
+    def request_context(self, request: Request):
+        if not isinstance(request, Request):
+            raise TypeError("request_context requires a higuma Request")
+        manager = (
+            self.app_context()
+            if _app_context.get() is not self or _g_context.get() is None
+            else nullcontext()
+        )
+        with manager:
+            token = _push_request(request)
+            error = None
+            try:
+                yield request
+            except BaseException as exc:
+                error = exc
+                raise
+            finally:
+                try:
+                    self._do_teardown_request(error)
+                finally:
+                    _pop_request(token)
+
+    def test_request_context(self, path: str = "/", **kwargs: Any):
+        from .testing import TestClient
+
+        raw, route = TestClient(self)._build_request(path, **kwargs)
+        current = Request(raw)
+        if route is not None:
+            current.path_params = route.convert_params(current.path_params)
+            current.view_args = current.path_params
+            current.endpoint = route.endpoint
+            current.blueprint = route.endpoint.rpartition(".")[0] or None
+        return self.request_context(current)
 
     @contextmanager
     def app_context(self):
@@ -477,16 +531,28 @@ class Higuma:
         headers: Mapping[str, str] | None = None,
         **context: Any,
     ) -> TemplateResponse:
-        merged_context: dict[str, Any] = {}
-        for processor in self._context_processors:
-            merged_context.update(processor())
-        merged_context.update(context)
+        self.update_template_context(context)
         return TemplateResponse(
             template=template,
-            context=merged_context,
+            context=context,
             status=status,
             headers=dict(headers or {}),
         )
+
+    def update_template_context(self, context: dict[str, Any]) -> None:
+        original = dict(context)
+        processors = list(self._context_processors)
+        current = _request_context.get()
+        blueprint = (
+            self._blueprints.get(current.blueprint)
+            if current is not None and _app_context.get() is self
+            else None
+        )
+        if blueprint is not None:
+            processors.extend(blueprint._context_processors)
+        for processor in processors:
+            context.update(processor())
+        context.update(original)
 
     def jsonify(
         self,
@@ -854,13 +920,19 @@ class Higuma:
             with self.app_context():
                 return self._dispatch(request, endpoint_call, run_hooks=run_hooks)
         request.state["_higuma_dependency_overrides"] = self.dependency_overrides
+        request.state["_higuma_dispatching"] = True
         request_token = _push_request(request)
         app_token: Token[Higuma | None] = _app_context.set(self)
+        dispatch_error = None
+        blueprint = self._blueprints.get(request.blueprint)
 
         def terminal(current_request: Request) -> Any:
             try:
                 if run_hooks:
-                    for hook in self._before_request:
+                    hooks = list(self._before_request)
+                    if blueprint is not None:
+                        hooks.extend(blueprint._before_request)
+                    for hook in hooks:
                         result = _call_hook(hook, current_request)
                         if result is not None:
                             return result
@@ -889,10 +961,20 @@ class Higuma:
 
             if run_hooks:
                 try:
+                    for hook in request.state.pop("_higuma_after_request", []):
+                        response = make_response(_resolve_awaitable(hook(response)))
+                    if blueprint is not None:
+                        for hook in reversed(blueprint._after_request):
+                            response = make_response(_call_after_hook(hook, request, response))
                     for hook in reversed(self._after_request):
                         response = make_response(_call_after_hook(hook, request, response))
                 except Exception as exc:  # noqa: BLE001 - after hook exception boundary
                     response = make_response(self._handle_exception(exc, request))
+            try:
+                for finalize in request.state.pop("_higuma_response_finalizers", []):
+                    response = make_response(finalize(response))
+            except Exception as exc:  # noqa: BLE001 - response finalization boundary
+                response = make_response(self._handle_exception(exc, request))
             response = self._prepare_file_response(request, response)
             background_tasks = request.state.get("_higuma_background_tasks")
             if isinstance(background_tasks, BackgroundTasks) and background_tasks:
@@ -910,10 +992,22 @@ class Higuma:
                     dependency_cleanups,
                 )
             return response
+        except BaseException as exc:
+            dispatch_error = exc
+            raise
         finally:
-            self._run_dependency_cleanups(request.state.pop("_higuma_dependency_cleanups", []))
-            _app_context.reset(app_token)
-            _pop_request(request_token)
+            try:
+                self._run_dependency_cleanups(request.state.pop("_higuma_dependency_cleanups", []))
+                handled_error = request.state.pop("_higuma_request_error", None)
+                self._do_teardown_request(
+                    dispatch_error if dispatch_error is not None else handled_error
+                )
+            finally:
+                request.state.pop("_higuma_dispatching", None)
+                request.state.pop("_higuma_after_request", None)
+                request.state.pop("_higuma_response_finalizers", None)
+                _app_context.reset(app_token)
+                _pop_request(request_token)
 
     def _finish_response_work(
         self,
@@ -960,18 +1054,20 @@ class Higuma:
     def _handle_exception(self, error: BaseException, request: Request) -> ResponseValue:
         if isinstance(error, RequestValidationError):
             return JSONResponse({"detail": error.errors}, 422)
-        handler = self._find_error_handler(error)
+        handler = self._find_error_handler(error, request)
         if handler is not None:
             try:
                 return _call_error_handler(handler, error, request)
-            except BaseException:
+            except Exception as handler_error:
                 self.logger.exception("error handler failed")
+                error = handler_error
 
         if isinstance(error, HTTPException):
             return self._default_http_error(error)
 
         self.logger.exception("unhandled request exception", exc_info=error)
         _app_context_error.set(error)
+        request.state["_higuma_request_error"] = error
         if self.debug:
             detail = traceback.format_exc()
             return HTMLResponse(
@@ -980,15 +1076,23 @@ class Higuma:
             )
         return self._default_http_error(HTTPException(500, "Internal Server Error"))
 
-    def _find_error_handler(self, error: BaseException) -> ErrorHandler | None:
+    def _find_error_handler(self, error: BaseException, request: Request) -> ErrorHandler | None:
+        blueprint = self._blueprints.get(request.blueprint)
+        scopes = (
+            [blueprint._error_handlers, self._error_handlers]
+            if blueprint
+            else [self._error_handlers]
+        )
         if isinstance(error, HTTPException):
-            handler = self._error_handlers.get(error.status_code)
-            if handler is not None:
-                return handler
-        for error_type in type(error).__mro__:
-            handler = self._error_handlers.get(error_type)
-            if handler is not None:
-                return handler
+            for handlers in scopes:
+                handler = handlers.get(error.status_code)
+                if handler is not None:
+                    return handler
+        for handlers in scopes:
+            for error_type in type(error).__mro__:
+                handler = handlers.get(error_type)
+                if handler is not None:
+                    return handler
         return None
 
     @staticmethod

@@ -12,6 +12,7 @@ from .auth import (
 from .background import BackgroundTask, BackgroundTasks
 from .blueprint import Blueprint
 from .context import (
+    after_this_request,
     flash,
     g,
     get_flashed_messages,
@@ -181,6 +182,7 @@ __all__ = [
     "WebSocketDisconnect",
     "__version__",
     "abort",
+    "after_this_request",
     "csrf_token",
     "current_app",
     "current_user",

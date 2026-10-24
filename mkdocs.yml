@@ -44,6 +44,7 @@ nav:
       - CSR・フロントエンド: frontend.md
       - 機能対応表: capabilities.md
       - Flask互換性: flask-compat.md
+      - テストとcontext: testing.md
       - 認証とセキュリティ: security-auth.md
       - デプロイ: deployment.md
       - Examples: examples.md
@@ -56,6 +57,7 @@ nav:
       - CSR and frontend: en/frontend.md
       - Capability matrix: en/capabilities.md
       - Flask compatibility: en/flask-compat.md
+      - Testing and contexts: en/testing.md
       - Auth and security: en/security-auth.md
       - Deployment: en/deployment.md
       - Examples: en/examples.md

@@ -21,7 +21,7 @@ and **external infrastructure**. Features added in 0.6.0 are marked in the table
 | SQLite ORM / transactions | Native | Fields, queries, commit/rollback; migrations, relationships, pools, other databases need specialized libraries |
 | Background tasks | Native | Lightweight after-response work; durable queues, retries, schedulers are external |
 | Lifespan / supervisor | Native | Sync/async lifecycle and multiple processes. [Deployment](deployment.md) |
-| Flask compatibility | Partial + WSGI integration | g/session/flash and more. [Boundaries](flask-compat.md); not all extensions |
+| Flask compatibility | Partial + WSGI integration | g/session/flash, request contexts and scoped Blueprint hooks (0.7). [Boundaries](flask-compat.md); not all extensions |
 | WSGI / ASGI applications | HTTP integration | Buffered HTTP only, not mounted WS, ASGI lifespan, or indefinite streams |
 | GraphQL / RPC | External library integration | Mount compatible HTTP apps; subscription forwarding is not guaranteed |
 | Application caches / Redis / durable jobs | External | Manage clients through lifespan/DI; distinct from HTTP caching |
@@ -29,7 +29,7 @@ and **external infrastructure**. Features added in 0.6.0 are marked in the table
 | PWA / offline / service workers | Frontend | Serve public files; generation and update/offline strategies are separate |
 | Logs / metrics / tracing | Logging + middleware | Hooks/Server-Timing; monitoring backends and exporters are external |
 | TLS / HTTP2/3 / CDN / edge WAF | Infrastructure | Terminate at a trusted reverse proxy in front of Higuma |
-| Tests | Native + repository suite | Test client, real HTTP/WS sockets, wheel smoke; browser verification is separate |
+| Tests | Native + repository suite | Client, request contexts (0.7), Flask parity tests, real HTTP/WS, wheel smoke. [Testing](testing.md); browsers are separate |
 
 ## Extension principles
 

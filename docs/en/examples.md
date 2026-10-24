@@ -31,6 +31,9 @@ cookie and token, then POST with `X-CSRF-Token` and JSON containing
 | `websocket_chat.py` | JSON WebSocket echo | Needs a WebSocket client |
 | `multipart_upload.py` | Safe file upload and persistence | Creates `uploads/` on request |
 | `mounted_apps.py` | WSGI and ASGI mounts | HTTP scopes only |
+| `flask_mount.py` | Real Flask application through WSGI | Requires `higuma[compat]` |
+| `flask_compat.py` | Contexts, sessions, flash, URLs, CSRF | Requires `HIGUMA_SECRET_KEY` |
+| `flask_lifecycle.py` | Scoped Blueprint hooks, teardown, session writes from after callbacks | 0.7.0+, requires `HIGUMA_SECRET_KEY` |
 | `openapi_api.py` | Legacy dataclass and OpenAPI metadata | Metadata-only form |
 | `orm_blog.py` | SQLite ORM CRUD | Creates `blog.sqlite3` at startup |
 | `orm_fields.py` | Every ORM field, queries, and save | In-memory SQLite only |
@@ -87,6 +90,40 @@ header or `_csrf_token` form field.
 The OAuth example additionally requires `GOOGLE_CLIENT_ID` and
 `GOOGLE_CLIENT_SECRET`. Register its exact redirect URI with the provider. The
 example makes real requests to Google.
+
+## Try request lifecycle hooks {#request-lifecycle}
+
+Set a development secret as above, then start from the repository root:
+
+```bash
+higuma run examples.flask_lifecycle:create_app --port 8000
+```
+
+GET `/counter/` with a cookie-preserving client. The response contains `count`,
+`csrf_token`, and a `Server-Timing` header. Send that token as `X-CSRF-Token`
+when POSTing JSON `{"increment": 2}` to `/counter/increment`. Check
+`X-Counter-Saved: yes`, then GET again to confirm persistence. Missing CSRF
+tokens return 403; invalid increments return 400.
+
+The same flow without starting a server:
+
+```python
+from examples.flask_lifecycle import create_app
+
+with create_app().test_client() as client:
+    token = client.get("/counter/").get_json()["csrf_token"]
+    response = client.post(
+        "/counter/increment", json={"increment": 2}, headers={"X-CSRF-Token": token}
+    )
+    assert response.get_json()["count"] == 2
+    assert response.headers["X-Counter-Saved"] == "yes"
+    assert client.get("/counter/").get_json()["count"] == 2
+```
+
+This is demo state in a signed cookie, not a durable or concurrency-safe database
+counter. Production needs HTTPS, `secure=True`, appropriate host/proxy settings,
+and external state management. See [Flask compatibility](flask-compat.md) and
+[Testing](testing.md) for ordering, early responses, and context boundaries.
 
 ## Examples that create files
 

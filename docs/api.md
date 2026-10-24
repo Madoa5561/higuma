@@ -1,6 +1,6 @@
 # APIリファレンス
 
-0.5.0のcontext・session・flash・URL生成・header・factory互換APIは
+0.5.0のcontext・session・flash等と、0.7.0のrequest context・Blueprint hooks・body helperは
 [Flask互換性のAPI一覧](flask-compat.md#flask-style-api)にまとめています。
 
 ここに記載する名前は、特記がなければ`from higuma import ...`でimportできます。
@@ -34,6 +34,9 @@ Higuma(
 - `register_blueprint(blueprint, *, url_prefix=None, name_prefix="")`
 - `url_for(endpoint, **values)`
 - `before_request`、`after_request`、`middleware`、`errorhandler`
+- `teardown_request(func)`、`teardown_appcontext(func)`、`register_error_handler(code_or_exception, func)`
+- `app_context()`、`request_context(request)`、`test_request_context(path="/", **kwargs)`
+- `update_template_context(context)`
 - `on_startup`、`on_shutdown`、`context_processor`
 - `add_middleware(middleware, *args, **kwargs)`
 - `render_template`、`jsonify`、`make_response`
@@ -79,6 +82,21 @@ Vite methodは`asset_url(entry) -> str`、`entrypoint(entry) -> dict`（`file`�
 
 `Blueprint(name, import_name, *, url_prefix="")`はroute群をまとめます。`route`、HTTP shortcut、
 `websocket`を持ち、`register_blueprint()`で登録します。
+
+0.7.0から`before_request(func)`、`after_request(func)`、`teardown_request(func)`、
+`context_processor(func)`、`errorhandler(code_or_exception)`、
+`register_error_handler(code_or_exception, func)`も提供します。
+Blueprint名は空文字とドットを禁止し、local endpointもドットを禁止します。
+`name_prefix`はBlueprint名の前へそのまま連結します（区切りが必要なら`"admin."`等を指定）。
+hookとerrorのscope・実行順は[Flask互換性](flask-compat.md)を参照してください。
+
+### Contextとrequest-local callback（0.7.0以降）
+
+`after_this_request(func)`は現在のrequestだけのresponse callbackを登録し、同じ関数を返します。
+request context外では`RuntimeError`です。callbackはresponseを受け取りresponseを返します。
+`teardown_request(func)`はcontext終了時、未処理例外または`None`を受け取ります。
+HTTPエラーや登録handlerで処理済みの例外では通常`None`です。
+`test_request_context`の構築引数と、Flaskとの違いは[テストガイド](testing.md)を参照してください。
 
 ### `View` / `MethodView`
 
@@ -130,7 +148,9 @@ def create_item(
 ### `Request`
 
 - `method`、`path`、`query_string`、`scheme`、`host`、`base_url`、`url`
+- `host_url`、`full_path`、`mimetype`、`is_json`（0.7+）
 - `args` / `query`: repeated keyを保持する`MultiDict`
+- `values`: GETではqueryのみ、それ以外はquery優先でformと統合（0.7+）
 - `headers`: case-insensitiveな`Headers`
 - `cookies`: read-only mapping
 - `json` / `get_json(force=False, silent=False)`
@@ -144,6 +164,8 @@ def create_item(
 
 `Headers`はheader名をcase-insensitiveに扱います。`MultiDict`は`get()`、`getlist()`、
 `items(multi=False)`、`keys()`、`values()`、`to_dict(flat=True)`を提供します。
+重複keyの単一値は従来どおり最後の値です。Flaskの最初の値とは異なります。
+`request.values`は入力元間ではquery優先で、`getlist()`はqueryとform両方を保持します。
 
 ### `UploadFile`
 
@@ -166,6 +188,11 @@ full-fileの`FileResponse`と`send_file()`はGET/HEADのETag、`If-None-Match`�
 
 `Response`は`status_code` / `status`、`headers`、`media_type`、`body`、`history`を持ちます。
 `append_header()`、`get_json()`、`set_cookie()`、`delete_cookie()`を提供します。
+0.7.0から`.data`（読書き）、`get_data(as_text=False)`、`set_data(str_or_bytes)`、
+`is_json`、`get_json(force=False, silent=False)`を使えます。buffered body用helperです。
+`get_json()`/`.json`はJSON以外のMIMEで`None`、解析失敗で例外を返します。
+`force=True`でMIMEを無視、`silent=True`で解析失敗を`None`にします。
+stream/file/templateの遅延内容を直接body helperで読み出すAPIではありません。
 `set_cookie(..., partitioned=True)`はPython 3.14以降かつ`secure=True`で利用できます。
 
 helperは`jsonify()`、`make_response()`、`redirect()`、`render_template()`、`send_file()`です。

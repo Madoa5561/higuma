@@ -107,8 +107,15 @@ class SessionMiddleware:
     ) -> Response:
         session = self._load(request.cookies.get(self.cookie_name))
         request.session = session
+        if request.state.get("_higuma_dispatching"):
+            request.state.setdefault("_higuma_response_finalizers", []).append(
+                lambda response: self._save(response, session)
+            )
+            return make_response(call_next(request))
         response = make_response(call_next(request))
+        return self._save(response, session)
 
+    def _save(self, response: Response, session: Session) -> Response:
         vary = response.headers.get("vary", "")
         if not {"cookie", "*"} & {item.strip().lower() for item in vary.split(",")}:
             response.headers["vary"] = f"{vary}, Cookie" if vary else "Cookie"

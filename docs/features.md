@@ -3,6 +3,10 @@
 CSR・SPA・Vite・静的HTMLは[フロントエンドガイド](frontend.md)、
 内蔵／連携／外部構成の違いは[機能対応表](capabilities.md)を参照してください。
 
+0.7.0ではBlueprint限定hooks・error handler・context processor、`after_this_request`、
+request contextとbody helperを追加しました。[Flask互換性](flask-compat.md)と
+[テストガイド](testing.md)に動作・移行時の注意をまとめています。
+
 ## Routingとhandler
 
 ```python
@@ -143,8 +147,10 @@ def start_timer():
 
 @app.after_request
 def add_timing(response):
-    elapsed = time.monotonic() - request.state["started"]
-    response.headers["server-timing"] = f"app;dur={elapsed * 1000:.2f}"
+    started = request.state.get("started")
+    if started is not None:
+        elapsed = time.monotonic() - started
+        response.headers["server-timing"] = f"app;dur={elapsed * 1000:.2f}"
     return response
 
 

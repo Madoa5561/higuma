@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,13 +32,48 @@ class Blueprint:
         *,
         url_prefix: str = "",
     ) -> None:
-        if "." in name:
-            raise ValueError("blueprint names cannot contain a dot")
+        if not name or "." in name:
+            raise ValueError("blueprint names must be nonempty and cannot contain a dot")
         self.name = name
         self.import_name = import_name
         self.url_prefix = url_prefix.rstrip("/")
         self._routes: list[_DeferredRoute] = []
         self._websockets: list[_DeferredWebSocket] = []
+        self._before_request: list[Callable[..., Any]] = []
+        self._after_request: list[Callable[..., Any]] = []
+        self._teardown_request: list[Callable[..., Any]] = []
+        self._context_processors: list[Callable[[], Mapping[str, Any]]] = []
+        self._error_handlers: dict[int | type[BaseException], Callable[..., Any]] = {}
+
+    def before_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._before_request.append(func)
+        return func
+
+    def after_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._after_request.append(func)
+        return func
+
+    def teardown_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._teardown_request.append(func)
+        return func
+
+    def context_processor(
+        self, func: Callable[[], Mapping[str, Any]]
+    ) -> Callable[[], Mapping[str, Any]]:
+        self._context_processors.append(func)
+        return func
+
+    def register_error_handler(
+        self, code_or_exception: int | type[BaseException], handler: Callable[..., Any]
+    ) -> None:
+        self._error_handlers[code_or_exception] = handler
+
+    def errorhandler(self, code_or_exception: int | type[BaseException]):
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            self.register_error_handler(code_or_exception, func)
+            return func
+
+        return decorator
 
     def route(
         self,
@@ -53,6 +88,8 @@ class Blueprint:
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
             import inspect
 
+            if "." in (endpoint or view_func.__name__):
+                raise ValueError("blueprint endpoints cannot contain a dot")
             frame = inspect.currentframe()
             try:
                 cache_parameter_hints(
@@ -97,6 +134,8 @@ class Blueprint:
         **options: Any,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
+            if "." in (endpoint or view_func.__name__):
+                raise ValueError("blueprint endpoints cannot contain a dot")
             self._websockets.append(
                 _DeferredWebSocket(
                     rule=rule,

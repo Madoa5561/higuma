@@ -51,7 +51,7 @@ class MultiDict(Mapping[str, Any]):
     ) -> Any | T | None:
         if key not in self._values:
             return default
-        value = self._values[key][-1]
+        value = self[key]
         if type is None:
             return value
         try:
@@ -74,12 +74,26 @@ class MultiDict(Mapping[str, Any]):
     def items(self, multi: bool = False):
         if multi:
             return ((key, value) for key, values in self._values.items() for value in values)
-        return ((key, values[-1]) for key, values in self._values.items())
+        return ((key, self[key]) for key in self._values)
 
     def to_dict(self, flat: bool = True) -> dict[str, Any]:
         if flat:
-            return {key: values[-1] for key, values in self._values.items()}
+            return dict(self.items())
         return {key: list(values) for key, values in self._values.items()}
+
+
+class _CombinedMultiDict(MultiDict):
+    def __init__(self, dictionaries: tuple[MultiDict, ...]) -> None:
+        self.dictionaries = dictionaries
+        super().__init__(
+            [(key, value) for dictionary in dictionaries for key, value in dictionary.items(True)]
+        )
+
+    def __getitem__(self, key: str) -> Any:
+        for dictionary in self.dictionaries:
+            if key in dictionary:
+                return dictionary[key]
+        raise KeyError(key)
 
 
 class UploadFile:
@@ -224,6 +238,10 @@ class Request:
         return len(self.body)
 
     @property
+    def mimetype(self) -> str:
+        return (self.content_type or "").split(";", 1)[0].strip().lower()
+
+    @property
     def host(self) -> str:
         return str(self.headers.get("host", ""))
 
@@ -232,14 +250,23 @@ class Request:
         return f"{self.scheme}://{self.host}/"
 
     @property
+    def host_url(self) -> str:
+        return self.base_url
+
+    @property
+    def full_path(self) -> str:
+        return f"{self.path}?{self.query_string}"
+
+    @property
     def url(self) -> str:
         query = f"?{self.query_string}" if self.query_string else ""
         return f"{self.scheme}://{self.host}{self.path}{query}"
 
     @property
     def is_json(self) -> bool:
-        content_type = (self.content_type or "").split(";", 1)[0].strip().lower()
-        return content_type == "application/json" or content_type.endswith("+json")
+        return self.mimetype == "application/json" or (
+            self.mimetype.startswith("application/") and self.mimetype.endswith("+json")
+        )
 
     @property
     def text(self) -> str:
@@ -266,7 +293,7 @@ class Request:
                 return None
             raise UnsupportedMediaType(detail="request Content-Type must be application/json")
         try:
-            value = json.loads(self.text)
+            value = json.loads(self.body)
             pending = [iter((value,))]
             while pending:
                 try:
@@ -285,6 +312,11 @@ class Request:
             raise BadRequest(detail="invalid JSON request body") from exc
         self._json_cache = value
         return self._json_cache
+
+    @property
+    def values(self) -> MultiDict:
+        dictionaries = (self.args,) if self.method == "GET" else (self.args, self.form)
+        return _CombinedMultiDict(dictionaries)
 
     @property
     def form(self) -> MultiDict:

@@ -25,8 +25,8 @@ conditional file processing. `StaticFiles(check_dir=False)` defers directory che
 `reload()` replaces the snapshot only after successful validation. See the
 [frontend guide](frontend.md) for all semantics, exceptions, and boundaries.
 
-See [Flask-style APIs](flask-compat.md#flask-style-apis-in-higuma) for the 0.5.0
-context, session, flash, URL, header, and factory compatibility additions.
+See [Flask-style APIs](flask-compat.md#flask-style-apis-in-higuma) for context/session
+helpers and the 0.7.0 request contexts, Blueprint hooks, and body helpers.
 
 Unless noted otherwise, every name below is importable with `from higuma import ...`.
 Use `higuma.__version__` to inspect the installed version.
@@ -59,6 +59,9 @@ Main methods:
 - `register_blueprint(blueprint, *, url_prefix=None, name_prefix="")`
 - `url_for(endpoint, **values)`
 - `before_request`, `after_request`, `middleware`, and `errorhandler`
+- `teardown_request(func)`, `teardown_appcontext(func)`, `register_error_handler(code_or_exception, func)`
+- `app_context()`, `request_context(request)`, `test_request_context(path="/", **kwargs)`
+- `update_template_context(context)`
 - `on_startup`, `on_shutdown`, and `context_processor`
 - `add_middleware(middleware, *args, **kwargs)`
 - `render_template`, `jsonify`, and `make_response`
@@ -79,6 +82,22 @@ Access outside a request context raises `RuntimeError`. Use `app.config` for con
 
 `Blueprint(name, import_name, *, url_prefix="")` groups routes. It provides `route`, the HTTP
 shortcuts, and `websocket`; register it with `register_blueprint()`.
+
+Since 0.7.0 it also provides `before_request(func)`, `after_request(func)`,
+`teardown_request(func)`, `context_processor(func)`, `errorhandler(code_or_exception)`,
+and `register_error_handler(code_or_exception, func)`. Blueprint names must be
+non-empty and dot-free; local endpoints must be dot-free. `name_prefix` is
+concatenated verbatim before the name: include a separator such as `"admin."`
+when needed. See [Flask compatibility](flask-compat.md) for scope and ordering.
+
+### Contexts and request-local callbacks (0.7.0+)
+
+`after_this_request(func)` registers a response callback for the active request
+and returns the same function. Outside a request context it raises `RuntimeError`.
+The callback receives and returns a response. `teardown_request(func)` receives
+an unhandled exception or `None` on context exit; handled exceptions and normal
+HTTP errors generally give `None`. See [Testing](testing.md) for request builder
+arguments and differences from Flask.
 
 ### `View` / `MethodView`
 
@@ -131,7 +150,9 @@ and `input` only when safe. Password, token, secret, and Cookie values are redac
 ### `Request`
 
 - `method`, `path`, `query_string`, `scheme`, `host`, `base_url`, and `url`
+- `host_url`, `full_path`, `mimetype`, and `is_json` (0.7+)
 - `args` / `query`: a duplicate-preserving `MultiDict`
+- `values`: query only for GET, otherwise query-first combined query/form (0.7+)
 - `headers`: case-insensitive `Headers`
 - `cookies`: read-only mapping
 - `json` / `get_json(force=False, silent=False)`
@@ -145,6 +166,9 @@ and `input` only when safe. Password, token, secret, and Cookie values are redac
 
 `Headers` compares names case-insensitively. `MultiDict` provides `get()`, `getlist()`,
 `items(multi=False)`, `keys()`, `values()`, and `to_dict(flat=True)`.
+Single-value duplicate selection remains last-value, unlike Flask's first-value
+behavior. Across sources, `request.values` gives query priority; `getlist()`
+preserves both query and form values.
 
 ### `UploadFile`
 
@@ -169,6 +193,11 @@ values stream the selected range directly from Rust.
 
 `Response` exposes `status_code` / `status`, `headers`, `media_type`, `body`, and `history`.
 It provides `append_header()`, `get_json()`, `set_cookie()`, and `delete_cookie()`.
+Since 0.7.0, buffered body helpers include writable `.data`, `get_data(as_text=False)`,
+`set_data(str_or_bytes)`, `is_json`, and `get_json(force=False, silent=False)`.
+`get_json()`/`.json` returns `None` for non-JSON MIME and raises on malformed JSON.
+`force=True` ignores MIME; `silent=True` suppresses parse errors. These helpers
+do not read deferred stream/file/template content directly.
 `set_cookie(..., partitioned=True)` requires Python 3.14 or newer and `secure=True`.
 
 Helpers are `jsonify()`, `make_response()`, `redirect()`, `render_template()`, and `send_file()`.

@@ -131,8 +131,39 @@ class Response:
     def text(self) -> str:
         return self.body.decode("utf-8", errors="replace")
 
-    def get_json(self) -> Any:
-        return json.loads(self.text)
+    @property
+    def data(self) -> bytes:
+        return self.body
+
+    @data.setter
+    def data(self, value: str | bytes) -> None:
+        self.set_data(value)
+
+    def get_data(self, as_text: bool = False) -> bytes | str:
+        return self.text if as_text else self.body
+
+    def set_data(self, value: str | bytes) -> None:
+        self.body = value.encode("utf-8") if isinstance(value, str) else bytes(value)
+        if "content-length" in self.headers:
+            self.headers["content-length"] = str(len(self.body))
+
+    @property
+    def is_json(self) -> bool:
+        mime = (self.headers.get("content-type") or self.media_type or "").split(";", 1)[0]
+        mime = mime.strip().lower()
+        return mime == "application/json" or (
+            mime.startswith("application/") and mime.endswith("+json")
+        )
+
+    def get_json(self, force: bool = False, silent: bool = False) -> Any:
+        if not force and not self.is_json:
+            return None
+        try:
+            return json.loads(self.body)
+        except (ValueError, RecursionError):
+            if silent:
+                return None
+            raise
 
     @property
     def json(self) -> Any:
@@ -561,11 +592,7 @@ def render_template(template: str, /, **context: Any) -> TemplateResponse:
     from .context import has_app_context
 
     if has_app_context():
-        merged: dict[str, Any] = {}
-        for processor in current_app._context_processors:
-            merged.update(processor())
-        merged.update(context)
-        context = merged
+        current_app.update_template_context(context)
     return TemplateResponse(template=template, context=context)
 
 
