@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import quote, unquote
 from weakref import WeakKeyDictionary
 
+from .body import BodyBuffer, receive_body
 from .exceptions import BadRequest, HTTPException
 from .execution import AwaitBridge, await_bridge, resolve_awaitable
 from .response import (
@@ -246,39 +247,25 @@ class WSGIApplication:
         maximum = _limit(self.app)
         if length is not None and length > maximum:
             raise HTTPException(413)
-        source = environ["wsgi.input"]
-        chunks = []
-        remaining = (
-            length
-            if length is not None
-            else (maximum + 1 if environ.get("wsgi.input_terminated") else 0)
-        )
-        while remaining:
-            chunk = source.read(min(65536, remaining))
-            if not chunk:
-                if length is not None:
-                    raise BadRequest(detail="incomplete request body")
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        body = b"".join(chunks)
-        if len(body) > maximum:
-            raise HTTPException(413)
         try:
             path = str(environ.get("PATH_INFO", "/")).encode("latin-1").decode("utf-8")
             root = str(environ.get("SCRIPT_NAME", "")).encode("latin-1").decode("utf-8")
         except UnicodeError as error:
             raise BadRequest(detail="invalid WSGI path encoding") from error
-        return _raw_request(
+        storage = BodyBuffer(maximum, int(self.app.config["REQUEST_BODY_MEMORY_LIMIT"]))
+        storage.fill_from(environ["wsgi.input"], length, bool(environ.get("wsgi.input_terminated")))
+        raw = _raw_request(
             quote(path, safe="/!$&'()*+,-.:;=@_~"),
             str(environ.get("REQUEST_METHOD", "GET")),
             headers,
-            body,
+            b"",
             scheme=str(environ.get("wsgi.url_scheme", "http")),
             query=str(environ.get("QUERY_STRING", "")),
             peer=str(environ.get("REMOTE_ADDR", "")),
             root=root,
         )
+        raw.update(body_file=storage, body_size=storage.size)
+        return raw
 
 
 def _scope_request(scope: Mapping[str, Any], body: bytes = b"") -> dict[str, Any]:
@@ -372,15 +359,23 @@ class ASGIApplication:
                         self.app.state.update(state)
                         if "state" in scope:
                             scope["state"].update(state)
-                for handler in self.app._startup_handlers:
-                    await self._lifecycle_hook(handler)
-                await send({"type": "lifespan.startup.complete"})
-                started = True
-                event = await receive()
-                if event["type"] != "lifespan.shutdown":
-                    raise RuntimeError("expected lifespan.shutdown")
-                for handler in reversed(self.app._shutdown_handlers):
-                    await self._lifecycle_hook(handler)
+                try:
+                    for handler in self.app._startup_handlers:
+                        await self._lifecycle_hook(handler)
+                    await send({"type": "lifespan.startup.complete"})
+                    started = True
+                    event = await receive()
+                    if event["type"] != "lifespan.shutdown":
+                        raise RuntimeError("expected lifespan.shutdown")
+                finally:
+                    failure = None
+                    for handler in reversed(self.app._shutdown_handlers):
+                        try:
+                            await self._lifecycle_hook(handler)
+                        except BaseException as error:  # noqa: BLE001 - finish every cleanup before re-raising
+                            failure = failure or error
+                    if failure is not None:
+                        raise failure
             await send({"type": "lifespan.shutdown.complete"})
         except Exception:
             self.app.logger.exception("ASGI lifespan failed")
@@ -454,36 +449,35 @@ class ASGIApplication:
             await bridge.close()
 
     async def _http(self, scope: Any, receive: Any, send: Any) -> None:
-        chunks = []
-        total = 0
-        while True:
-            event = await receive()
-            if event["type"] == "http.disconnect":
-                return
-            if event["type"] != "http.request":
-                raise RuntimeError("expected http.request")
-            chunk = bytes(event.get("body", b""))
-            total += len(chunk)
-            if total > _limit(self.app):
-                response = self.app._default_http_error(HTTPException(413))
-                await send(
-                    {
-                        "type": "http.response.start",
-                        "status": 413,
-                        "headers": [
-                            (k.encode(), v.encode("latin-1"))
-                            for k, v in _headers(response, len(response.body))
-                        ],
-                    }
-                )
-                await send({"type": "http.response.body", "body": response.body})
-                return
-            chunks.append(chunk)
-            if not event.get("more_body", False):
-                break
+        storage = BodyBuffer(_limit(self.app), int(self.app.config["REQUEST_BODY_MEMORY_LIMIT"]))
         try:
-            raw = _scope_request(scope, b"".join(chunks))
+            if not await receive_body(storage, receive):
+                return
+        except HTTPException as error:
+            response = self.app._default_http_error(error)
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": error.status_code,
+                    "headers": [
+                        (k.encode(), v.encode("latin-1"))
+                        for k, v in _headers(response, len(response.body))
+                    ],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b"" if scope.get("method") == "HEAD" else response.body,
+                }
+            )
+            return
+        try:
+            raw = _scope_request(scope)
+            storage.seek(0)
+            raw.update(body_file=storage, body_size=storage.size)
         except (UnicodeError, HTTPException):
+            storage.close()
             response = self.app._default_http_error(BadRequest())
             await send({"type": "http.response.start", "status": 400, "headers": []})
             await send({"type": "http.response.body", "body": response.body})
@@ -535,7 +529,10 @@ class ASGIApplication:
                 if body is not None:
                     body.close()
 
-        await self._worker(respond, receive)
+        try:
+            await self._worker(respond, receive)
+        finally:
+            storage.close()
 
     async def _websocket(self, scope: Any, receive: Any, send: Any) -> None:
         if (await receive())["type"] != "websocket.connect":

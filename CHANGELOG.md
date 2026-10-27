@@ -7,6 +7,43 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-27
+
+### Added
+
+- Nested Blueprint registration, aliases, inherited hooks/error handlers/context
+  processors, and per-component template/static directories. Validate route/name
+  collisions and cycles before registering the tree.
+- Argparse-backed application and Blueprint CLI commands with scalar typed
+  arguments, app contexts, async callbacks, a shell, and a CLI test runner.
+  This is not Flask/Click extension compatibility.
+- Dependency-free `ASGITestClient` / `app.test_async_client()` for asyncio HTTP,
+  lifespan state, cookies, bounded response streams, disconnects, and WebSockets.
+- Optional SQLAlchemy 2.x and Redis integrations with app-isolated resources,
+  explicit transactions, dependency cleanup, and lifecycle-managed connections.
+- A factory-based login/admin/JSON API example with nested components, CSRF,
+  password hashing, role checks, SQLAlchemy, and private password-entry CLI.
+- Bounded request-body spooling in native, ASGI, and WSGI transports; rewindable
+  `request.stream`, `iter_body`/`aiter_body`, body size/spooling metadata, incremental
+  multipart parsing, per-field/part/upload memory limits, and automatic cleanup.
+- Reproducible real-socket comparison of native/ASGI/WSGI Higuma, Flask/Waitress,
+  and Starlette/Uvicorn, including correctness, errors, latency, CPU and RSS data.
+- Reuse a process-local auxiliary loop for ordinary native/WSGI async HTTP work
+  instead of creating Windows loop-control sockets per await. Preserve request
+  task context and close request await scopes, including failed test-client streams.
+
+### Boundaries
+
+- Shutdown hooks also clean up partially completed startup; all cleanup hooks are
+  attempted even if one fails. Hooks must tolerate resources that never initialized.
+- Upload spooling finishes receiving before dispatch; stored-body chunk reading
+  is not a live network-body iterator. JSON/body convenience access can still
+  materialize the full body. Temp storage needs disk space and operational limits.
+- SQLAlchemy migrations and durable jobs remain external. Async Redis clients
+  require the shared ASGI event loop; use synchronous clients for native/WSGI.
+- Benchmark results describe a recorded local environment, not universal speed
+  rankings or production-capacity guarantees.
+
 ## [0.8.0] - 2026-10-25
 
 ### Added

@@ -1,5 +1,9 @@
 # Testing and request contexts
 
+For 0.9+ CLI runners, async HTTP/lifespan/WebSockets, and early-exit streams, see
+[development](developer-experience.md#cli-and-asgi-testing). Unlike the synchronous
+client below, `app.test_async_client()` exercises the ASGI entry point.
+
 This guide includes helpers introduced in 0.7.0. Test dispatched views, middleware,
 CSRF, and sessions with the test client; context-dependent utilities with
 `test_request_context`; and network contracts against a real server.

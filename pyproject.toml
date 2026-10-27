@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "higuma"
-version = "0.8.0"
+version = "0.9.0"
 description = "A fast, Flask-inspired Python web framework with a Rust HTTP core and SSR."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,6 +42,8 @@ higuma = "higuma.cli:main"
 
 [project.optional-dependencies]
 asgi = ["uvicorn>=0.54,<1", "websockets>=16.1.1,<18"]
+integrations = ["SQLAlchemy>=2.0.55,<3", "redis>=6.4,<9"]
+benchmark = ["starlette>=0.52,<2", "waitress>=3,<4", "psutil>=7,<9"]
 compat = ["Flask>=3.1,<4"]
 security = ["pip-audit>=2.9,<3"]
 dev = [
@@ -57,6 +59,7 @@ docs = [
 [tool.maturin]
 module-name = "higuma._core"
 python-source = "python"
+exclude = ["python/higuma/*.pdb"]
 features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]

@@ -3,15 +3,17 @@ use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
     fs,
-    io::{self, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 
+#[cfg(test)]
+use axum::body::to_bytes;
 use axum::{
-    body::{to_bytes, Body, Bytes},
+    body::{Body, Bytes},
     extract::{
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
         ConnectInfo, FromRequestParts, State,
@@ -32,7 +34,7 @@ use pyo3::{
     prelude::*,
     types::{PyAny, PyBytes, PyDict, PyList, PyTuple},
 };
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::{mpsc as tokio_mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio::{net::TcpListener, runtime::Builder, signal};
 use tokio_util::io::ReaderStream;
@@ -43,6 +45,7 @@ use tower_http::compression::{
 use url::form_urlencoded;
 
 const DEFAULT_MAX_BODY_SIZE: usize = 8 * 1024 * 1024;
+const DEFAULT_BODY_MEMORY_LIMIT: usize = 1024 * 1024;
 const MAX_CONCURRENT_WEBSOCKET_HANDLERS: usize = 128;
 const WEBSOCKET_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -294,6 +297,7 @@ struct SharedState {
     fallback: Arc<RwLock<Option<Arc<Py<PyAny>>>>>,
     template_env: Arc<RwLock<Environment<'static>>>,
     max_body_size: usize,
+    body_memory_limit: usize,
     server_header: Arc<String>,
     websocket_slots: Arc<Semaphore>,
 }
@@ -305,6 +309,7 @@ struct HigumaCore {
     fallback: Arc<RwLock<Option<Arc<Py<PyAny>>>>>,
     template_env: Arc<RwLock<Environment<'static>>>,
     max_body_size: usize,
+    body_memory_limit: usize,
     server_header: String,
 }
 
@@ -314,9 +319,15 @@ impl HigumaCore {
     #[pyo3(signature = (
         template_dir = "templates".to_string(),
         max_body_size = DEFAULT_MAX_BODY_SIZE,
-        server_header = "higuma".to_string()
+        server_header = "higuma".to_string(),
+        body_memory_limit = DEFAULT_BODY_MEMORY_LIMIT
     ))]
-    fn new(template_dir: String, max_body_size: usize, server_header: String) -> Self {
+    fn new(
+        template_dir: String,
+        max_body_size: usize,
+        server_header: String,
+        body_memory_limit: usize,
+    ) -> Self {
         let template_dir = PathBuf::from(template_dir);
         Self {
             routes: Arc::new(RwLock::new(RouteTable::default())),
@@ -324,6 +335,7 @@ impl HigumaCore {
             fallback: Arc::new(RwLock::new(None)),
             template_env: Arc::new(RwLock::new(create_template_env(&template_dir))),
             max_body_size,
+            body_memory_limit: body_memory_limit.max(1),
             server_header,
         }
     }
@@ -389,6 +401,27 @@ impl HigumaCore {
         Ok(())
     }
 
+    fn set_template_paths(&self, paths: Vec<String>) -> PyResult<()> {
+        let loaders: Vec<_> = paths
+            .into_iter()
+            .map(|path| path_loader(PathBuf::from(path)))
+            .collect();
+        let mut env = self
+            .template_env
+            .write()
+            .map_err(|_| PyRuntimeError::new_err("failed to lock template cache"))?;
+        env.set_loader(move |name| {
+            for loader in &loaders {
+                if let Some(source) = loader(name)? {
+                    return Ok(Some(source));
+                }
+            }
+            Ok(None)
+        });
+        env.clear_templates();
+        Ok(())
+    }
+
     #[pyo3(signature = (host = "127.0.0.1".to_string(), port = 8000, workers = 0))]
     fn run(&self, py: Python<'_>, host: String, port: u16, workers: usize) -> PyResult<()> {
         let worker_count = if workers == 0 {
@@ -409,6 +442,7 @@ impl HigumaCore {
             fallback: self.fallback.clone(),
             template_env: self.template_env.clone(),
             max_body_size: self.max_body_size,
+            body_memory_limit: self.body_memory_limit,
             server_header: Arc::new(self.server_header.clone()),
             websocket_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_WEBSOCKET_HANDLERS)),
         };
@@ -690,6 +724,138 @@ fn enqueue_incoming_message(
     }
 }
 
+#[pyclass]
+struct RequestBodyFile {
+    file: Arc<Mutex<Option<fs::File>>>,
+}
+
+#[pymethods]
+impl RequestBodyFile {
+    #[pyo3(signature = (size = -1))]
+    fn read<'py>(&self, py: Python<'py>, size: i64) -> PyResult<Bound<'py, PyBytes>> {
+        let shared = self.file.clone();
+        let bytes = py.detach(move || -> io::Result<Vec<u8>> {
+            let mut guard = shared
+                .lock()
+                .map_err(|_| io::Error::other("body file lock failed"))?;
+            let file = guard
+                .as_mut()
+                .ok_or_else(|| io::Error::other("body file is closed"))?;
+            let mut bytes = Vec::new();
+            if size < 0 {
+                file.read_to_end(&mut bytes)?;
+            } else {
+                file.take(size as u64).read_to_end(&mut bytes)?;
+            }
+            Ok(bytes)
+        })?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    #[pyo3(signature = (offset, whence = 0))]
+    fn seek(&self, py: Python<'_>, offset: i64, whence: u8) -> PyResult<u64> {
+        let position = match whence {
+            0 if offset >= 0 => SeekFrom::Start(offset as u64),
+            1 => SeekFrom::Current(offset),
+            2 => SeekFrom::End(offset),
+            _ => return Err(PyValueError::new_err("invalid seek offset or whence")),
+        };
+        let shared = self.file.clone();
+        Ok(py.detach(move || -> io::Result<u64> {
+            shared
+                .lock()
+                .map_err(|_| io::Error::other("body file lock failed"))?
+                .as_mut()
+                .ok_or_else(|| io::Error::other("body file is closed"))?
+                .seek(position)
+        })?)
+    }
+
+    fn tell(&self, py: Python<'_>) -> PyResult<u64> {
+        self.seek(py, 0, 1)
+    }
+
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        let shared = self.file.clone();
+        py.detach(move || {
+            shared
+                .lock()
+                .map(|mut file| {
+                    file.take();
+                })
+                .map_err(|_| PyRuntimeError::new_err("body file lock failed"))
+        })
+    }
+
+    #[getter]
+    fn rolled_to_disk(&self) -> bool {
+        true
+    }
+
+    #[getter]
+    fn closed(&self) -> bool {
+        self.file.lock().map(|file| file.is_none()).unwrap_or(true)
+    }
+}
+
+struct StoredRequestBody {
+    memory: Vec<u8>,
+    file: Option<fs::File>,
+    size: usize,
+}
+
+async fn store_request_body(
+    body: Body,
+    maximum: usize,
+    memory_limit: usize,
+) -> Result<StoredRequestBody, (u16, &'static str)> {
+    let mut stream = body.into_data_stream();
+    let mut memory = Vec::new();
+    let mut file: Option<tokio::fs::File> = None;
+    let mut size = 0usize;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| (400, "incomplete request body"))?;
+        size = size
+            .checked_add(chunk.len())
+            .ok_or((413, "request body too large"))?;
+        if size > maximum {
+            return Err((413, "request body too large"));
+        }
+        if file.is_none() && size > memory_limit {
+            let temporary = tokio::task::spawn_blocking(tempfile::tempfile)
+                .await
+                .map_err(|_| (500, "request body storage failed"))?
+                .map_err(|_| (500, "request body storage failed"))?;
+            let mut temporary = tokio::fs::File::from_std(temporary);
+            temporary
+                .write_all(&memory)
+                .await
+                .map_err(|_| (500, "request body storage failed"))?;
+            memory = Vec::new();
+            file = Some(temporary);
+        }
+        if let Some(file) = file.as_mut() {
+            file.write_all(&chunk)
+                .await
+                .map_err(|_| (500, "request body storage failed"))?;
+        } else {
+            memory.extend_from_slice(&chunk);
+        }
+    }
+    let file = if let Some(mut file) = file {
+        file.flush()
+            .await
+            .map_err(|_| (500, "request body storage failed"))?;
+        file.seek(SeekFrom::Start(0))
+            .await
+            .map_err(|_| (500, "request body storage failed"))?;
+        Some(file.into_std().await)
+    } else {
+        None
+    };
+    Ok(StoredRequestBody { memory, file, size })
+}
+
 async fn dispatch(
     State(state): State<SharedState>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
@@ -800,19 +966,17 @@ async fn dispatch(
             .into_response();
     }
 
-    let body_bytes = match to_bytes(body, state.max_body_size).await {
-        Ok(bytes) => bytes.to_vec(),
-        Err(_) => {
-            return finalize_response(
-                ResponsePayload::text(
-                    "request body too large",
-                    StatusCode::PAYLOAD_TOO_LARGE.as_u16(),
-                ),
-                &state,
-                false,
-            )
-        }
-    };
+    let stored_body =
+        match store_request_body(body, state.max_body_size, state.body_memory_limit).await {
+            Ok(value) => value,
+            Err((status, detail)) => {
+                return finalize_response(
+                    ResponsePayload::text(detail, status),
+                    &state,
+                    method == "HEAD",
+                )
+            }
+        };
 
     let lookup = match state.routes.read() {
         Ok(routes) => routes.find_handler(&method, &path),
@@ -881,8 +1045,18 @@ async fn dispatch(
             request.set_item("query", query_to_dict(py, &query)?)?;
             request.set_item("headers", headers_to_dict(py, &headers)?)?;
             request.set_item("raw_headers", headers_to_list(py, &headers)?)?;
-            request.set_item("body", PyBytes::new(py, &body_bytes))?;
-            request.set_item("text", String::from_utf8_lossy(&body_bytes).to_string())?;
+            request.set_item("body_size", stored_body.size)?;
+            if let Some(file) = stored_body.file {
+                let body_file = Py::new(
+                    py,
+                    RequestBodyFile {
+                        file: Arc::new(Mutex::new(Some(file))),
+                    },
+                )?;
+                request.set_item("body_file", body_file)?;
+            } else {
+                request.set_item("body", PyBytes::new(py, &stored_body.memory))?;
+            }
             request.set_item("path_params", params_to_dict(py, &params)?)?;
             request.set_item("route_pattern", pattern)?;
             request.set_item("route_error_status", route_status.as_u16())?;
@@ -1813,6 +1987,39 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn request_bodies_spool_and_rewind_without_retaining_the_memory_copy() {
+        let chunks = stream::iter([
+            Ok::<_, io::Error>(Bytes::from_static(b"abc")),
+            Ok(Bytes::from_static(b"def")),
+        ]);
+        let stored = store_request_body(Body::from_stream(chunks), 8, 4)
+            .await
+            .unwrap();
+        assert_eq!(stored.size, 6);
+        assert!(stored.memory.is_empty());
+        let mut file = stored.file.unwrap();
+        let mut result = Vec::new();
+        file.read_to_end(&mut result).unwrap();
+        assert_eq!(result, b"abcdef");
+    }
+
+    #[tokio::test]
+    async fn request_bodies_distinguish_oversize_from_incomplete_input() {
+        assert!(matches!(
+            store_request_body(Body::from("abcdef"), 5, 2).await,
+            Err((413, _))
+        ));
+        let chunks = stream::iter([
+            Ok(Bytes::from_static(b"abc")),
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, "peer left")),
+        ]);
+        assert!(matches!(
+            store_request_body(Body::from_stream(chunks), 8, 2).await,
+            Err((400, _))
+        ));
+    }
+
     #[test]
     fn matches_typed_and_path_parameters() {
         let (segments, _) =
@@ -1953,6 +2160,7 @@ mod tests {
             fallback: Arc::new(RwLock::new(None)),
             template_env: Arc::new(RwLock::new(Environment::new())),
             max_body_size: DEFAULT_MAX_BODY_SIZE,
+            body_memory_limit: DEFAULT_BODY_MEMORY_LIMIT,
             server_header: Arc::new(String::new()),
             websocket_slots: Arc::new(Semaphore::new(1)),
         };

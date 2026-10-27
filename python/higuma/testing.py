@@ -9,6 +9,7 @@ from types import TracebackType
 from typing import Any
 from urllib.parse import urlencode, urljoin, urlsplit
 
+from .execution import resolve_awaitable
 from .request import Request
 from .response import (
     FileResponse,
@@ -178,7 +179,20 @@ class TestClient:
             value = route.callback(raw)
         else:
             value = self.app._fallback_callback(raw)
-        response = self._materialize(value)
+        try:
+            response = self._materialize(value)
+        except BaseException:
+            try:
+                if isinstance(value, StreamingResponse):
+                    iterator = value._iterator
+                    close = getattr(iterator, "aclose", None) or getattr(iterator, "close", None)
+                    if close is not None:
+                        value._context.run(lambda: resolve_awaitable(close()))
+            finally:
+                if isinstance(value, Response) and value.background is not None:
+                    background, value.background = value.background, None
+                    background()
+            raise
 
         if method == "HEAD":
             response.headers.setdefault("content-length", str(len(response.body)))

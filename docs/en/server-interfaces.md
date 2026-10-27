@@ -178,7 +178,13 @@ See [Flask compatibility](flask-compat.md).
 
 ## Remaining boundaries
 
-- Request bodies remain buffered; no incremental upload/body-stream API is added.
+Since 0.9, ordinary native/WSGI async HTTP work reuses a process-local auxiliary
+loop and closes request await contexts after response work. It is not necessarily
+the ASGI server, native lifespan, or native WS-connection loop. Reentrant native
+async middleware using synchronous `call_next` may use a legacy thread bridge.
+Prefer ASGI lifespan for shared loop-bound resources.
+
+- Ingress completes before dispatch; 0.9+ [spooling/stored-body iterators](uploads.md) are not live network-body iteration.
 - Responses send chunk-by-chunk, awaiting ASGI `send()`. External file responses
   read chunks in Python, not the Rust HTTP transport; identical performance,
   gzip behavior, or zero-copy is not promised.

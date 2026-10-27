@@ -13,21 +13,27 @@ permissions:
 
 jobs:
   audit:
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.14"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python-version }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Install audit tools and all supported Python extras
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,docs,compat,security,asgi]"
-          cargo install cargo-audit --locked --version 0.22.2
+          python -m pip install -e ".[dev,docs,compat,security,asgi,integrations,benchmark]"
+      - name: Install Rust audit tool
+        if: matrix.python-version == '3.14'
+        run: cargo install cargo-audit --locked --version 0.22.2
       - name: Audit Python environment
         run: |
           python -m pip list --format freeze --exclude higuma > audit-requirements.txt
           python -m pip_audit -r audit-requirements.txt --no-deps --disable-pip --strict --progress-spinner off
       - name: Audit locked Rust dependencies
+        if: matrix.python-version == '3.14'
         run: cargo audit --deny unsound --json

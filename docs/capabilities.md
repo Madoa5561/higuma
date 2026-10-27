@@ -6,6 +6,9 @@ HigumaはRust HTTP coreとPython APIを組み合わせた小さなframeworkで�
 
 | 分野 | 提供方法 | 対応範囲／次に読むページ |
 | --- | --- | --- |
+| 親子Blueprint / 独自CLI / async test | 内蔵（0.9） | 部品resource・継承hooks・ASGI client。[開発体験](developer-experience.md) |
+| 大容量入力 / multipart | 内蔵（0.9） | 上限付きspool・保存済みbodyの逐次読取。[入力の境界](uploads.md) |
+| SQLAlchemy / Redis | 任意連携（0.9） | 明示transaction・app別resource・lifespan。[外部連携](integrations.md) |
 | Routing / Blueprint / class view | 内蔵 | typed path、HTTP method、hooks、MethodView。[機能ガイド](features.md) |
 | Input validation / DI / OpenAPI | 内蔵 | Annotated、dataclass、TypedDict、yield cleanup、output filtering。[API](api.md) |
 | SSR | 内蔵 | MiniJinjaでHTML生成。Jinja2全機能やPython callable globalの完全互換ではない |
@@ -25,7 +28,7 @@ HigumaはRust HTTP coreとPython APIを組み合わせた小さなframeworkで�
 | 外部サーバーでHigumaを実行 | 内蔵（0.8） | `asgi_app`: HTTP/WS/lifespan、`wsgi_app`: HTTP。[対応境界](server-interfaces.md)。asyncでも同期互換workerを使用 |
 | 他WSGI / ASGI appをmount | HTTP連携 | buffered mount。mounted WS、ASGI lifespan転送、無期限streamは非対応 |
 | GraphQL / RPC | 外部library連携 | HTTP互換範囲のWSGI/ASGI appをmount。subscription転送は保証しない |
-| App cache / Redis / durable jobs | 外部で構成 | lifespanとDIでclientを管理。HTTP cacheとは別の責任 |
+| App cache / durable jobs | 外部で構成 | Redis clientの任意adapterはあるが、分散cache設計・永続job配送は外部 |
 | i18n / email / object storage / payments | 外部で構成 | Python libraryやserviceをview/DIから利用。機密値はserver側だけ |
 | PWA / offline / service worker | frontend側 | public file配信可。worker生成・更新・offline戦略は別途必要 |
 | Logs / metrics / tracing | logging＋middleware連携 | request hook、Server-Timing等。監視backend・exporterは外部 |

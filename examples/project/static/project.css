@@ -1,0 +1,6 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #203a32; background: #f4f2e9; }
+body { margin: 0; padding: 3rem 1rem; } main { max-width: 42rem; margin: auto; }
+h1 { font-size: clamp(2rem, 8vw, 4rem); margin: 1rem 0; } label { display: block; margin: 1rem 0; }
+input, button { font: inherit; padding: .7rem; border: 1px solid #778a7e; border-radius: .3rem; }
+input { display: block; box-sizing: border-box; width: 100%; max-width: 24rem; margin-top: .3rem; }
+button { background: #203a32; color: white; cursor: pointer; } li { padding: .5rem 0; }

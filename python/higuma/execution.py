@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import inspect
+import os
 from concurrent.futures import CancelledError, Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextvars import ContextVar, copy_context
-from threading import Lock, Thread, get_ident
+from threading import Event, Lock, Thread, get_ident
 from typing import Any
 
 
@@ -70,7 +73,7 @@ class _AwaitChannel:
 
 
 class AwaitBridge:
-    """Resolve worker-thread awaitables on the owning ASGI event loop."""
+    """Resolve worker-thread awaitables on their owning event loop."""
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
@@ -137,10 +140,112 @@ class AwaitBridge:
 
 
 await_bridge: ContextVar[AwaitBridge | None] = ContextVar("higuma_await_bridge", default=None)
+_native_bypass: ContextVar[bool] = ContextVar("higuma_native_bypass", default=False)
+
+
+class _NativeRuntime:
+    def __init__(self) -> None:
+        self.loop = None
+        self.error = None
+        ready = Event()
+
+        def run():
+            try:
+                self.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self.loop)
+            except BaseException as error:  # noqa: BLE001 - relay loop initialization failure
+                self.error = error
+                ready.set()
+                return
+            ready.set()
+            try:
+                self.loop.run_forever()
+            finally:
+                self.loop.close()
+
+        self.thread = Thread(target=run, name="higuma-native-async", daemon=True)
+        self.thread.start()
+        if not ready.wait(5):
+            raise RuntimeError("native async runtime did not start")
+        if self.error is not None:
+            raise RuntimeError("native async runtime initialization failed") from self.error
+
+    def stop(self):
+        if self.loop is None or self.loop.is_closed():
+            return
+
+        async def cancel_tasks():
+            current = asyncio.current_task()
+            pending = [task for task in asyncio.all_tasks() if task is not current]
+            for task in pending:
+                task.cancel()
+            if pending:
+                done, _ = await asyncio.wait(pending, timeout=1)
+                await asyncio.gather(*done, return_exceptions=True)
+
+        try:
+            asyncio.run_coroutine_threadsafe(cancel_tasks(), self.loop).result(timeout=2)
+        except (FutureTimeoutError, CancelledError, RuntimeError):
+            pass
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join(timeout=2)
+
+
+_native_runtime = None
+_native_runtime_lock = Lock()
+
+
+def _reset_native_runtime():
+    global _native_runtime, _native_runtime_lock
+    _native_runtime, _native_runtime_lock = None, Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_native_runtime)
+
+
+def _stop_native_runtime():
+    if _native_runtime is not None:
+        _native_runtime.stop()
+
+
+atexit.register(_stop_native_runtime)
+
+
+def _current_bridge() -> AwaitBridge | None:
+    global _native_runtime
+    bridge = await_bridge.get()
+    if bridge is not None or _native_bypass.get():
+        return bridge
+    from .request import _request_context
+
+    current = _request_context.get()
+    if current is None or not current.state.get("_higuma_native_async"):
+        return None
+    bridge = current.state.get("_higuma_native_bridge")
+    if bridge is None:
+        with _native_runtime_lock:
+            if _native_runtime is None:
+                _native_runtime = _NativeRuntime()
+            bridge = current.state.setdefault(
+                "_higuma_native_bridge", AwaitBridge(_native_runtime.loop)
+            )
+    try:
+        if asyncio.get_running_loop() is bridge.loop:
+            return None  # Preserve the legacy nested synchronous middleware bridge.
+    except RuntimeError:
+        pass
+    return bridge
+
+
+def close_native_bridge(request: Any) -> None:
+    bridge = request.state.pop("_higuma_native_bridge", None)
+    if bridge is not None:
+        asyncio.run_coroutine_threadsafe(bridge.close(), bridge.loop).result()
 
 
 def bind_await_resolver(fallback: Any) -> Any:
-    bridge = await_bridge.get()
+    bridge = _current_bridge()
     return bridge.bind() if bridge is not None else fallback
 
 
@@ -151,7 +256,7 @@ async def _await(value: Any) -> Any:
 def resolve_awaitable(value: Any) -> Any:
     if not inspect.isawaitable(value):
         return value
-    bridge = await_bridge.get()
+    bridge = _current_bridge()
     if bridge is not None:
         return bridge.resolve(value)
     try:
@@ -161,6 +266,7 @@ def resolve_awaitable(value: Any) -> Any:
     results: list[Any] = []
     errors: list[BaseException] = []
     context = copy_context()
+    context.run(_native_bypass.set, True)
 
     def runner() -> None:
         try:

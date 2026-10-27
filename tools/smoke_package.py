@@ -194,6 +194,31 @@ def _exercise_gateways() -> None:
     asyncio.run(exercise())
 
 
+def _exercise_developer_apis() -> None:
+    from higuma import Blueprint, Higuma
+
+    app = Higuma(__name__, static_folder=None, request_memory_limit=4)
+    parent = Blueprint("parent", __name__, url_prefix="/parent")
+    child = Blueprint("child", __name__, url_prefix="/child")
+    child.get("/")(lambda: {"nested": True})
+    parent.register_blueprint(child)
+    app.register_blueprint(parent)
+    assert app.test_client().get("/parent/child").get_json() == {"nested": True}
+
+    @app.cli.command()
+    def greet(name: str):
+        return "hello " + name
+
+    result = app.test_cli_runner().invoke(["greet", "bear"])
+    assert result.exit_code == 0 and result.output.strip() == "hello bear"
+
+    async def exercise():
+        async with app.test_async_client() as client:
+            assert (await client.get("/parent/child")).get_json() == {"nested": True}
+
+    asyncio.run(exercise())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test an installed higuma package")
     parser.add_argument("--wheel-dir", type=Path, help="install the single wheel from this folder")
@@ -222,6 +247,7 @@ def main() -> int:
 
     _exercise_flask_helpers()
     _exercise_gateways()
+    _exercise_developer_apis()
 
     port = _free_port()
     application = """

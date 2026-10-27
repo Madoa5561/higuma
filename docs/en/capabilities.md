@@ -6,6 +6,9 @@ and **external infrastructure**. Features added in 0.6.0 are marked in the table
 
 | Area | Delivery | Scope / documentation |
 | --- | --- | --- |
+| Nested Blueprints / CLI / async tests | Native (0.9) | Component resources, inherited hooks and ASGI client. [Development](developer-experience.md) |
+| Large input / multipart | Native (0.9) | Bounded spooling and stored-body iterators. [Uploads](uploads.md) |
+| SQLAlchemy / Redis | Optional integration (0.9) | Explicit transactions and app/lifespan resources. [Integrations](integrations.md) |
 | Routing / Blueprint / class views | Native | Typed paths, HTTP methods, hooks, MethodView. [Features](features.md) |
 | Validation / DI / OpenAPI | Native | Annotated, dataclasses, TypedDicts, yield cleanup, output filtering. [API](api.md) |
 | SSR | Native | MiniJinja HTML; not complete Jinja2/Python callable compatibility |
@@ -25,7 +28,7 @@ and **external infrastructure**. Features added in 0.6.0 are marked in the table
 | Deploy Higuma on external servers | Native (0.8) | `asgi_app`: HTTP/WS/lifespan; `wsgi_app`: HTTP. [Boundaries](server-interfaces.md); async handlers still use coordination workers |
 | Mount other WSGI / ASGI apps | HTTP integration | Buffered HTTP only, not mounted WS, forwarded lifespan, or indefinite streams |
 | GraphQL / RPC | External library integration | Mount compatible HTTP apps; subscription forwarding is not guaranteed |
-| Application caches / Redis / durable jobs | External | Manage clients through lifespan/DI; distinct from HTTP caching |
+| Application caches / durable jobs | External | Optional Redis client adapter exists; distributed caching/durable delivery remain external |
 | i18n / mail / object storage / payments | External | Call libraries/services from views/DI; keep secrets server-side |
 | PWA / offline / service workers | Frontend | Serve public files; generation and update/offline strategies are separate |
 | Logs / metrics / tracing | Logging + middleware | Hooks/Server-Timing; monitoring backends and exporters are external |

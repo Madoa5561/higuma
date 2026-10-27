@@ -34,11 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
-> **0.8.0** — ASGI／WSGIの公開入口を追加しました。組み込みRust serverも引き続き選べます。
-> ASGIのHTTP・lifespan・WebSocket、WSGIのHTTPに対応します。
-> [対応範囲と制約](https://higuma.moyashi.xyz/server-interfaces/) /
-> [テストガイド](https://higuma.moyashi.xyz/testing/)
-> [変更履歴](CHANGELOG.md) / [機能対応表](docs/capabilities.md)
+> **0.9.0** — 親子Blueprint、独自CLI、非同期テストクライアント、任意のSQLAlchemy／Redis連携、
+> 大容量入力のディスク退避を追加。Flask風のまま分割アプリを育てる開発体験を整えました。
+> [開発ガイド](docs/developer-experience.md) / [連携と実用サンプル](docs/integrations.md) /
+> [アップロードの境界](docs/uploads.md) / [実測と制約](docs/performance.md) /
+> [変更履歴](CHANGELOG.md)
 
 [はじめる](#quick-start) · [型付きAPI](#型付きapi) · [機能](#主な機能) ·
 [フロントエンド](#csrspaとフロントエンド) · [対応範囲](#対応範囲) ·

@@ -170,15 +170,19 @@ results are not cached.
 
 ## Compatibility boundaries
 
-- No complete compatibility with Flask signals, Werkzeug routing, nested
-  Blueprints, or Flask CLI extensions. Extension `init_app(higuma_app)` is not guaranteed.
+0.9 adds nested Blueprints, component resources and app commands; see
+[development guide](developer-experience.md) for inheritance and compatibility boundaries.
+
+- No complete compatibility with Flask signals, Werkzeug routing,
+  or Flask CLI extensions. Extension `init_app(higuma_app)` is not guaranteed.
 - `request_context` accepts a Higuma `Request`, not a WSGI environ. Context helpers
   are `with` managers, not Flask push/pop wrappers. See [Testing](testing.md).
 - `request.query_string` is a str. The existing `request.base_url` and new `host_url`
   are origin roots, unlike Flask's path-inclusive `base_url`. `full_path` includes
   path and query, with a trailing `?` for an empty query. `request.path` retains
   percent encoding while route arguments are decoded. Trailing slash routing differs.
-- Request bodies are buffered. `get_json(cache=...)`, Flask body stream APIs,
+- Ingress completes before dispatch; 0.9 adds [spooling/chunk reading](uploads.md).
+  `get_json(cache=...)`, complete Flask/Werkzeug body APIs,
   and complete Werkzeug request/response manipulation are not provided.
 - Templates use MiniJinja, not all Jinja2 filters or Python callable globals.
   Build URLs and flash messages in the view and pass them as template values.

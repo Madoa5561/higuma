@@ -1,5 +1,10 @@
 # Examples
 
+0.9+の分割アプリは[`examples/project`](https://github.com/Madoa5561/higuma/tree/main/examples/project)です。
+factory・親子Blueprint・SQLAlchemy・login/CSRF/role・管理画面・独自CLIを組み合わせます。
+[セットアップと注意](integrations.md#project-example)を参照してください。
+大容量入力は`examples/server_modes.py`の`POST /upload`、比較測定は[性能ガイド](performance.md)へ。
+
 `examples/`は、ひとつの概念を小さく実行できるようテーマ別に分かれています。
 
 | File | 内容 | 実行時の注意 |

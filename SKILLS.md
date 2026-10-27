@@ -40,6 +40,11 @@ python app.py
 
 | Goal | Use |
 | --- | --- |
+| Nested components / scoped static and templates | `Blueprint(..., template_folder=..., static_folder=...)`, `parent.register_blueprint(child)` (0.9+) |
+| Application commands | `@app.cli.command()`, `@blueprint.cli.command()`, `app.test_cli_runner()` (0.9+) |
+| Async HTTP/WS/lifespan tests | `async with app.test_async_client()` (0.9+) |
+| Bounded large-body reading | `request.stream`, `iter_body` / `aiter_body`; ingress spools before dispatch (0.9+) |
+| SQLAlchemy / Redis integration | Optional `integrations` extra and explicit transactions/lifespan (0.9+) |
 | HTTP route | `@app.get`, `post`, `put`, `patch`, `delete` |
 | Export to ASGI server | `asgi_app = app.asgi_app` (0.8+, asyncio HTTP/WS/lifespan) |
 | Export to WSGI server | `wsgi_app = app.wsgi_app` (0.8+, HTTP only) |
@@ -122,11 +127,27 @@ automatic lifespan or WebSocket support. Standard middleware wraps the exported
 entry point; Higuma's synchronous `call_next` is not an async middleware chain API.
 Async WS handlers use `asend_*`, `areceive*`, `aclose`, also supported natively.
 Root prefixes come from trusted server scope/environ, not arbitrary forwarded headers.
-HTTP input remains buffered. Mounted third-party apps remain buffered HTTP-only.
+HTTP ingress completes before dispatch; 0.9 adds bounded disk spooling and stored-body
+iterators, not live network-body iteration. Mounted apps remain buffered HTTP-only.
 External transport owns TLS/compression/workers and does not inherit Rust server
 performance guarantees. See docs/server-interfaces.md and its English mirror.
 
-## Frontend integration boundaries
+## Development and ecosystem boundaries (0.9+)
+
+See docs/developer-experience.md, integrations.md, uploads.md and English mirrors.
+Before hooks inherit parent-to-child; after/teardown inherit child-to-parent.
+Templates search app first, then registered components: namespace filenames.
+CLI uses argparse scalar arguments, not Click compatibility. Commands have app
+context but not automatic lifespan. ASGI test clients require asyncio context for
+lifespan/state; keep real-server tests too. SQLAlchemy dependency sessions close
+without implicit commit: finish explicit transactions before returning success.
+Async Redis requires ASGI; native/WSGI use synchronous clients. Shutdown hooks
+also run after partial startup failure and must tolerate uninitialized resources.
+Keep request bodies/files request-scoped and apply disk quota plus transport timeouts.
+Do not claim general speed advantages: reproduce bench/suite.py and publish raw
+results, configuration, error counts, latency and client/host limitations.
+
+## Frontend application boundaries
 
 Keep frontend base URLs/router basenames aligned with the mount prefix. SPA
 fallback is only for missing extensionless GET/HEAD paths accepting HTML; reserve

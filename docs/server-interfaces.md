@@ -168,7 +168,13 @@ ASGI loopから直接呼び出すasync middleware chainには使いません。�
 
 ## 保持する制約
 
-- request bodyはbuffer済みで、uploadの逐次読取APIは追加していません。
+0.9+の通常のnative/WSGI async HTTP処理は、process内の補助loopを再利用します。
+短命loopの繰り返し生成を避け、request単位のawait contextを応答終了で閉じます。
+ASGIのserver loopやnative lifespan／WS connectionのloopと同一とは限りません。
+同期`call_next`へ戻るnative async middlewareは互換用thread bridgeを使う場合があります。
+loop-bound resourceを共有するアプリはASGI lifespanを使ってください。
+
+- 入力は受信後dispatchします。0.9+の[spool・保存済みbodyの逐次読取](uploads.md)はlive network iteratorではありません。
 - responseはchunkごとに送信します。ASGIでは`send()`を待ち、fileはPython側でchunk読取します。
   Rust HTTP server経由と同じ性能・gzip・zero-copyを保証しません。
 - `mount_wsgi` / `mount_asgi`は従来どおりbuffered HTTP連携です。外部ASGI起動しても、

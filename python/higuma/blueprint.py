@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .parameters import cache_parameter_hints
@@ -31,12 +32,30 @@ class Blueprint:
         import_name: str,
         *,
         url_prefix: str = "",
+        template_folder: str | None = None,
+        static_folder: str | None = None,
+        static_url_path: str = "/static",
+        root_path: str | Path | None = None,
     ) -> None:
         if not name or "." in name:
             raise ValueError("blueprint names must be nonempty and cannot contain a dot")
         self.name = name
         self.import_name = import_name
         self.url_prefix = url_prefix.rstrip("/")
+        from .app import _find_root_path
+
+        self.root_path = Path(root_path).resolve() if root_path else _find_root_path(import_name)
+        self.template_folder = (
+            str((self.root_path / template_folder).resolve()) if template_folder else None
+        )
+        self.static_folder = (
+            str((self.root_path / static_folder).resolve()) if static_folder else None
+        )
+        self.static_url_path = static_url_path
+        self._children: list[tuple[Blueprint, dict[str, Any]]] = []
+        from .commands import CommandGroup
+
+        self.cli = CommandGroup()
         self._routes: list[_DeferredRoute] = []
         self._websockets: list[_DeferredWebSocket] = []
         self._before_request: list[Callable[..., Any]] = []
@@ -44,6 +63,17 @@ class Blueprint:
         self._teardown_request: list[Callable[..., Any]] = []
         self._context_processors: list[Callable[[], Mapping[str, Any]]] = []
         self._error_handlers: dict[int | type[BaseException], Callable[..., Any]] = {}
+
+    def register_blueprint(
+        self, blueprint: Blueprint, *, url_prefix: str | None = None, name: str | None = None
+    ) -> None:
+        if blueprint is self:
+            raise ValueError("a blueprint cannot contain itself")
+        if name is not None and (not name or "." in name):
+            raise ValueError(
+                "blueprint registration names must be nonempty and cannot contain a dot"
+            )
+        self._children.append((blueprint, {"url_prefix": url_prefix, "name": name}))
 
     def before_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
         self._before_request.append(func)

@@ -1,5 +1,8 @@
 # API reference
 
+For 0.9+, see [nested Blueprints, commands and ASGI tests](developer-experience.md),
+[SQLAlchemyExtension / RedisExtension](integrations.md), and [spooled input APIs](uploads.md).
+
 ## Frontend APIs (0.6.0+)
 
 ```python
@@ -43,6 +46,7 @@ Higuma(
     static_folder="static",
     static_url_path="/static",
     max_content_length=8 * 1024 * 1024,
+    request_memory_limit=1024 * 1024,
     debug=False,
     openapi_url="/openapi.json",
     docs_url="/docs",
@@ -56,7 +60,9 @@ Main methods:
 - `get`, `post`, `put`, `patch`, and `delete` shortcuts
 - `add_url_rule(rule, *, endpoint, view_func, methods=None, ...)`
 - `websocket(rule, *, endpoint=None, allowed_origins=None)`
-- `register_blueprint(blueprint, *, url_prefix=None, name_prefix="")`
+- `register_blueprint(blueprint, *, url_prefix=None, name_prefix="", name=None)`
+- `cli.command(name=None, *, help=None)`, `test_cli_runner()`
+- `test_async_client(base_url="http://localhost", root_path="", timeout=5)` / `ASGITestClient`
 - `url_for(endpoint, **values)`
 - `before_request`, `after_request`, `middleware`, and `errorhandler`
 - `teardown_request(func)`, `teardown_appcontext(func)`, `register_error_handler(code_or_exception, func)`
@@ -159,6 +165,7 @@ and `input` only when safe. Password, token, secret, and Cookie values are redac
 - `method`, `path`, `query_string`, `scheme`, `host`, `base_url`, and `url`
 - `host_url`, `full_path`, `mimetype`, and `is_json` (0.7+)
 - `root_path`: decoded mount prefix; `scope`: input ASGI scope, otherwise `None` (0.8+)
+- `stream`, `iter_body(chunk_size=65536)`, `aiter_body(chunk_size=65536)`, `body_size`, `body_spooled` (0.9+)
 - `args` / `query`: a duplicate-preserving `MultiDict`
 - `values`: query only for GET, otherwise query-first combined query/form (0.7+)
 - `headers`: case-insensitive `Headers`

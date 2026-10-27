@@ -44,6 +44,10 @@ nav:
       - CSR・フロントエンド: frontend.md
       - 機能対応表: capabilities.md
       - Flask互換性: flask-compat.md
+      - アプリ構成と開発体験: developer-experience.md
+      - 外部ライブラリ連携: integrations.md
+      - 大容量アップロード: uploads.md
+      - 性能測定: performance.md
       - ASGI・WSGI・サーバー: server-interfaces.md
       - テストとcontext: testing.md
       - 認証とセキュリティ: security-auth.md
@@ -58,6 +62,10 @@ nav:
       - CSR and frontend: en/frontend.md
       - Capability matrix: en/capabilities.md
       - Flask compatibility: en/flask-compat.md
+      - Application development: en/developer-experience.md
+      - Ecosystem integrations: en/integrations.md
+      - Large uploads: en/uploads.md
+      - Performance: en/performance.md
       - ASGI, WSGI, and servers: en/server-interfaces.md
       - Testing and contexts: en/testing.md
       - Auth and security: en/security-auth.md

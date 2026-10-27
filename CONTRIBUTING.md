@@ -14,7 +14,7 @@ Requirements:
 python -m venv .venv
 .venv/Scripts/activate
 python -m pip install -U pip
-python -m pip install -e ".[dev,docs,compat,security,asgi]"
+python -m pip install -e ".[dev,docs,compat,security,asgi,integrations,benchmark]"
 ```
 
 On macOS or Linux, activate the environment with:
@@ -31,8 +31,8 @@ Run all checks before opening a pull request:
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-features
-python -m ruff format --check python tests examples tools
-python -m ruff check python tests examples tools
+python -m ruff format --check python tests examples tools bench
+python -m ruff check python tests examples tools bench
 python -m pytest
 python tools/verify_release.py
 mkdocs build --strict

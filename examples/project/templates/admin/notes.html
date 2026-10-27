@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ project_name }}</title><link rel="stylesheet" href="{{ style_url }}"></head>
+<body><main><p>ADMIN / NOTES</p><h1>{{ project_name }}</h1><p>認証・権限・CSRF・明示的トランザクションを組み合わせた例です。</p>
+<ul>{% for note in notes %}<li>{{ note.title }}</li>{% else %}<li>ノートはまだありません。</li>{% endfor %}</ul>
+<form id="note" data-api-url="{{ notes_api_url }}" data-token-url="{{ token_url }}"><label>ノートのタイトル<input name="title" maxlength="200" required></label><button>追加する</button></form><p id="status" role="status"></p>
+<p>JSON APIも同じBlueprintの認証・権限・CSRF境界を使います。</p></main><script src="{{ script_url }}" defer></script></body></html>

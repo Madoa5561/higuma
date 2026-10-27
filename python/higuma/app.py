@@ -25,7 +25,7 @@ from .blueprint import Blueprint
 from .config import Config
 from .context import _app_context_error, _AppGlobals, _g_context
 from .exceptions import Forbidden, HTTPException, MethodNotAllowed, NotFound
-from .execution import resolve_awaitable
+from .execution import close_native_bridge, resolve_awaitable
 from .mounts import asgi_view, wsgi_view
 from .openapi import generate_openapi, swagger_ui_html
 from .parameters import (
@@ -41,6 +41,7 @@ from .response import (
     JSONResponse,
     Response,
     ResponseValue,
+    StreamingResponse,
     TemplateResponse,
     make_response,
 )
@@ -48,7 +49,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -76,13 +77,14 @@ class Higuma:
         static_folder: str | None = "static",
         static_url_path: str = "/static",
         max_content_length: int = 8 * 1024 * 1024,
+        request_memory_limit: int = 1024 * 1024,
         debug: bool = False,
         openapi_url: str | None = "/openapi.json",
         docs_url: str | None = "/docs",
         lifespan: Callable[[Higuma], Any] | None = None,
     ) -> None:
-        if max_content_length <= 0:
-            raise ValueError("max_content_length must be positive")
+        if max_content_length <= 0 or request_memory_limit <= 0:
+            raise ValueError("request body limits must be positive")
         self.import_name = import_name
         self.root_path = _find_root_path(import_name)
         self.template_folder = _resolve_folder(self.root_path, template_folder)
@@ -94,11 +96,18 @@ class Higuma:
         self.logger = logging.getLogger(import_name)
         self.state: dict[str, Any] = {}
         self.extensions: dict[str, Any] = {}
+        from .commands import CommandGroup
+
+        self.cli = CommandGroup()
         self._lifespan_handler = lifespan
         self.config = Config(
             DEBUG=debug,
             TESTING=False,
             MAX_CONTENT_LENGTH=max_content_length,
+            REQUEST_BODY_MEMORY_LIMIT=request_memory_limit,
+            MAX_FORM_MEMORY_SIZE=1024 * 1024,
+            MAX_FORM_PARTS=1000,
+            UPLOAD_MEMORY_LIMIT=1024 * 1024,
             STATIC_CACHE_MAX_AGE=3600,
             SERVER_HEADER=f"higuma/{__version__}",
             OPENAPI_TITLE=import_name,
@@ -111,6 +120,7 @@ class Higuma:
         self._websocket_rules: dict[str, Rule] = {}
         self._file_endpoints: set[str] = set()
         self._blueprints: dict[str, Blueprint] = {}
+        self._template_paths = [self.template_folder]
         self._before_request: list[Callable[..., ResponseValue | None]] = []
         self._after_request: list[Callable[..., ResponseValue]] = []
         self._middlewares: list[Middleware] = []
@@ -126,6 +136,7 @@ class Higuma:
             self.template_folder,
             max_content_length,
             self.config["SERVER_HEADER"],
+            request_memory_limit,
         )
         self._core.set_fallback(self._fallback_callback)
 
@@ -349,30 +360,109 @@ class Higuma:
         *,
         url_prefix: str | None = None,
         name_prefix: str = "",
+        name: str | None = None,
     ) -> None:
-        registered_name = f"{name_prefix}{blueprint.name}"
-        if registered_name in self._blueprints:
-            raise ValueError(f"blueprint {registered_name!r} is already registered")
-        prefix = (url_prefix if url_prefix is not None else blueprint.url_prefix).rstrip("/")
-        for deferred in blueprint._routes:
-            full_rule = f"{prefix}{deferred.rule}"
-            endpoint = f"{name_prefix}{blueprint.name}.{deferred.endpoint}"
-            self.add_url_rule(
-                full_rule,
-                endpoint=endpoint,
-                view_func=deferred.view_func,
-                methods=deferred.methods,
-                **deferred.options,
+        from .staticfiles import StaticFiles
+
+        if name is not None and (not name or "." in name):
+            raise ValueError(
+                "blueprint registration names must be nonempty and cannot contain a dot"
             )
-        for deferred in blueprint._websockets:
-            full_rule = f"{prefix}{deferred.rule}"
-            endpoint = f"{name_prefix}{blueprint.name}.{deferred.endpoint}"
-            self.websocket(
-                full_rule,
-                endpoint=endpoint,
-                **deferred.options,
-            )(deferred.view_func)
-        self._blueprints[registered_name] = blueprint
+        planned: list[tuple[str, Blueprint, str]] = []
+
+        def collect(item: Blueprint, registered: str, prefix: str, ancestors: set[int]) -> None:
+            if id(item) in ancestors:
+                raise ValueError("blueprint registration contains a cycle")
+            if registered in self._blueprints or any(key == registered for key, _, _ in planned):
+                raise ValueError(f"blueprint {registered!r} is already registered")
+            planned.append((registered, item, prefix.rstrip("/")))
+            for child, options in item._children:
+                child_prefix = options["url_prefix"]
+                child_prefix = child.url_prefix if child_prefix is None else child_prefix
+                collect(
+                    child,
+                    registered + "." + (options["name"] or child.name),
+                    prefix.rstrip("/") + child_prefix,
+                    ancestors | {id(item)},
+                )
+
+        collect(
+            blueprint,
+            name_prefix + (name or blueprint.name),
+            url_prefix if url_prefix is not None else blueprint.url_prefix,
+            set(),
+        )
+        registrations = []
+        endpoints = set(self._endpoint_rules) | set(self._websocket_rules)
+        http_paths = {(route.rule, method) for route in self._routes for method in route.methods}
+        ws_paths = {route.rule for route in self._websocket_rules.values()}
+        for registered, item, prefix in planned:
+            routes = [
+                (route.rule, route.endpoint, route.view_func, route.methods, route.options, False)
+                for route in item._routes
+            ]
+            if item.static_folder:
+                files = StaticFiles(item.static_folder)
+
+                def static_view(files):
+                    def serve_static(filename: str):
+                        return files(_request_context.get(), filename)
+
+                    return serve_static
+
+                routes.append(
+                    (
+                        item.static_url_path.rstrip("/") + "/<path:filename>",
+                        "static",
+                        static_view(files),
+                        ("GET",),
+                        {"include_in_schema": False},
+                        False,
+                    )
+                )
+            routes.extend(
+                (route.rule, route.endpoint, route.view_func, ("WEBSOCKET",), route.options, True)
+                for route in item._websockets
+            )
+            for rule, endpoint, view, methods, options, websocket in routes:
+                endpoint = registered + "." + endpoint
+                candidate = Rule(prefix + rule, methods, endpoint, view)
+                if endpoint in endpoints:
+                    raise ValueError(f"endpoint {endpoint!r} is already registered")
+                endpoints.add(endpoint)
+                for method in methods:
+                    key = (candidate.rule, method)
+                    if (websocket and candidate.rule in ws_paths) or (
+                        not websocket and key in http_paths
+                    ):
+                        raise ValueError(f"duplicate route registration: {method} {candidate.rule}")
+                    if websocket:
+                        ws_paths.add(candidate.rule)
+                    else:
+                        http_paths.add(key)
+                registrations.append((candidate.rule, endpoint, view, methods, options, websocket))
+        for rule, endpoint, view, methods, options, websocket in registrations:
+            if websocket:
+                self.websocket(rule, endpoint=endpoint, **options)(view)
+            else:
+                self.add_url_rule(
+                    rule, endpoint=endpoint, view_func=view, methods=methods, **options
+                )
+        for registered, item, _ in planned:
+            self._blueprints[registered] = item
+            if item.template_folder and item.template_folder not in self._template_paths:
+                self._template_paths.append(item.template_folder)
+        self._core.set_template_paths(self._template_paths)
+
+    def _blueprint_chain(self, name: str | None) -> list[Blueprint]:
+        if not name:
+            return []
+        parts = name.split(".")
+        return [
+            self._blueprints[key]
+            for index in range(1, len(parts) + 1)
+            if (key := ".".join(parts[:index])) in self._blueprints
+        ]
 
     def before_request(self, func: Callable[..., ResponseValue | None]):
         self._before_request.append(func)
@@ -427,8 +517,7 @@ class Higuma:
 
     def _do_teardown_request(self, error: BaseException | None) -> None:
         current = _request_context.get()
-        blueprint = self._blueprints.get(current.blueprint) if current is not None else None
-        if blueprint is not None:
+        for blueprint in reversed(self._blueprint_chain(current.blueprint if current else None)):
             for handler in reversed(blueprint._teardown_request):
                 _resolve_awaitable(handler(error))
         for handler in reversed(self._teardown_request):
@@ -513,17 +602,23 @@ class Higuma:
                 if not isinstance(lifespan_state, Mapping):
                     raise TypeError("lifespan must yield a mapping or None")
                 self.state.update(lifespan_state)
-            for handler in self._startup_handlers:
-                _resolve_awaitable(
-                    handler(self) if inspect.signature(handler).parameters else handler()
-                )
             try:
-                yield self
-            finally:
-                for handler in reversed(self._shutdown_handlers):
+                for handler in self._startup_handlers:
                     _resolve_awaitable(
                         handler(self) if inspect.signature(handler).parameters else handler()
                     )
+                yield self
+            finally:
+                failure = None
+                for handler in reversed(self._shutdown_handlers):
+                    try:
+                        _resolve_awaitable(
+                            handler(self) if inspect.signature(handler).parameters else handler()
+                        )
+                    except BaseException as error:  # noqa: BLE001 - finish every cleanup before re-raising
+                        failure = failure or error
+                if failure is not None:
+                    raise failure
 
     def render_template(
         self,
@@ -546,12 +641,9 @@ class Higuma:
         original = dict(context)
         processors = list(self._context_processors)
         current = _request_context.get()
-        blueprint = (
-            self._blueprints.get(current.blueprint)
-            if current is not None and _app_context.get() is self
-            else None
-        )
-        if blueprint is not None:
+        for blueprint in self._blueprint_chain(
+            current.blueprint if current is not None and _app_context.get() is self else None
+        ):
             processors.extend(blueprint._context_processors)
         for processor in processors:
             context.update(processor())
@@ -621,6 +713,16 @@ class Higuma:
         from .testing import TestClient
 
         return TestClient(self)
+
+    def test_cli_runner(self):
+        from .commands import CliRunner
+
+        return CliRunner(self)
+
+    def test_async_client(self, **kwargs: Any):
+        from .asgi_testing import ASGITestClient
+
+        return ASGITestClient(self, **kwargs)
 
     def openapi(self) -> dict[str, Any]:
         document = generate_openapi(self)
@@ -943,17 +1045,29 @@ class Higuma:
             with self.app_context():
                 return self._dispatch(request, endpoint_call, run_hooks=run_hooks)
         request.state["_higuma_dependency_overrides"] = self.dependency_overrides
+        request.state["_higuma_native_async"] = request.endpoint not in self._websocket_rules
+        request.max_form_memory_size = int(self.config["MAX_FORM_MEMORY_SIZE"])
+        request.max_form_parts = int(self.config["MAX_FORM_PARTS"])
+        request.upload_memory_limit = int(self.config["UPLOAD_MEMORY_LIMIT"])
+        if (
+            min(request.max_form_memory_size, request.max_form_parts, request.upload_memory_limit)
+            < 1
+        ):
+            request.close()
+            raise ValueError("multipart limits must be positive")
         request.state["_higuma_dispatching"] = True
         request_token = _push_request(request)
         app_token: Token[Higuma | None] = _app_context.set(self)
         dispatch_error = None
-        blueprint = self._blueprints.get(request.blueprint)
+        dependency_cleanups = []
+        response = None
+        blueprints = self._blueprint_chain(request.blueprint)
 
         def terminal(current_request: Request) -> Any:
             try:
                 if run_hooks:
                     hooks = list(self._before_request)
-                    if blueprint is not None:
+                    for blueprint in blueprints:
                         hooks.extend(blueprint._before_request)
                     for hook in hooks:
                         result = _call_hook(hook, current_request)
@@ -986,7 +1100,7 @@ class Higuma:
                 try:
                     for hook in request.state.pop("_higuma_after_request", []):
                         response = make_response(_resolve_awaitable(hook(response)))
-                    if blueprint is not None:
+                    for blueprint in reversed(blueprints):
                         for hook in reversed(blueprint._after_request):
                             response = make_response(_call_after_hook(hook, request, response))
                     for hook in reversed(self._after_request):
@@ -1017,6 +1131,9 @@ class Higuma:
             return response
         except BaseException as exc:
             dispatch_error = exc
+            self._run_dependency_cleanups(dependency_cleanups)
+            dependency_cleanups.clear()
+            self._close_request(request)
             raise
         finally:
             try:
@@ -1025,12 +1142,36 @@ class Higuma:
                 self._do_teardown_request(
                     dispatch_error if dispatch_error is not None else handled_error
                 )
+                if response is not None and (
+                    request._body_file is not None
+                    or request._files_cache
+                    or request.state.get("_higuma_native_bridge")
+                    or response.background is not None
+                    or isinstance(response, StreamingResponse)
+                ):
+                    response.background = BackgroundTask(
+                        self._finish_response_work,
+                        response.background,
+                        [lambda: self._close_request(request)],
+                    )
+            except BaseException:
+                self._run_dependency_cleanups(dependency_cleanups)
+                dependency_cleanups.clear()
+                self._close_request(request)
+                raise
             finally:
                 request.state.pop("_higuma_dispatching", None)
                 request.state.pop("_higuma_after_request", None)
                 request.state.pop("_higuma_response_finalizers", None)
                 _app_context.reset(app_token)
                 _pop_request(request_token)
+
+    @staticmethod
+    def _close_request(request: Request) -> None:
+        try:
+            request.close()
+        finally:
+            close_native_bridge(request)
 
     def _finish_response_work(
         self,
@@ -1100,12 +1241,10 @@ class Higuma:
         return self._default_http_error(HTTPException(500, "Internal Server Error"))
 
     def _find_error_handler(self, error: BaseException, request: Request) -> ErrorHandler | None:
-        blueprint = self._blueprints.get(request.blueprint)
-        scopes = (
-            [blueprint._error_handlers, self._error_handlers]
-            if blueprint
-            else [self._error_handlers]
-        )
+        scopes = [
+            item._error_handlers for item in reversed(self._blueprint_chain(request.blueprint))
+        ]
+        scopes.append(self._error_handlers)
         if isinstance(error, HTTPException):
             for handlers in scopes:
                 handler = handlers.get(error.status_code)

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shutil
 import unicodedata
 from collections.abc import Iterator, Mapping
 from contextvars import ContextVar, Token
-from email import policy
-from email.parser import BytesParser
 from http.cookies import SimpleCookie
 from io import BytesIO
 from pathlib import Path
@@ -15,7 +14,7 @@ from types import MappingProxyType
 from typing import Any, Generic, TypeVar
 from urllib.parse import parse_qsl, quote
 
-from .exceptions import BadRequest, UnsupportedMediaType
+from .exceptions import BadRequest, RequestEntityTooLarge, UnsupportedMediaType
 
 T = TypeVar("T")
 _WINDOWS_RESERVED_NAMES = {
@@ -100,18 +99,20 @@ class UploadFile:
     def __init__(
         self,
         filename: str,
-        content: bytes,
+        content: bytes = b"",
         *,
         content_type: str = "application/octet-stream",
         headers: Mapping[str, str] | None = None,
         field_name: str = "",
+        stream: Any = None,
+        size: int | None = None,
     ) -> None:
         self.filename = secure_filename(filename)
         self.content_type = content_type
         self.headers = Headers(headers)
         self.field_name = field_name
-        self.size = len(content)
-        self.stream = BytesIO(content)
+        self.size = len(content) if size is None else size
+        self.stream = BytesIO(content) if stream is None else stream
 
     def read(self, size: int = -1) -> bytes:
         return self.stream.read(size)
@@ -134,7 +135,15 @@ class UploadFile:
         return target
 
     def getvalue(self) -> bytes:
-        return self.stream.getvalue()
+        position = self.stream.tell()
+        try:
+            self.stream.seek(0)
+            return self.stream.read()
+        finally:
+            self.stream.seek(position)
+
+    def close(self) -> None:
+        self.stream.close()
 
 
 def secure_filename(filename: str, *, fallback: str = "upload") -> str:
@@ -206,7 +215,12 @@ class Request:
             }
             parsed_headers["cookie"] = "; ".join(cookie_values)
         self.headers = Headers(parsed_headers)
-        self.body = bytes(raw.get("body", b""))
+        self._body_file = raw.get("body_file")
+        self._body = None if self._body_file is not None else bytes(raw.get("body", b""))
+        self.body_size = int(raw.get("body_size", len(self._body or b"")))
+        self.max_form_memory_size = 1024 * 1024
+        self.max_form_parts = 1000
+        self.upload_memory_limit = 1024 * 1024
         self.path_params = dict(raw.get("path_params", {}))
         self.view_args = self.path_params
         self.endpoint: str | None = None
@@ -223,15 +237,59 @@ class Request:
         self._files_cache: MultiDict | None = None
         self._cookies_cache: Mapping[str, str] | None = None
 
+    @property
+    def body(self) -> bytes:
+        if self._body is None:
+            position = self._body_file.tell()
+            try:
+                self._body_file.seek(0)
+                self._body = self._body_file.read()
+            finally:
+                self._body_file.seek(position)
+        return self._body
+
+    @property
+    def stream(self):
+        if self._body_file is None:
+            self._body_file = BytesIO(self._body or b"")
+        return self._body_file
+
+    @property
+    def body_spooled(self) -> bool:
+        return bool(getattr(self._body_file, "rolled_to_disk", False))
+
+    def iter_body(self, chunk_size: int = 65536):
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be positive")
+        source = self.stream
+        while chunk := source.read(chunk_size):
+            yield chunk
+
+    async def aiter_body(self, chunk_size: int = 65536):
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be positive")
+        source = self.stream
+        while chunk := await asyncio.to_thread(source.read, chunk_size):
+            yield chunk
+
+    def close(self) -> None:
+        if self._files_cache is not None:
+            for _, upload in self._files_cache.items(multi=True):  # noqa: PERF102 - include duplicate file field names
+                upload.close()
+        if self._body_file is not None:
+            self._body_file.close()
+
     def __getitem__(self, key: str) -> Any:
+        if key == "body":
+            return self.body
+        if key == "text":
+            return self.text
         aliases = {
             "method": self.method,
             "path": self.path,
             "query": self.args.to_dict(),
             "query_string": self.query_string,
             "headers": self.headers,
-            "body": self.body,
-            "text": self.text,
             "path_params": self.path_params,
         }
         try:
@@ -246,7 +304,7 @@ class Request:
 
     @property
     def content_length(self) -> int | None:
-        return len(self.body)
+        return self.body_size
 
     @property
     def mimetype(self) -> str:
@@ -334,6 +392,8 @@ class Request:
         if self._form_cache is None:
             content_type = (self.content_type or "").split(";", 1)[0].strip().lower()
             if content_type == "application/x-www-form-urlencoded":
+                if self.body_size > self.max_form_memory_size:
+                    raise RequestEntityTooLarge(detail="form data is too large")
                 self._form_cache = MultiDict(iter(parse_qsl(self.text, keep_blank_values=True)))
             elif content_type == "multipart/form-data":
                 self._parse_multipart()
@@ -365,50 +425,9 @@ class Request:
         return self.text if as_text else self.body
 
     def _parse_multipart(self) -> None:
-        raw_content_type = self.content_type or ""
-        if "boundary=" not in raw_content_type.lower():
-            raise BadRequest(detail="multipart request is missing a boundary")
+        from .multipart import parse_multipart
 
-        message = BytesParser(policy=policy.default).parsebytes(
-            b"Content-Type: "
-            + raw_content_type.encode("latin-1", errors="replace")
-            + b"\r\nMIME-Version: 1.0\r\n\r\n"
-            + self.body
-        )
-        if not message.is_multipart():
-            raise BadRequest(detail="invalid multipart request body")
-
-        fields: list[tuple[str, str]] = []
-        files: list[tuple[str, UploadFile]] = []
-        for part in message.iter_parts():
-            if part.get_content_disposition() != "form-data":
-                continue
-            field_name = part.get_param("name", header="content-disposition")
-            if not field_name:
-                continue
-            payload = part.get_payload(decode=True) or b""
-            filename = part.get_filename()
-            if filename is None:
-                charset = part.get_content_charset() or "utf-8"
-                try:
-                    value = payload.decode(charset, errors="replace")
-                except LookupError as exc:
-                    raise BadRequest(detail=f"unknown multipart charset: {charset}") from exc
-                fields.append((field_name, value))
-                continue
-            files.append(
-                (
-                    field_name,
-                    UploadFile(
-                        filename,
-                        payload,
-                        content_type=part.get_content_type(),
-                        headers={key: value for key, value in part.items()},
-                        field_name=field_name,
-                    ),
-                )
-            )
-
+        fields, files = parse_multipart(self)
         self._form_cache = MultiDict(fields)
         self._files_cache = MultiDict(files)
 

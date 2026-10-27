@@ -14,7 +14,11 @@
 API、HTML、リアルタイム通信を、書き慣れたPythonのdecoratorで。
 higumaという名前は日本のヒグマに由来します。
 
-!!! info "0.8.0の新機能"
+!!! info "0.9.0の新機能"
+    [親子Blueprint・CLI・async test](developer-experience.md)、[SQLAlchemy／Redis連携](integrations.md)、
+    [大容量入力](uploads.md)を追加しました。[性能測定](performance.md)で条件と限界を公開します。
+
+!!! info "0.8.0以降のサーバー選択"
     `app.asgi_app`／`app.wsgi_app`で外部サーバーにも載せられます。
     ASGI HTTP・lifespan・WebSocketと、WSGI HTTPに対応します。
     同期互換worker・stream・proxy・resourceの制約は[サーバーインターフェース](server-interfaces.md)、

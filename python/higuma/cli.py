@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import code
 import importlib
 import os
 from typing import Any
 
 from .app import Higuma, __version__
+from .commands import invoke_command
 
 
 def load_app(reference: str) -> Higuma:
@@ -22,9 +24,10 @@ def load_app(reference: str) -> Higuma:
     return app_object
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(app: Higuma | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="higuma")
     parser.add_argument("--version", action="version", version=f"higuma {__version__}")
+    parser.add_argument("--app", dest="app_reference", help="application module:object or factory")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subcommands.add_parser("run", help="run a Higuma application")
@@ -51,12 +54,45 @@ def build_parser() -> argparse.ArgumentParser:
 
     routes_parser = subcommands.add_parser("routes", help="list application routes")
     routes_parser.add_argument("app", nargs="?", default=os.getenv("HIGUMA_APP", "app:app"))
+    shell_parser = subcommands.add_parser("shell", help="open a shell in the app context")
+    shell_parser.add_argument("app", nargs="?", default=os.getenv("HIGUMA_APP", "app:app"))
+    if app is not None:
+        app.cli.add_to(subcommands)
+        groups = {}
+        for name, blueprint in app._blueprints.items():
+            if not blueprint.cli.commands:
+                continue
+            current = subcommands
+            prefix = ""
+            for part in name.split("."):
+                prefix = (prefix + "." + part).lstrip(".")
+                if prefix not in groups:
+                    group_parser = current.add_parser(part, help=f"{prefix} blueprint commands")
+                    groups[prefix] = group_parser.add_subparsers(
+                        dest="_group_" + prefix, required=True
+                    )
+                current = groups[prefix]
+            blueprint.cli.add_to(current)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    discovery = argparse.ArgumentParser(add_help=False)
+    discovery.add_argument("--app", dest="app_reference")
+    known, rest = discovery.parse_known_args(argv)
+    if known.app_reference:
+        app = load_app(known.app_reference)
+        return execute(app, build_parser(app).parse_args(argv))
+    if rest and rest[0] not in {"run", "routes", "shell", "--help", "-h", "--version"}:
+        app = load_app(os.getenv("HIGUMA_APP", "app:app"))
+        return execute(app, build_parser(app).parse_args(argv))
     args = build_parser().parse_args(argv)
-    app = load_app(args.app)
+    return execute(load_app(args.app), args)
+
+
+def execute(app: Higuma, args: argparse.Namespace) -> int:
+    if hasattr(args, "_higuma_command"):
+        return invoke_command(app, args)
 
     if args.command == "run":
         app.run(
@@ -64,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
             port=args.port,
             workers=args.workers,
             processes=1 if args.internal_worker else args.processes,
-            app_ref=args.app,
+            app_ref=args.app_reference or args.app,
             debug=args.debug,
             max_connections=args.max_connections,
             max_restarts=args.max_restarts,
@@ -77,6 +113,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{'-' * 30} {'-' * 25} {'-' * 30}")
         for route in app._routes:
             print(f"{route.endpoint:30} {','.join(route.methods):25} {route.rule}")
+        for route in app._websocket_rules.values():
+            print(f"{route.endpoint:30} {'WEBSOCKET':25} {route.rule}")
+        return 0
+
+    if args.command == "shell":
+        with app.app_context():
+            code.interact(local={"app": app}, banner="Higuma application shell")
         return 0
 
     return 1

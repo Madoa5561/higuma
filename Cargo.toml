@@ -1,6 +1,6 @@
 [package]
 name = "higuma"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.83"
 description = "Flask-like Python web framework powered by a Rust core."
@@ -34,6 +34,7 @@ tokio = { version = "1.53.3", features = [
   "io-util"
 ] }
 tokio-util = { version = "0.7", features = ["io"] }
+tempfile = "3.23"
 tower-http = { version = "0.7", features = ["compression-gzip"] }
 url = "2.5"
 

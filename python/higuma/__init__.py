@@ -1,4 +1,5 @@
 from .app import Higuma, __version__, current_app
+from .asgi_testing import ASGITestClient
 from .auth import (
     AnonymousUser,
     AuthManager,
@@ -53,6 +54,7 @@ from .exceptions import (
     abort,
 )
 from .frontend import ViteManifest
+from .integrations import RedisExtension, SQLAlchemyExtension
 from .middleware import (
     CORSMiddleware,
     ProxyHeadersMiddleware,
@@ -106,6 +108,7 @@ from .views import MethodView, View
 from .websocket import WebSocket, WebSocketDisconnect
 
 __all__ = [
+    "ASGITestClient",
     "AnonymousUser",
     "AuthManager",
     "BackgroundTask",
@@ -155,12 +158,14 @@ __all__ = [
     "RangeNotSatisfiable",
     "RateLimitMiddleware",
     "RedirectResponse",
+    "RedisExtension",
     "Request",
     "RequestEntityTooLarge",
     "RequestValidationError",
     "Response",
     "ResponseValidationError",
     "SPAFiles",
+    "SQLAlchemyExtension",
     "SecurityHeadersMiddleware",
     "ServerSentEvent",
     "Session",

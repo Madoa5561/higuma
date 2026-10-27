@@ -165,7 +165,10 @@ JSON MIMEは`application/json`または`application/*+json`です。requestのJS
 
 ## 明示的な境界
 
-- Flaskのsignals、Werkzeug routing、nested Blueprint、Flask CLI extensionなどの
+0.9+では親子Blueprint・部品のtemplate/static・独自CLIを追加しています。
+[開発体験ガイド](developer-experience.md)に継承順と互換範囲をまとめています。
+
+- Flaskのsignals、Werkzeug routing、Flask CLI extensionなどの
   完全互換は提供しません。Flask extensionの`init_app(higuma_app)`動作は保証しません。
 - `request_context`はWSGI environではなくHigumaの`Request`を受け取ります。
   context helperは`with`用で、Flaskのpush/pop wrapperではありません。詳細は[テスト](testing.md)。
@@ -173,7 +176,8 @@ JSON MIMEは`application/json`または`application/*+json`です。requestのJS
   `host_url`もorigin root、`full_path`はpathとquery（空queryでも末尾`?`付き）です。
   Flaskの`base_url`はpathを含むため異なります。`request.path`は元のpercent-encoded pathで、
   path引数はdecodeされます。末尾slashの扱いもWerkzeug routingとは異なります。
-- request bodyはbuffer済みです。`get_json(cache=...)`、Flaskのbody stream API、
+- 入力は受信後dispatchし、0.9+では[spoolと逐次読取](uploads.md)を使えます。`get_json(cache=...)`や
+  Flask/Werkzeugのbody API全体、
   完全なWerkzeug request/response操作を提供するものではありません。
 - Template engineはMiniJinjaです。Flask/Jinja2の全filterやPython callable globalは
   提供しません。URLやflashはviewで生成しtemplateのcontextへ渡します。

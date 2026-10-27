@@ -14,7 +14,12 @@
 Build APIs, HTML pages, and realtime connections with familiar Python decorators.
 The name higuma comes from the Japanese brown bear.
 
-!!! info "New in 0.8.0"
+!!! info "New in 0.9.0"
+    [Nested Blueprints, commands and async tests](developer-experience.md),
+    [SQLAlchemy/Redis integration](integrations.md), and [large-body spooling](uploads.md).
+    See [performance](performance.md) for measurements and limitations.
+
+!!! info "Server choices since 0.8.0"
     Deploy through `app.asgi_app` or `app.wsgi_app` as well as the built-in server.
     ASGI supports HTTP, lifespan, and WebSockets; WSGI supports HTTP.
     See [Server interfaces](server-interfaces.md) for worker, streaming, proxy,

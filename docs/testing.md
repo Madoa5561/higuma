@@ -1,5 +1,9 @@
 # テストとrequest context
 
+0.9+のCLI runner・async HTTP・lifespan・WebSocket・途中終了するstreamの例は
+[開発体験ガイド](developer-experience.md#cli-and-asgi-testing)にあります。
+以下の同期clientとは異なり、`app.test_async_client()`はASGI入口を通ります。
+
 Higuma 0.7.0以降のhelperを含みます。通常のview・middleware・CSRF・sessionはtest clientで、
 contextに依存する小さな関数は`test_request_context`で、通信仕様は実serverで検証します。
 

@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 from contextlib import asynccontextmanager
 from socketserver import TCPServer
 from wsgiref.simple_server import WSGIServer, make_server
@@ -44,6 +45,22 @@ def events():
             await asyncio.sleep(0.05)
 
     return EventSourceResponse(messages())
+
+
+@app.post("/upload")
+def upload():
+    digest = hashlib.sha256()
+    size = 0
+    if request.mimetype == "multipart/form-data":
+        file = request.files["file"]
+        while chunk := file.read(65536):
+            digest.update(chunk)
+            size += len(chunk)
+    else:
+        for chunk in request.iter_body():
+            digest.update(chunk)
+            size += len(chunk)
+    return {"size": size, "sha256": digest.hexdigest(), "spooled": request.body_spooled}
 
 
 @app.websocket("/ws")

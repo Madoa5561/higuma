@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import http.client
 import json
 import socket
@@ -158,3 +159,26 @@ def test_wsgi_example_starts_without_reverse_dns(monkeypatch):
     with make_server("127.0.0.1", 0, wsgi_app, server_class=LoopbackWSGIServer) as server:
         assert server.base_environ["SERVER_NAME"] == "127.0.0.1"
         assert int(server.base_environ["SERVER_PORT"]) == server.server_address[1]
+
+
+def test_gateway_real_large_upload_and_multipart(gateway_server):
+    from higuma.testing import _encode_multipart
+
+    _mode, port = gateway_server
+    payload = b"a" * (2 * 1024 * 1024) + b"bear"
+    multipart, content_type = _encode_multipart(
+        None, {"file": ("bear.bin", payload, "application/octet-stream")}
+    )
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        for body, mime in [(payload, "application/octet-stream"), (multipart, content_type)]:
+            connection.request("POST", "/upload", body=body, headers={"Content-Type": mime})
+            response = connection.getresponse()
+            assert response.status == 200
+            assert json.loads(response.read()) == {
+                "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "spooled": True,
+            }
+    finally:
+        connection.close()

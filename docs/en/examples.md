@@ -1,5 +1,10 @@
 # Examples
 
+The 0.9+ [project example](https://github.com/Madoa5561/higuma/tree/main/examples/project)
+combines factories, nested components, SQLAlchemy, login/CSRF/roles, an admin UI,
+and app commands. See [setup and boundaries](integrations.md#factory-based-project-example).
+`examples/server_modes.py` exposes `POST /upload`; see [performance](performance.md) for comparisons.
+
 The 0.6.0 examples include `csr_app.py` (dependency-free browser CSR,
 History API, fetch; open `/app/`) and `vite_ssr.py` (Python HTML with Vite CSS and
 module preloads). Run `higuma run examples.csr_app:create_app` for the former.
