@@ -18,7 +18,7 @@ axum = { version = "0.8.9", features = ["ws"] }
 futures-util = "0.3.33"
 minijinja = { version = "2.23", features = ["loader"] }
 percent-encoding = "2.3"
-pyo3 = { version = "0.29.2", features = [
+pyo3 = { version = "0.30.1", features = [
   "abi3-py310",
   "generate-import-lib"
 ] }
