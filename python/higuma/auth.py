@@ -65,11 +65,13 @@ class AuthManager:
         user_loader: Callable[[str], Any] | None = None,
         session_key: str = "_user_id",
         session_options: Mapping[str, Any] | None = None,
+        session_middleware: type = SessionMiddleware,
     ) -> None:
         self.secret_key = secret_key
         self.user_loader = user_loader
         self.session_key = session_key
         self.session_options = dict(session_options or {})
+        self.session_middleware = session_middleware
         if app is not None:
             self.init_app(app)
 
@@ -77,7 +79,7 @@ class AuthManager:
         if not self.secret_key:
             raise ValueError("AuthManager requires a secret_key")
         app.add_middleware(
-            SessionMiddleware,
+            self.session_middleware,
             self.secret_key,
             **self.session_options,
         )

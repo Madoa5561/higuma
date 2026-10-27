@@ -39,7 +39,8 @@ with database.transaction() as db:
 1つのSessionを複数request/threadで共有しません。engineはshutdownでdisposeします。
 WSGI利用時はサーバーのworker lifecycleで`app.lifespan()`を管理してください。
 
-このadapterは同期SQLAlchemy 2.x用です。AsyncSession、他DBのdriver、migrationは別途構成します。
+このadapterは同期SQLAlchemy 2.x用です。0.10+の`AsyncSQLAlchemyExtension`は
+[非同期・運用ガイド](operations.md)を参照してください。他DBのdriver、migrationは別途構成します。
 SQLiteを使う例の成功をPostgreSQL/MySQLでの本番検証と同一視しないでください。
 `init_app`自体はschemaを変更しません。
 
@@ -73,7 +74,8 @@ RESP2を明示し、redis-py世代による既定protocolの変更を避けま�
 
 この例のlocalhost・認証なしURLは開発用です。本番はTLS・ACL・secret管理を構成し、
 URLをログへ出さないでください。永続job queue、分散rate limit、Redis session storeを
-内蔵するという意味ではありません。
+内蔵するという意味ではありません。0.10+の任意Redis session・分散rate limitは
+[共有状態のガイド](operations.md)を参照してください。
 
 ## 分割した実用サンプル {#project-example}
 

@@ -50,6 +50,9 @@ class _GlobalsProxy(LocalProxy[_AppGlobals]):
 
 
 class _SessionProxy(LocalProxy[Any], MutableMapping[str, Any]):
+    def clear(self) -> None:
+        self._get_current().clear()
+
     def _get_current(self) -> Any:
         current = _request_context.get()
         if current is None:
@@ -107,6 +110,10 @@ def flash(message: Any, category: str = "message") -> None:
     messages = list(session.get("_flashes", ()))
     messages.append((category, message))
     session["_flashes"] = messages
+    from .app import current_app
+    from .signals import message_flashed
+
+    message_flashed.send(current_app._get_current(), message=message, category=category)
 
 
 def get_flashed_messages(

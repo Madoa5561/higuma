@@ -6,6 +6,8 @@ and **external infrastructure**. Features added in 0.6.0 are marked in the table
 
 | Area | Delivery | Scope / documentation |
 | --- | --- | --- |
+| Async fast path / Signals / health / observability | Native (0.10), optional tracing | Conditional async dispatch, app events and bounded metrics. [Operations](operations.md) |
+| Async SQLAlchemy / Redis sessions and quotas | Optional (0.10) | Owned loops, explicit commits, revocation/CAS, atomic fixed windows. [Operations](operations.md) |
 | Nested Blueprints / CLI / async tests | Native (0.9) | Component resources, inherited hooks and ASGI client. [Development](developer-experience.md) |
 | Large input / multipart | Native (0.9) | Bounded spooling and stored-body iterators. [Uploads](uploads.md) |
 | SQLAlchemy / Redis | Optional integration (0.9) | Explicit transactions and app/lifespan resources. [Integrations](integrations.md) |
@@ -20,12 +22,12 @@ and **external infrastructure**. Features added in 0.6.0 are marked in the table
 | WebSocket / SSE / streaming | Native | Native endpoints, bounded queues, Origin, sync/async streams. [Features](features.md) |
 | Session / login / roles / permissions | Native | Signed cookies, fresh login, password hashing. [Security](security-auth.md) |
 | OAuth | Native + external services | Google/LINE/Discord helpers; provider configuration and production E2E are application responsibilities |
-| CORS / CSRF / Host / proxy / rate limits | Native | Explicit trust boundaries; rate limits are process-local, not distributed |
+| CORS / CSRF / Host / proxy / rate limits | Native + optional Redis | Explicit trust; default process-local sliding windows, optional shared Redis fixed windows (0.10+) |
 | SQLite ORM / transactions | Native | Fields, queries, commit/rollback; migrations, relationships, pools, other databases need specialized libraries |
 | Background tasks | Native | Lightweight after-response work; durable queues, retries, schedulers are external |
 | Lifespan / supervisor | Native | Sync/async lifecycle and multiple processes. [Deployment](deployment.md) |
 | Flask compatibility | Partial + WSGI integration | g/session/flash, request contexts and scoped Blueprint hooks (0.7). [Boundaries](flask-compat.md); not all extensions |
-| Deploy Higuma on external servers | Native (0.8) | `asgi_app`: HTTP/WS/lifespan; `wsgi_app`: HTTP. [Boundaries](server-interfaces.md); async handlers still use coordination workers |
+| Deploy Higuma on external servers | Native (0.8) | `asgi_app`: HTTP/WS/lifespan; `wsgi_app`: HTTP. [Boundaries](server-interfaces.md); eligible async HTTP bypasses coordination workers in 0.10+ |
 | Mount other WSGI / ASGI apps | HTTP integration | Buffered HTTP only, not mounted WS, forwarded lifespan, or indefinite streams |
 | GraphQL / RPC | External library integration | Mount compatible HTTP apps; subscription forwarding is not guaranteed |
 | Application caches / durable jobs | External | Optional Redis client adapter exists; distributed caching/durable delivery remain external |

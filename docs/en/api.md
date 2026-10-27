@@ -1,5 +1,9 @@
 # API reference
 
+For 0.10+ AsyncSQLAlchemyExtension, Signal/lifecycle events, RedisSessionStore,
+RedisSessionMiddleware/RedisRateLimitMiddleware, Observability/JSONLogFormatter,
+and HealthChecks, see [async execution, shared state and operations](operations.md).
+
 For 0.9+, see [nested Blueprints, commands and ASGI tests](developer-experience.md),
 [SQLAlchemyExtension / RedisExtension](integrations.md), and [spooled input APIs](uploads.md).
 

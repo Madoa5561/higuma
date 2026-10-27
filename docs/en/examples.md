@@ -1,5 +1,9 @@
 # Examples
 
+0.10+ adds `python -m examples.async_ecosystem` (disposable async SQLite, health, request IDs),
+`python -m examples.redis_sessions` (dedicated Redis, shared sessions, CSRF), and
+`python -m examples.signals` (app-scoped lifecycle events). Read [setup and boundaries](operations.md).
+
 The 0.9+ [project example](https://github.com/Madoa5561/higuma/tree/main/examples/project)
 combines factories, nested components, SQLAlchemy, login/CSRF/roles, an admin UI,
 and app commands. See [setup and boundaries](integrations.md#factory-based-project-example).

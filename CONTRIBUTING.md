@@ -6,15 +6,15 @@ Thank you for helping improve higuma.
 
 Requirements:
 
-- Python 3.10 or newer
+- Python 3.10 or newer for the runtime; use Python 3.14 for the development/audit commands below
 - Rust stable toolchain
 - A C/C++ linker supported by Rust
 
 ```bash
 python -m venv .venv
 .venv/Scripts/activate
-python -m pip install -U pip
-python -m pip install -e ".[dev,docs,compat,security,asgi,integrations,benchmark]"
+python -m pip install -U pip "setuptools>=84.1" "filelock>=4.2.1"
+python -m pip install -e ".[dev,docs,compat,security,asgi,integrations,benchmark,async-db,observability]"
 ```
 
 On macOS or Linux, activate the environment with:
@@ -42,6 +42,9 @@ cargo audit --deny unsound
 ```
 
 Install `cargo-audit` with `cargo install cargo-audit --locked --version 0.22.2`.
+CI resolves runtime extras using Python 3.10/3.14 in separate pip-free environments,
+then audits both runtime inventories and patched Python 3.14 tooling. Do not install
+unpatched legacy audit-tool dependencies merely to audit an older supported runtime.
 Audits access public advisory databases; they do not establish that the code has
 no vulnerabilities. `unsound` warnings fail the Rust audit as well as known
 vulnerabilities; do not treat a warning-only successful run as a clean audit.

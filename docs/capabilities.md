@@ -6,6 +6,8 @@ HigumaはRust HTTP coreとPython APIを組み合わせた小さなframeworkで�
 
 | 分野 | 提供方法 | 対応範囲／次に読むページ |
 | --- | --- | --- |
+| 非同期高速経路 / Signals / health / 監視 | 内蔵（0.10）＋任意tracing | 条件付きasync dispatch・app別通知・限定metrics。[運用ガイド](operations.md) |
+| Async SQLAlchemy / Redis session・quota | 任意連携（0.10） | 所有loop・明示commit・失効/CAS・原子的固定window。[運用ガイド](operations.md) |
 | 親子Blueprint / 独自CLI / async test | 内蔵（0.9） | 部品resource・継承hooks・ASGI client。[開発体験](developer-experience.md) |
 | 大容量入力 / multipart | 内蔵（0.9） | 上限付きspool・保存済みbodyの逐次読取。[入力の境界](uploads.md) |
 | SQLAlchemy / Redis | 任意連携（0.9） | 明示transaction・app別resource・lifespan。[外部連携](integrations.md) |
@@ -20,12 +22,12 @@ HigumaはRust HTTP coreとPython APIを組み合わせた小さなframeworkで�
 | WebSocket / SSE / stream | 内蔵 | native endpoints、bounded queue、Origin、sync/async stream。[機能ガイド](features.md) |
 | Session / login / roles / permission | 内蔵 | signed Cookie、fresh login、password hashing。[認証](security-auth.md) |
 | OAuth | 内蔵＋外部service | Google/LINE/Discord helper。provider credentials・本番E2Eは利用先で確認 |
-| CORS / CSRF / Host / proxy / rate limit | 内蔵 | exact trust境界。rate limitはprocess内。分散quotaは外部 |
+| CORS / CSRF / Host / proxy / rate limit | 内蔵＋任意Redis | exact trust境界。既定はprocess内sliding window、0.10+の任意Redisは共有fixed window |
 | SQLite ORM / transactions | 内蔵 | field/query/commit/rollback。migration、relationships、pool、他DBは専門library |
 | Background task | 内蔵 | response後の軽量処理。永続queue・retry・schedulerは外部 |
 | Lifespan / supervisor | 内蔵 | sync/async lifecycle、複数process。[デプロイ](deployment.md) |
 | Flask compatibility | 部分互換＋WSGI連携 | g/session/flash、request context・Blueprint scoped hooks（0.7）。[対応境界](flask-compat.md)。全extension互換ではない |
-| 外部サーバーでHigumaを実行 | 内蔵（0.8） | `asgi_app`: HTTP/WS/lifespan、`wsgi_app`: HTTP。[対応境界](server-interfaces.md)。asyncでも同期互換workerを使用 |
+| 外部サーバーでHigumaを実行 | 内蔵（0.8） | `asgi_app`: HTTP/WS/lifespan、`wsgi_app`: HTTP。[対応境界](server-interfaces.md)。0.10+の適格async HTTP以外は同期互換workerを使用 |
 | 他WSGI / ASGI appをmount | HTTP連携 | buffered mount。mounted WS、ASGI lifespan転送、無期限streamは非対応 |
 | GraphQL / RPC | 外部library連携 | HTTP互換範囲のWSGI/ASGI appをmount。subscription転送は保証しない |
 | App cache / durable jobs | 外部で構成 | Redis clientの任意adapterはあるが、分散cache設計・永続job配送は外部 |

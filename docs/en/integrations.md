@@ -1,5 +1,8 @@
 # Optional ecosystem integrations (0.9+)
 
+0.10+ also provides [async SQLAlchemy, Redis sessions and shared quotas](operations.md).
+The SQLAlchemyExtension described below remains the synchronous adapter.
+
 Install `higuma[integrations]` for SQLAlchemy/redis-py. Base required Python
 dependencies remain empty. These are native Higuma adapters, not drop-in
 Flask-SQLAlchemy/Flask-extension compatibility.

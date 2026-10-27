@@ -168,7 +168,7 @@ JSON MIMEは`application/json`または`application/*+json`です。requestのJS
 0.9+では親子Blueprint・部品のtemplate/static・独自CLIを追加しています。
 [開発体験ガイド](developer-experience.md)に継承順と互換範囲をまとめています。
 
-- Flaskのsignals、Werkzeug routing、Flask CLI extensionなどの
+- 0.10+の[Flask風Signals](operations.md)は依存0の独自実装です。Flask/Blinkerのsignal object、Werkzeug routing、Flask CLI extensionなどの
   完全互換は提供しません。Flask extensionの`init_app(higuma_app)`動作は保証しません。
 - `request_context`はWSGI environではなくHigumaの`Request`を受け取ります。
   context helperは`with`用で、Flaskのpush/pop wrapperではありません。詳細は[テスト](testing.md)。

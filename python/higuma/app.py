@@ -19,6 +19,7 @@ from types import TracebackType
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
+from . import signals
 from ._core import HigumaCore
 from .background import BackgroundTask, BackgroundTasks
 from .blueprint import Blueprint
@@ -49,7 +50,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -522,6 +523,7 @@ class Higuma:
                 _resolve_awaitable(handler(error))
         for handler in reversed(self._teardown_request):
             _resolve_awaitable(handler(error))
+        signals.request_tearing_down.send(self, exc=error)
 
     @contextmanager
     def request_context(self, request: Request):
@@ -564,6 +566,7 @@ class Higuma:
         globals_token = _g_context.set(_AppGlobals())
         error_token = _app_context_error.set(None)
         try:
+            signals.appcontext_pushed.send(self)
             yield self
         except BaseException as error:
             _app_context_error.set(error)
@@ -572,10 +575,12 @@ class Higuma:
             try:
                 for handler in reversed(self._teardown_appcontext):
                     _resolve_awaitable(handler(_app_context_error.get()))
+                signals.appcontext_tearing_down.send(self, exc=_app_context_error.get())
             finally:
                 _app_context_error.reset(error_token)
                 _g_context.reset(globals_token)
                 _app_context.reset(app_token)
+                signals.appcontext_popped.send(self)
 
     def on_startup(self, func: Callable[..., Any]) -> Callable[..., Any]:
         self._startup_handlers.append(func)
@@ -1092,7 +1097,9 @@ class Higuma:
 
         try:
             try:
-                response = make_response(call_next(request))
+                if run_hooks:
+                    signals.request_started.send(self)
+                response = self._render_signaled_template(make_response(call_next(request)))
             except Exception as exc:  # noqa: BLE001 - middleware exception boundary
                 response = make_response(self._handle_exception(exc, request))
 
@@ -1113,6 +1120,8 @@ class Higuma:
             except Exception as exc:  # noqa: BLE001 - response finalization boundary
                 response = make_response(self._handle_exception(exc, request))
             response = self._prepare_file_response(request, response)
+            if run_hooks:
+                signals.request_finished.send(self, response=response)
             background_tasks = request.state.get("_higuma_background_tasks")
             if isinstance(background_tasks, BackgroundTasks) and background_tasks:
                 if response.background is None:
@@ -1199,6 +1208,9 @@ class Higuma:
             _resolve_awaitable,
         )
         result = _resolve_awaitable(route.view_func(*args, **kwargs))
+        return self._coerce_view_result(route, result)
+
+    def _coerce_view_result(self, route: Rule, result: Any) -> Any:
         response_model = route.openapi.get("response_model")
         declared_status = route.openapi.get("status_code")
         if response_model is not None:
@@ -1229,6 +1241,7 @@ class Higuma:
         if isinstance(error, HTTPException):
             return self._default_http_error(error)
 
+        signals.got_request_exception.send(self, exception=error)
         self.logger.exception("unhandled request exception", exc_info=error)
         _app_context_error.set(error)
         request.state["_higuma_request_error"] = error
@@ -1275,6 +1288,20 @@ class Higuma:
             self.static_folder, max_age=int(self.config["STATIC_CACHE_MAX_AGE"]), check_dir=False
         )
         return files(request, filename)
+
+    def _render_signaled_template(self, response: Response) -> Response:
+        if not isinstance(response, TemplateResponse) or not (
+            signals.before_render_template.has_receivers_for(self)
+            or signals.template_rendered.has_receivers_for(self)
+        ):
+            return response
+        values = {"template": response.template, "context": response.context}
+        signals.before_render_template.send(self, **values)
+        html = self._core.render_template(response.template, response.context_json)
+        signals.template_rendered.send(self, **values)
+        rendered = HTMLResponse(html, response.status_code, response.headers, response.background)
+        rendered._extra_headers.extend(response._extra_headers)
+        return rendered
 
     def _prepare_file_response(self, request: Request, response: Response) -> Response:
         if (

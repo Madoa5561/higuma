@@ -34,6 +34,9 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.10.0候補** — 条件付きASGI高速経路、async DB、Flask風Signals、Redis共有session/quota、
+> request ID・metrics・任意tracing・health checks。[導入と対応境界](docs/operations.md)。
+>
 > **0.9.0** — 親子Blueprint、独自CLI、非同期テストクライアント、任意のSQLAlchemy／Redis連携、
 > 大容量入力のディスク退避を追加。Flask風のまま分割アプリを育てる開発体験を整えました。
 > [開発ガイド](docs/developer-experience.md) / [連携と実用サンプル](docs/integrations.md) /

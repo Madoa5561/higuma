@@ -11,6 +11,8 @@
 
 </div>
 
+0.10+ adds [async execution, async DB, Signals, Redis state and operations](operations.md).
+
 Build APIs, HTML pages, and realtime connections with familiar Python decorators.
 The name higuma comes from the Japanese brown bear.
 

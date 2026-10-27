@@ -15,7 +15,7 @@ def cpu_work():
     return {"value": sum(number * number for number in range(10000))}
 
 
-def create_higuma():
+def create_higuma(*, async_json=False, fast_path=True):
     from higuma import Higuma, request
 
     app = Higuma(
@@ -24,7 +24,12 @@ def create_higuma():
         template_folder=str(Path(__file__).parent / "templates"),
         max_content_length=32 * 1024 * 1024,
     )
-    app.get("/json")(lambda: JSON_VALUE)
+    app.config["ASGI_ASYNC_FAST_PATH"] = fast_path
+
+    async def asynchronous_json():
+        return JSON_VALUE
+
+    app.get("/json")(asynchronous_json if async_json else lambda: JSON_VALUE)
     app.get("/cpu")(cpu_work)
 
     @app.get("/params/<int:number>")
@@ -140,13 +145,21 @@ def main():
         choices=["higuma-native", "higuma-asgi", "higuma-wsgi", "flask-wsgi", "starlette-asgi"],
     )
     parser.add_argument("--port", required=True, type=int)
+    parser.add_argument("--async-json", action="store_true")
+    parser.add_argument("--async-fast-path", choices=["on", "off"], default="on")
     args = parser.parse_args()
     if args.mode == "higuma-native":
         create_higuma().run(host="127.0.0.1", port=args.port, workers=1)
     elif args.mode.endswith("asgi"):
         import uvicorn
 
-        app = create_higuma().asgi_app if args.mode == "higuma-asgi" else create_starlette()
+        app = (
+            create_higuma(
+                async_json=args.async_json, fast_path=args.async_fast_path == "on"
+            ).asgi_app
+            if args.mode == "higuma-asgi"
+            else create_starlette()
+        )
         uvicorn.run(
             app,
             host="127.0.0.1",

@@ -1,5 +1,9 @@
 # APIリファレンス
 
+0.10+の`AsyncSQLAlchemyExtension`、`Signal`とライフサイクル通知、`RedisSessionStore`/
+`RedisSessionMiddleware`/`RedisRateLimitMiddleware`、`Observability`/`JSONLogFormatter`/
+`HealthChecks`は[非同期・共有状態・運用監視](operations.md)に使用例と境界をまとめています。
+
 0.9+の[親子Blueprint・CLI・ASGIテスト](developer-experience.md)、
 [SQLAlchemyExtension / RedisExtension](integrations.md)、[入力spool API](uploads.md)も参照してください。
 

@@ -195,7 +195,7 @@ def _exercise_gateways() -> None:
 
 
 def _exercise_developer_apis() -> None:
-    from higuma import Blueprint, Higuma
+    from higuma import Blueprint, HealthChecks, Higuma, Observability, request, request_finished
 
     app = Higuma(__name__, static_folder=None, request_memory_limit=4)
     parent = Blueprint("parent", __name__, url_prefix="/parent")
@@ -212,9 +212,26 @@ def _exercise_developer_apis() -> None:
     result = app.test_cli_runner().invoke(["greet", "bear"])
     assert result.exit_code == 0 and result.output.strip() == "hello bear"
 
+    events = []
+
+    def completed(sender, response):
+        events.append(response.status_code)
+
+    with request_finished.connected_to(completed, app):
+        assert app.test_client().get("/parent/child").status_code == 200
+    assert events == [200]
+    HealthChecks().install(app)
+    assert app.test_client().get("/health/live").status_code == 200
+    assert Observability().snapshot()["requests"] == 0
+
+    @app.get("/fast")
+    async def fast():
+        return {"fast": request.state.get("_higuma_async_fast_path", False)}
+
     async def exercise():
         async with app.test_async_client() as client:
             assert (await client.get("/parent/child")).get_json() == {"nested": True}
+            assert (await client.get("/fast")).get_json() == {"fast": True}
 
     asyncio.run(exercise())
 

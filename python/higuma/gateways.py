@@ -483,14 +483,23 @@ class ASGIApplication:
             await send({"type": "http.response.body", "body": response.body})
             return
 
-        def respond() -> None:
+        def respond(prebuilt=None) -> None:
             body = None
             started = False
             attempted_send = False
             response = None
             bridge = await_bridge.get()
             try:
-                response = _dispatch(self.app, raw)
+                response = prebuilt if prebuilt is not None else _dispatch(self.app, raw)
+                if isinstance(response, TemplateResponse):
+                    rendered = HTMLResponse(
+                        self.app._core.render_template(response.template, response.context_json),
+                        response.status_code,
+                        response.headers,
+                        response.background,
+                    )
+                    rendered._extra_headers.extend(response._extra_headers)
+                    response = rendered
                 body = _Body(response, raw["method"])
                 attempted_send = True
                 bridge.resolve(
@@ -530,7 +539,18 @@ class ASGIApplication:
                     body.close()
 
         try:
-            await self._worker(respond, receive)
+            from .async_dispatch import eligible, run
+
+            route, parameters, allowed = self.app._match_route(raw["path"], raw["method"])
+            if eligible(self.app, route, storage):
+                raw.update(
+                    path_params={key: str(value) for key, value in parameters.items()},
+                    route_pattern=route.rule,
+                    allowed_methods=allowed,
+                )
+                await run(self.app, route, raw, send, receive, respond, self._worker)
+            else:
+                await self._worker(respond, receive)
         finally:
             storage.close()
 

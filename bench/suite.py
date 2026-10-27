@@ -49,7 +49,7 @@ def validate(body, expected):
 
 
 @contextmanager
-def server(mode):
+def server(mode, *, arguments=()):
     import psutil
 
     with socket.socket() as listener:
@@ -57,7 +57,7 @@ def server(mode):
         port = listener.getsockname()[1]
     with TemporaryFile(mode="w+t", encoding="utf-8") as log:
         process = subprocess.Popen(
-            [sys.executable, "-m", "bench.apps", "--mode", mode, "--port", str(port)],
+            [sys.executable, "-m", "bench.apps", "--mode", mode, "--port", str(port), *arguments],
             stdout=subprocess.DEVNULL,
             stderr=log,
         )

@@ -11,6 +11,8 @@
 
 </div>
 
+0.10+の[非同期高速経路・async DB・Signals・Redis共有状態・運用監視](operations.md)を追加しています。
+
 API、HTML、リアルタイム通信を、書き慣れたPythonのdecoratorで。
 higumaという名前は日本のヒグマに由来します。
 

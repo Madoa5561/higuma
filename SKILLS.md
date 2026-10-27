@@ -121,7 +121,8 @@ python app.py
 Use explicit `app.asgi_app` / `app.wsgi_app`, not a callable app overload.
 The optional `asgi` extra supplies Uvicorn/websockets; base dependencies stay empty.
 ASGI bridges the synchronous pipeline through a dedicated bounded executor;
-async handlers still occupy coordination workers. Async lifespan and request
+0.10+ can directly execute eligible async HTTP routes without sync hooks/middleware/DI.
+Other async handlers still occupy coordination workers. Async lifespan and request
 awaitables use the server loop; use one instance per active loop. WSGI has no
 automatic lifespan or WebSocket support. Standard middleware wraps the exported
 entry point; Higuma's synchronous `call_next` is not an async middleware chain API.
@@ -133,6 +134,15 @@ External transport owns TLS/compression/workers and does not inherit Rust server
 performance guarantees. See docs/server-interfaces.md and its English mirror.
 
 ## Development and ecosystem boundaries (0.9+)
+
+0.10 adds AsyncSQLAlchemyExtension (ASGI-owned loop, explicit transactions),
+RedisSessionStore/RedisSessionMiddleware (opaque signed IDs, CAS/revocation),
+RedisRateLimitMiddleware (fixed windows, fail closed), synchronous lifecycle Signals,
+Observability (bounded local metrics, no automatic exports), and HealthChecks.
+See docs/operations.md and its English mirror. Use explicit app contexts in startup
+probes that access extensions. Do not mix cookie and Redis session middleware.
+Signals are Higuma objects, not Flask/Blinker objects. Prefer an external observer
+wrapper for full ASGI stream timing; native middleware measures dispatch calls only.
 
 See docs/developer-experience.md, integrations.md, uploads.md and English mirrors.
 Before hooks inherit parent-to-child; after/teardown inherit child-to-parent.

@@ -173,7 +173,7 @@ results are not cached.
 0.9 adds nested Blueprints, component resources and app commands; see
 [development guide](developer-experience.md) for inheritance and compatibility boundaries.
 
-- No complete compatibility with Flask signals, Werkzeug routing,
+- [Flask-style signals](operations.md) in 0.10+ are dependency-free Higuma objects, not Flask/Blinker objects. No complete compatibility with Werkzeug routing,
   or Flask CLI extensions. Extension `init_app(higuma_app)` is not guaranteed.
 - `request_context` accepts a Higuma `Request`, not a WSGI environ. Context helpers
   are `with` managers, not Flask push/pop wrappers. See [Testing](testing.md).

@@ -85,8 +85,8 @@ Disabling lifespan also disables automatic startup/shutdown and resource managem
 
 To preserve synchronous middleware and Flask-style hooks, a dedicated worker
 coordinates dispatch and bridges awaitables back to the server loop. It does not
-consume the server's default executor. **Even async handlers use a coordination
-worker; this is not a coroutine-only implementation.** Long WebSockets and SSE
+consume the server's default executor. 0.10+ adds a conservative [async HTTP fast path](operations.md).
+Other async handlers still use coordination workers; not every path is coroutine-only. Long WebSockets and SSE
 consume concurrency slots too. Load-test high-connection-count deployments.
 
 Set these before serving:

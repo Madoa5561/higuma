@@ -7,6 +7,40 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-27
+
+### Added
+
+- Conservative ASGI async HTTP fast path with an explicit compatibility opt-out;
+  preserve synchronous middleware/hooks/DI via automatic bridge fallback.
+- ASGI-loop-owned AsyncSQLAlchemyExtension, explicit transactions, rollback on
+  cancellation, isolated dependency sessions and shutdown disposal.
+- Dependency-free app-scoped lifecycle Signals, weak receiver/sender references,
+  temporary subscriptions and successful-render notifications. Not Blinker interoperability.
+- Optional Redis server sessions with signed opaque cookies, TTL, size limits,
+  rotation, revocation and CAS against stale writes. AuthManager accepts a session middleware class.
+- Atomic Redis fixed-window rate limits shared across processes; state outages fail closed.
+- Bounded local metrics, structured secret-minimizing records, request IDs,
+  optional explicit OpenTelemetry instrumentation and liveness/readiness probes.
+- Async API/SQLite, CSRF-protected Redis session and Signals examples, Japanese/
+  English operations documentation, real communication and cancellation tests.
+
+### Fixed
+
+- Session proxy clear delegates to the underlying session implementation, preserving
+  custom server-session rotation behavior.
+- Audit target runtime dependencies separately from patched Python 3.14 tooling;
+  do not install unpatched Python 3.10-only audit-tool dependencies or ignore advisories.
+
+### Boundaries
+
+- Fast-path eligibility is intentionally narrow; input is still received before dispatch.
+- Async DB adapters require an owning ASGI loop. DB migrations/drivers are external.
+- Redis sessions do not retroactively cancel in-flight authorization; quotas use
+  fixed windows and need storage capacity planning. CSRF/TLS/ACL remain explicit.
+- No automatic telemetry exports or public metrics endpoint. Probe timeouts cannot
+  forcibly stop uncooperative blocking code. Metrics are process-local.
+
 ## [0.9.0] - 2026-10-27
 
 ### Added

@@ -83,7 +83,8 @@ lifespanを無効にするとstartup/shutdownは実行されず、resourceの初
 
 既存の同期middleware・Flask風hooksとの互換性を維持するため、dispatchの調整処理は専用workerへ
 分離し、awaitableをASGI loopへ戻します。サーバーの標準executorとは分離しています。
-**async handlerでも接続中の調整workerを使うため、完全にcoroutineだけで動く実装ではありません。**
+0.10+では条件を満たすasync HTTP routeに[高速経路](operations.md)を追加しています。
+それ以外のasync handlerは接続中の調整workerを使うため、全経路がcoroutine-onlyではありません。
 長時間のWebSocket・SSEも並行数を消費します。大量の接続が必要な用途は実負荷で検証してください。
 
 起動前に設定できます:

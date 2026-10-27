@@ -1,5 +1,10 @@
 # Examples
 
+0.10+では`python -m examples.async_ecosystem`（使い捨てSQLite・async API・health・request ID）、
+`python -m examples.redis_sessions`（専用Redis・CSRF付き共有session）、
+`python -m examples.signals`（app別ライフサイクル通知）を追加しています。
+[導入と運用境界](operations.md)を読んでから実行してください。
+
 0.9+の分割アプリは[`examples/project`](https://github.com/Madoa5561/higuma/tree/main/examples/project)です。
 factory・親子Blueprint・SQLAlchemy・login/CSRF/role・管理画面・独自CLIを組み合わせます。
 [セットアップと注意](integrations.md#project-example)を参照してください。

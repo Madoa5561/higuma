@@ -5,6 +5,37 @@ I/O待ち、接続数で結果が変わります。Flask風APIや標準装備の
 
 ## 再現方法
 
+### 0.10候補: async経路のON/OFF比較
+
+同じ0.10.0候補コードのasync JSON/20ms待機routeを、fast pathのON/OFFだけ切り替えて測定しました。
+Starletteも同じUvicorn/asyncio/h11で比較しています。Windows/Python/CPUは後述の環境と同じで、
+各1.5秒＋warmup 0.3秒、3round、順序をseed付きで入れ替えました。
+54測定ケースとwarmupで、通信エラー・不正応答は0でした。
+[全round・遅延・CPU/RSSの生データ](assets/benchmarks/asgi-async-windows-2026-10-27.json)を参照してください。
+source SHA-256は`fc10515fb4b63c6ba63b11cdbf97e88014c987cb82372d29de1dc4ef5d2679d1`です。
+
+JSONの中央値（req/s）:
+
+| 方式 | c=1 | c=16 | c=64 | c=16 p95 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Higuma bridge（OFF） | 1,298 | 1,699 | 1,685 | 10.41 |
+| Higuma fast（ON） | 3,281 | 4,146 | 4,408 | 4.24 |
+| Starlette | 5,568 | 7,704 | 7,553 | 2.37 |
+
+対象のasync JSONではc=16で約2.44倍になり、p95も改善しました。ただしStarletteのthroughputの
+約54%であり、まだ差があります。同期middleware/hooks/DI等を使うrouteは自動fallbackするため、
+この改善を適用できない場合があります。これは従来のsync JSONを測った0.9の表とは別のworkloadです。
+
+20ms模擬I/O・c=64はbridge 1,357、fast 1,495、Starlette 1,629 req/sでした。
+待機中心ではJSONほどの効果がなく、3roundのmin/maxも重なります。DBや実networkでの改善率を保証しません。
+ASGI同時処理枠64はON/OFF両方に残しています。native/WSGIの0.10再測定ではありません。
+
+```bash
+python -m bench.async_paths --output target/asgi-async-new.json --rounds 3 --duration 1.5 --concurrency 1 16 64
+```
+
+### 通常の5方式比較
+
 ```bash
 python -m pip install -e ".[benchmark,asgi,compat]"
 python -m bench.suite --output target/benchmark-new.json --rounds 3 --duration 1.5 --concurrency 1 16
@@ -27,7 +58,9 @@ JSON値・HTTP status・HTML要素数・uploadサイズを検査し、エラー�
 出力には生のround別データ、median/min/max throughput、p50/p95/p99、server/client CPU、
 RSSのbaseline/peak、Python/依存版、OS/CPU/RAM、Git commit/dirty状態、source hashを含めます。
 
-## Windows実測（2026-10-27）
+## Windows実測（0.9候補・2026-10-27の記録）
+
+以下は0.9候補時点の履歴であり、0.10の測定値とは混ぜません。該当実装はcommit `62e04a5`に含まれます。
 
 Windows 11 build 26200、CPython 3.12.9、20 physical / 28 logical CPU、RAM約31.7GiB。
 Higuma 0.9.0候補をrelease buildし、Flask 3.1.3、Starlette 1.10.0、
