@@ -311,6 +311,15 @@ supervisor, streaming, and proxy changes.
 
 ## Compatibility expectations
 
+- 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide
+  callbacks (once per app, even with aliases). Preprocessors run before before hooks
+  and disable the ASGI async fast path. Use `g` for popped route values. Context-only
+  helpers do not run preprocessing; `request.blueprints` lists child-to-parent names.
+- Config file names are app-root-relative; `__` in prefixed environment keys means
+  nested dictionaries. Config loaders are explicit, never request-controlled. Mapping
+  and file loaders retain lowercase keys. No automatic dotenv/Python-file execution.
+- `jsonify()`/`jsonify(None)` mean JSON null; use `jsonify({})` for an empty object.
+  JSON `cache=False` bypasses parsed cache but keeps the already-buffered body.
 - Preserve existing Flask-like route syntax.
 - Add new public names to `python/higuma/__init__.py`.
 - Keep runtime dependencies at zero unless a feature cannot reasonably be

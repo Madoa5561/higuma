@@ -1,5 +1,9 @@
 # Examples
 
+The 0.11 candidate adds `python -m examples.flask_migration`: language-prefix
+URL preprocessing/defaults, Blueprint app-wide hooks, namespaced config and JSON
+cache control, without extra dependencies. See [migration boundaries](flask-compat.md).
+
 0.10+ adds `python -m examples.async_ecosystem` (disposable async SQLite, health, request IDs),
 `python -m examples.redis_sessions` (dedicated Redis, shared sessions, CSRF), and
 `python -m examples.signals` (app-scoped lifecycle events). Read [setup and boundaries](operations.md).

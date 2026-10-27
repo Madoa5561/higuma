@@ -96,6 +96,7 @@ def _exercise_http(port: int) -> None:
 def _exercise_flask_helpers() -> None:
     from higuma import (
         Blueprint,
+        Config,
         Higuma,
         SessionMiddleware,
         after_this_request,
@@ -105,6 +106,10 @@ def _exercise_flask_helpers() -> None:
     )
 
     app = Higuma(__name__, static_folder=None)
+    assert isinstance(app.config, Config)
+    assert app.jsonify(None).data == b"null"
+    assert app.jsonify(1, 2).get_json() == [1, 2]
+    assert app.make_response().data == b""
     app.add_middleware(SessionMiddleware, "package-smoke-test-secret-at-least-32-bytes")
     blueprint = Blueprint("smoke", __name__, url_prefix="/smoke")
     cleanup_paths = []

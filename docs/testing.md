@@ -1,5 +1,9 @@
 # テストとrequest context
 
+0.11候補のURL hooks・設定・JSON helperは`tests/test_flask_migration.py`でFlaskと比較し、
+`tests/test_flask_migration_server.py`で組み込み／ASGI／WSGIの実通信を確認します。
+request contextだけを作ってもURL前処理は実行しません。hookを検証する場合はclientでdispatchします。
+
 0.9+のCLI runner・async HTTP・lifespan・WebSocket・途中終了するstreamの例は
 [開発体験ガイド](developer-experience.md#cli-and-asgi-testing)にあります。
 以下の同期clientとは異なり、`app.test_async_client()`はASGI入口を通ります。

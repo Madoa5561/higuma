@@ -13,6 +13,7 @@ from .auth import (
 )
 from .background import BackgroundTask, BackgroundTasks
 from .blueprint import Blueprint
+from .config import Config
 from .context import (
     after_this_request,
     flash,
@@ -144,6 +145,7 @@ __all__ = [
     "Boolean",
     "CORSMiddleware",
     "CSRFProtection",
+    "Config",
     "Conflict",
     "Cookie",
     "Database",

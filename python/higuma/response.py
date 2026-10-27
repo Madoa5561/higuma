@@ -519,7 +519,7 @@ ResponseValue = (
 
 
 def make_response(
-    value: ResponseValue,
+    value: ResponseValue = b"",
     status: int | None = None,
     headers: Mapping[str, str] | None = None,
 ) -> Response | FileResponse | TemplateResponse:
@@ -527,12 +527,17 @@ def make_response(
     if isinstance(value, tuple):
         if len(value) == 2:
             value, tuple_status = value
-            status = int(tuple_status)
+            if isinstance(tuple_status, Mapping):
+                tuple_headers = tuple_status
+            else:
+                status = int(tuple_status)
         elif len(value) == 3:
             value, tuple_status, tuple_headers = value
             status = int(tuple_status)
         else:
-            raise TypeError("response tuple must be (body, status) or (body, status, headers)")
+            raise TypeError(
+                "response tuple must be (body, status), (body, headers) or (body, status, headers)"
+            )
 
     if isinstance(value, (Response, FileResponse, TemplateResponse)):
         response = value
@@ -557,10 +562,16 @@ def make_response(
     return Response(value, final_status, final_headers)
 
 
-def jsonify(data: Any = None, /, **kwargs: Any) -> JSONResponse:
-    if data is not None and kwargs:
-        raise TypeError("jsonify accepts either one positional value or keyword fields")
-    return JSONResponse(kwargs if data is None else data)
+def _jsonify_data(args: tuple[Any, ...], fields: Mapping[str, Any]) -> Any:
+    if args and fields:
+        raise TypeError("jsonify accepts either positional values or keyword fields")
+    if args:
+        return args[0] if len(args) == 1 else list(args)
+    return dict(fields) if fields else None
+
+
+def jsonify(*args: Any, **kwargs: Any) -> JSONResponse:
+    return JSONResponse(_jsonify_data(args, kwargs))
 
 
 def redirect(location: str, status: int = 302) -> RedirectResponse:

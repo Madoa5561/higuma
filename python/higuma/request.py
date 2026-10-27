@@ -354,8 +354,13 @@ class Request:
     def json(self) -> Any:
         return self.get_json()
 
-    def get_json(self, force: bool = False, silent: bool = False) -> Any:
-        if self._json_cache is not _MISSING:
+    @property
+    def blueprints(self) -> list[str]:
+        parts = self.blueprint.split(".") if self.blueprint else []
+        return [".".join(parts[:index]) for index in range(len(parts), 0, -1)]
+
+    def get_json(self, force: bool = False, silent: bool = False, cache: bool = True) -> Any:
+        if cache and self._json_cache is not _MISSING:
             return self._json_cache
         if not force and not self.is_json:
             if silent:
@@ -379,8 +384,9 @@ class Request:
             if silent:
                 return None
             raise BadRequest(detail="invalid JSON request body") from exc
-        self._json_cache = value
-        return self._json_cache
+        if cache:
+            self._json_cache = value
+        return value
 
     @property
     def values(self) -> MultiDict:

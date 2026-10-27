@@ -1,5 +1,10 @@
 # Testing and request contexts
 
+The 0.11 candidate compares URL hooks, config and JSON helpers with Flask in
+`tests/test_flask_migration.py`, plus real native/ASGI/WSGI HTTP in
+`tests/test_flask_migration_server.py`. Context-only helpers do not run URL
+preprocessors: dispatch with a client when testing hooks.
+
 For 0.9+ CLI runners, async HTTP/lifespan/WebSockets, and early-exit streams, see
 [development](developer-experience.md#cli-and-asgi-testing). Unlike the synchronous
 client below, `app.test_async_client()` exercises the ASGI entry point.

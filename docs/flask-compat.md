@@ -163,6 +163,106 @@ JSON MIMEは`application/json`または`application/*+json`です。requestのJS
 従来どおり非JSON MIMEのbodyを解析する必要がある場合は`get_json(force=True)`を指定します。
 解析失敗を`None`にするには`silent=True`を指定します。responseの解析結果はcacheしません。
 
+## 0.11候補: URL hooks・再利用部品・設定読込
+
+この節はmainの0.11.0候補の仕様です。PyPIで公開済みとは限りません。
+repository rootで`python -m pip install -e .`して利用します。必須Python依存は0のままです。
+
+### 言語やtenantなどのURL値をまとめて扱う
+
+`@app.url_value_preprocessor`／`@blueprint.url_value_preprocessor`は
+`(endpoint, values)`を受け取り、before hooksより先にapp → 親Blueprint → 子Blueprintの順で
+実行します。`values`は`request.view_args`と同じdictionaryです。`pop`した値はviewへ渡さず、
+`g`へ移せます。未知のURLや405ではappのcallbackに`(None, None)`を渡します。
+返り値で早期応答はせず、必要なら`abort()`またはbefore hookを使います。
+
+`@app.url_defaults`／`@blueprint.url_defaults`も`(endpoint, values)`を受け取り、
+`url_for()`の値を同じapp → 親 → 子の順で補完します。明示値を壊さないよう`setdefault`を使います。
+`app.inject_url_defaults(endpoint, values)`で直接補完することもできます。
+`request.blueprints`は子から親へ向かう登録名のlistです。
+
+```python
+from higuma import Blueprint, Higuma, g, url_for
+
+app = Higuma(__name__)
+pages = Blueprint("pages", __name__, url_prefix="/<language>")
+
+@pages.url_value_preprocessor
+def select_language(endpoint, values):
+    g.language = values.pop("language")
+
+@pages.url_defaults
+def default_language(endpoint, values):
+    values.setdefault("language", g.get("language", "ja"))
+
+@pages.get("/hello/<name>")
+def hello(name):
+    return {"language": g.language, "next": url_for(".hello", name=name)}
+
+app.register_blueprint(pages)
+```
+
+URL callbackはFlaskと同じく**同期関数**です。async関数・awaitableの返却は拒否します。
+HTTP requestの機能で、WebSocket認証前処理には適用しません。
+URL前処理を使うASGI routeは、hookを飛ばさないよう互換経路で実行します。
+request contextだけを作るhelperは、従来どおり前処理をdispatchしません。
+URL値をユーザー識別に使う場合も、認証・認可・許容値の検証は別途必要です。
+
+### Blueprintからアプリ全体の機能を登録する
+
+`before_app_request`／`after_app_request`／`teardown_app_request`、
+`app_context_processor`、`app_errorhandler`、`app_url_value_preprocessor`、
+`app_url_defaults`をBlueprintに追加できます。これらはBlueprint外のrouteにも適用します。
+同じBlueprint objectを別名で複数回登録しても、全体向けcallbackは**アプリごとに一度だけ**登録します。
+別のアプリに登録した場合は独立して適用します。アプリへの登録前にcallbackを定義してください。
+全体向けhooksの順序は、アプリへ取り込まれた時点の登録順と通常のbefore/after/teardown規則に従います。
+`app_errorhandler(404)`は未知のURLも扱いますが、従来の`errorhandler(404)`は選択された部品内のみです。
+
+### 設定の読込と抽出
+
+```python
+import json
+
+app.config.from_file("settings.json", load=json.load, silent=True)
+app.config.from_object("yourproject.settings.Development")
+app.config.from_prefixed_env("MYAPP")
+client_options = app.config.get_namespace("CLIENT_")
+```
+
+- `from_file(filename, load=json.load, silent=False, text=True)`はアプリの`root_path`を基準に
+  相対パスを解決します。従来のcwd相対の呼び出しは絶対パスを渡して移行してください。
+  `text=False`はbinary loader用です。loaderはmappingを返します。
+- `silent=True`は存在しないパス等だけを無視します。不正JSON・loader失敗・権限エラーは隠しません。
+  `from_envvar(name, silent=True)`も参照先が存在しない場合に`False`を返します。
+- `from_object`はmoduleだけでなく`module.Class`を受け取り、大文字属性だけを読み込みます。
+- `from_prefixed_env(prefix="HIGUMA", loads=json.loads)`は名前順に適用します。
+  例: `MYAPP_CLIENT__TLS__ENABLED=true` → `CLIENT["TLS"]["ENABLED"] = True`。
+  `__`を含むキーは階層として解釈するため、以前のflat keyを使う場合は`from_mapping`で明示設定します。
+  途中の値がdictでない場合はエラーにし、黙って置き換えません。decoderが失敗した値はstrのままです。
+- `get_namespace("CLIENT_")`は接頭辞を除き、小文字keyの新しいdictを返します。
+  `lowercase=False`／`trim_namespace=False`で変更できます。深いcopyではありません。
+- `from_mapping`と`from_file`は従来の小文字keyも保持します。Flaskの大文字key限定とは異なります。
+  設定値が全て自動適用されるわけではありません。body上限などの設定時点は各APIの仕様に従います。
+
+Python設定ファイルの実行、`.env`の自動読込、instance folder APIは追加していません。
+loader・import対象・filenameは開発者が管理し、requestの入力を渡さないでください。
+`Config`は`from higuma import Config`でもimportできます。
+
+### JSONとresponse helperの修正
+
+- `jsonify()`／`jsonify(None)`はJSON `null`です。以前の空objectが必要なら`jsonify({})`へ変更します。
+  複数位置引数はarray、keywordだけならobjectです。位置引数とkeywordの混在は`TypeError`です。
+- `app.jsonify(*values, status=..., headers=...)`にも反映します。`status`／`headers`は従来どおり
+  response指定用のHiguma拡張です。同名のJSON fieldにはdictまたはmoduleの`jsonify`を使います。
+- `make_response()`は空の200 responseを返し、`(body, {header: value})`も受け取ります。
+  Werkzeugのresponse classやstatus文字列、重複headerの全操作を互換化するものではありません。
+- `request.get_json(cache=False)`は解析済みJSONを再利用・更新せず、受信済みbodyを再解析します。
+  bodyそのものを破棄・再受信する指定ではありません。Flaskの未cache stream消費とは異なります。
+
+依存なしの実行例: `python -m examples.flask_migration`。
+GET `/ja/hello/bear`、GET `/`、JSON付きPOST `/echo`を試せます。
+Flaskとの比較テストと、組み込み／ASGI／WSGIの実通信テストで挙動を確認しています。
+
 ## 明示的な境界
 
 0.9+では親子Blueprint・部品のtemplate/static・独自CLIを追加しています。
@@ -176,8 +276,7 @@ JSON MIMEは`application/json`または`application/*+json`です。requestのJS
   `host_url`もorigin root、`full_path`はpathとquery（空queryでも末尾`?`付き）です。
   Flaskの`base_url`はpathを含むため異なります。`request.path`は元のpercent-encoded pathで、
   path引数はdecodeされます。末尾slashの扱いもWerkzeug routingとは異なります。
-- 入力は受信後dispatchし、0.9+では[spoolと逐次読取](uploads.md)を使えます。`get_json(cache=...)`や
-  Flask/Werkzeugのbody API全体、
+- 入力は受信後dispatchし、0.9+では[spoolと逐次読取](uploads.md)を使えます。Flask/Werkzeugのbody API全体、
   完全なWerkzeug request/response操作を提供するものではありません。
 - Template engineはMiniJinjaです。Flask/Jinja2の全filterやPython callable globalは
   提供しません。URLやflashはviewで生成しtemplateのcontextへ渡します。

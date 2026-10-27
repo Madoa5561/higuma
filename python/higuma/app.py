@@ -50,7 +50,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -102,6 +102,7 @@ class Higuma:
         self.cli = CommandGroup()
         self._lifespan_handler = lifespan
         self.config = Config(
+            root_path=self.root_path,
             DEBUG=debug,
             TESTING=False,
             MAX_CONTENT_LENGTH=max_content_length,
@@ -129,6 +130,8 @@ class Higuma:
         self._startup_handlers: list[Callable[..., Any]] = []
         self._shutdown_handlers: list[Callable[..., Any]] = []
         self._context_processors: list[Callable[[], Mapping[str, Any]]] = []
+        self._url_value_preprocessors: list[Callable[..., Any]] = []
+        self._url_defaults: list[Callable[..., Any]] = []
         self._teardown_appcontext: list[Callable[..., Any]] = []
         self._teardown_request: list[Callable[..., Any]] = []
         self.dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = {}
@@ -450,6 +453,17 @@ class Higuma:
                     rule, endpoint=endpoint, view_func=view, methods=methods, **options
                 )
         for registered, item, _ in planned:
+            if item not in self._blueprints.values():
+                for target in (
+                    "_before_request",
+                    "_after_request",
+                    "_teardown_request",
+                    "_context_processors",
+                    "_url_value_preprocessors",
+                    "_url_defaults",
+                ):
+                    getattr(self, target).extend(getattr(item, "_app" + target))
+                self._error_handlers.update(item._app_error_handlers)
             self._blueprints[registered] = item
             if item.template_folder and item.template_folder not in self._template_paths:
                 self._template_paths.append(item.template_folder)
@@ -468,6 +482,20 @@ class Higuma:
     def before_request(self, func: Callable[..., ResponseValue | None]):
         self._before_request.append(func)
         return func
+
+    def url_value_preprocessor(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._url_value_preprocessors.append(func)
+        return func
+
+    def url_defaults(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._url_defaults.append(func)
+        return func
+
+    def inject_url_defaults(self, endpoint: str, values: dict[str, Any]) -> None:
+        scopes = [self, *self._blueprint_chain(endpoint.rpartition(".")[0] or None)]
+        for scope in scopes:
+            for callback in scope._url_defaults:
+                _call_url_hook(callback, endpoint, values)
 
     def after_request(self, func: Callable[..., ResponseValue]):
         self._after_request.append(func)
@@ -656,20 +684,18 @@ class Higuma:
 
     def jsonify(
         self,
-        data: Any = None,
-        /,
-        *,
+        *args: Any,
         status: int = 200,
         headers: Mapping[str, str] | None = None,
         **fields: Any,
     ) -> JSONResponse:
-        if data is not None and fields:
-            raise TypeError("jsonify accepts either one positional value or keyword fields")
-        return JSONResponse(fields if data is None else data, status, headers)
+        from .response import _jsonify_data
+
+        return JSONResponse(_jsonify_data(args, fields), status, headers)
 
     def make_response(
         self,
-        value: ResponseValue,
+        value: ResponseValue = b"",
         status: int | None = None,
         headers: Mapping[str, str] | None = None,
     ):
@@ -692,6 +718,7 @@ class Higuma:
             rule = self._endpoint_rules[endpoint]
         except KeyError as exc:
             raise KeyError(f"unknown endpoint: {endpoint}") from exc
+        self.inject_url_defaults(endpoint, values)
         result = (quote(current.root_path, safe="/") if current else "") + rule.build(values)
         query = {
             key: value
@@ -1071,6 +1098,13 @@ class Higuma:
         def terminal(current_request: Request) -> Any:
             try:
                 if run_hooks:
+                    for scope in [self, *blueprints]:
+                        for preprocessor in scope._url_value_preprocessors:
+                            _call_url_hook(
+                                preprocessor,
+                                current_request.endpoint,
+                                current_request.view_args if current_request.endpoint else None,
+                            )
                     hooks = list(self._before_request)
                     for blueprint in blueprints:
                         hooks.extend(blueprint._before_request)
@@ -1406,6 +1440,14 @@ class Higuma:
         if matched:
             return matched[1], matched[2], methods
         return None, {}, methods
+
+
+def _call_url_hook(callback: Callable[..., Any], endpoint: str | None, values: Any) -> None:
+    result = callback(endpoint, values)
+    if inspect.isawaitable(result):
+        if inspect.iscoroutine(result):
+            result.close()
+        raise TypeError("URL callbacks must be synchronous")
 
 
 def _find_root_path(import_name: str) -> Path:

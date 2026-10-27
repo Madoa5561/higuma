@@ -36,6 +36,7 @@ def eligible(app, route, storage):
                 "_after_request",
                 "_teardown_request",
                 "_error_handlers",
+                "_url_value_preprocessors",
             )
         )
         for item in scopes

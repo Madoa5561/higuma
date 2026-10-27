@@ -1,5 +1,9 @@
 # Examples
 
+0.11候補の`python -m examples.flask_migration`は、言語prefixのURL前処理・既定値、
+Blueprintの全体hooks、namespace設定・JSON cache指定を依存追加なしで試せます。
+[使い方と移行境界](flask-compat.md)を参照してください。
+
 0.10+では`python -m examples.async_ecosystem`（使い捨てSQLite・async API・health・request ID）、
 `python -m examples.redis_sessions`（専用Redis・CSRF付き共有session）、
 `python -m examples.signals`（app別ライフサイクル通知）を追加しています。

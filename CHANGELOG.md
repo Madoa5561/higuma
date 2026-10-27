@@ -7,6 +7,40 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-27
+
+### Added
+
+- Flask-style application and nested Blueprint URL value preprocessors, URL defaults,
+  direct URL-default injection and child-to-parent `request.blueprints` names.
+- Blueprint application-wide before/after/teardown hooks, context processors,
+  error handlers and URL callbacks, installed once per application despite aliases.
+- Config file loader/binary mode/silent missing-path handling, app-root-relative
+  filenames, dotted configuration classes, nested prefixed environment variables,
+  custom environment decoders and namespace extraction. Export Config publicly.
+- Dependency-free migration example, Flask comparison tests and actual native,
+  ASGI and WSGI HTTP coverage. Japanese/English usage and migration boundaries.
+
+### Fixed
+
+- `jsonify()` and `jsonify(None)` produce JSON null, not an empty object; support
+  multiple positional values and reject mixed positional/keyword values.
+- Support parsed request JSON cache bypass, empty `make_response()` calls and
+  `(body, header_mapping)` response tuples. Preserve Higuma response options.
+- `Config.from_envvar(..., silent=True)` also handles a missing target file.
+
+### Migration boundaries
+
+- Use `jsonify({})` explicitly when an empty JSON object is intended.
+- Config file paths are now app-root-relative; pass absolute paths for old cwd-based
+  calls. Environment names containing `__` now describe nested dictionaries.
+- Mapping/file config retains lowercase keys, unlike Flask. No Python-file execution,
+  dotenv autoloading or instance-folder API. Request JSON cache bypass retains the
+  buffered body, unlike consuming an uncached Werkzeug input stream.
+- URL callbacks are synchronous HTTP hooks; ASGI routes with URL preprocessors use
+  the compatibility bridge. Flask extension, routing and response-class compatibility
+  remains partial. No new runtime dependencies.
+
 ## [0.10.0] - 2026-10-27
 
 ### Added

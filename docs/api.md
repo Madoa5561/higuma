@@ -1,5 +1,8 @@
 # APIリファレンス
 
+0.11候補の`Config`、URL hooks、Blueprintのapp-wide hooks、`request.blueprints`、
+JSON helperの追加仕様は[Flask互換性と移行ガイド](flask-compat.md)を参照してください。
+
 0.10+の`AsyncSQLAlchemyExtension`、`Signal`とライフサイクル通知、`RedisSessionStore`/
 `RedisSessionMiddleware`/`RedisRateLimitMiddleware`、`Observability`/`JSONLogFormatter`/
 `HealthChecks`は[非同期・共有状態・運用監視](operations.md)に使用例と境界をまとめています。

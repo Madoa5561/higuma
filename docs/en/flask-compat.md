@@ -168,6 +168,117 @@ for non-JSON responses. If you intentionally parsed those bodies before, use
 `get_json(force=True)`. `silent=True` suppresses parse errors. Response JSON
 results are not cached.
 
+## 0.11 candidate: URL hooks, reusable components, and configuration
+
+This section describes the main branch's 0.11.0 candidate, not a promise of an
+already published PyPI version. Install with `python -m pip install -e .` from
+the checkout. Mandatory Python dependencies remain empty.
+
+### Shared URL values
+
+`@app.url_value_preprocessor` and `@blueprint.url_value_preprocessor` receive
+`(endpoint, values)` before before-request hooks, in app → parent → child order.
+`values` is the same dictionary as `request.view_args`: pop shared values into
+`g` to remove them from the view arguments. For routing 404/405, app callbacks
+receive `(None, None)`. Return values do not short-circuit; use `abort()` or a
+before hook when a response is needed.
+
+`@app.url_defaults` and `@blueprint.url_defaults` fill URL values in the same
+app → parent → child order. Prefer `setdefault` to retain explicit arguments.
+`app.inject_url_defaults(endpoint, values)` also supports direct injection.
+`request.blueprints` lists registered names from child to parent.
+
+```python
+from higuma import Blueprint, Higuma, g, url_for
+
+app = Higuma(__name__)
+pages = Blueprint("pages", __name__, url_prefix="/<language>")
+
+@pages.url_value_preprocessor
+def select_language(endpoint, values):
+    g.language = values.pop("language")
+
+@pages.url_defaults
+def default_language(endpoint, values):
+    values.setdefault("language", g.get("language", "ja"))
+
+@pages.get("/hello/<name>")
+def hello(name):
+    return {"language": g.language, "next": url_for(".hello", name=name)}
+
+app.register_blueprint(pages)
+```
+
+Like Flask, URL callbacks must be **synchronous**; awaitable returns are rejected.
+They apply to HTTP requests, not WebSocket authorization. An ASGI route with URL
+preprocessors uses the compatibility bridge so callbacks cannot be skipped.
+Context-only helpers still do not dispatch preprocessing. URL-based tenant/user
+selection does not replace authentication, authorization, or value validation.
+
+### Blueprint application-wide callbacks
+
+Blueprints support `before_app_request`, `after_app_request`,
+`teardown_app_request`, `app_context_processor`, `app_errorhandler`,
+`app_url_value_preprocessor`, and `app_url_defaults`. They apply outside the
+Blueprint too. The same Blueprint object registered under multiple aliases
+installs application-wide callbacks **once per application**, independently
+for another application. Define callbacks before registration. App-wide hooks
+follow the order they were installed and the usual before/after/teardown rules.
+`app_errorhandler(404)` handles unknown URLs; scoped `errorhandler(404)` still
+requires a selected component route.
+
+### Loading and extracting configuration
+
+```python
+import json
+
+app.config.from_file("settings.json", load=json.load, silent=True)
+app.config.from_object("yourproject.settings.Development")
+app.config.from_prefixed_env("MYAPP")
+client_options = app.config.get_namespace("CLIENT_")
+```
+
+- `from_file(filename, load=json.load, silent=False, text=True)` resolves relative
+  filenames against the application's `root_path`. Migrate old cwd-relative
+  calls to absolute paths. Use `text=False` for binary loaders; return a mapping.
+- `silent=True` suppresses only missing-path and similar errors, not malformed
+  JSON, loader failures, or permission errors. `from_envvar(name, silent=True)`
+  also returns `False` when its target file is missing.
+- `from_object` supports modules and `module.Class`, loading uppercase attributes.
+- `from_prefixed_env(prefix="HIGUMA", loads=json.loads)` applies names in sorted
+  order. `MYAPP_CLIENT__TLS__ENABLED=true` sets `CLIENT["TLS"]["ENABLED"] = True`.
+  Double underscores now mean nesting; use `from_mapping` for intentional flat
+  keys containing `__`. Non-dictionary intermediate values raise instead of being
+  overwritten. Decoder failures retain the original string.
+- `get_namespace("CLIENT_")` returns a new dictionary with trimmed, lowercase
+  keys. Control this with `lowercase=False` / `trim_namespace=False`. It is not
+  a deep copy.
+- Existing `from_mapping` / `from_file` retain lowercase keys too, unlike Flask's
+  uppercase-only loading. Not every config key is automatically applied: follow
+  the documented initialization timing for body limits and other settings.
+
+No Python-file execution, automatic `.env` loading, or instance-folder API is
+added. Loaders, import targets, and filenames must be developer-controlled, not
+request input. `Config` is also available through `from higuma import Config`.
+
+### JSON and response helpers
+
+- `jsonify()` / `jsonify(None)` now produce JSON `null`. Migrate calls needing an
+  empty object to `jsonify({})`. Multiple positional arguments produce arrays;
+  keyword fields produce objects. Mixing both raises `TypeError`.
+- `app.jsonify(*values, status=..., headers=...)` retains Higuma's response options;
+  use a dict or module-level `jsonify` for JSON fields called `status` / `headers`.
+- `make_response()` returns an empty 200 response, and `(body, {header: value})`
+  is accepted. This does not add all Werkzeug response, status-string, or duplicate
+  header operations.
+- `request.get_json(cache=False)` bypasses and does not update parsed JSON cache.
+  It reparses the already-received body; it does not discard or receive it again.
+  Flask's uncached input-stream consumption is intentionally different.
+
+Run `python -m examples.flask_migration` without extra dependencies. Try
+GET `/ja/hello/bear`, GET `/`, and POST `/echo` with JSON. Coverage includes
+comparisons with Flask and actual native/ASGI/WSGI HTTP servers.
+
 ## Compatibility boundaries
 
 0.9 adds nested Blueprints, component resources and app commands; see
@@ -182,7 +293,7 @@ results are not cached.
   path and query, with a trailing `?` for an empty query. `request.path` retains
   percent encoding while route arguments are decoded. Trailing slash routing differs.
 - Ingress completes before dispatch; 0.9 adds [spooling/chunk reading](uploads.md).
-  `get_json(cache=...)`, complete Flask/Werkzeug body APIs,
+  Complete Flask/Werkzeug body APIs,
   and complete Werkzeug request/response manipulation are not provided.
 - Templates use MiniJinja, not all Jinja2 filters or Python callable globals.
   Build URLs and flash messages in the view and pass them as template values.

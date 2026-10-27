@@ -63,6 +63,54 @@ class Blueprint:
         self._teardown_request: list[Callable[..., Any]] = []
         self._context_processors: list[Callable[[], Mapping[str, Any]]] = []
         self._error_handlers: dict[int | type[BaseException], Callable[..., Any]] = {}
+        self._url_value_preprocessors: list[Callable[..., Any]] = []
+        self._url_defaults: list[Callable[..., Any]] = []
+        self._app_before_request: list[Callable[..., Any]] = []
+        self._app_after_request: list[Callable[..., Any]] = []
+        self._app_teardown_request: list[Callable[..., Any]] = []
+        self._app_context_processors: list[Callable[..., Any]] = []
+        self._app_url_value_preprocessors: list[Callable[..., Any]] = []
+        self._app_url_defaults: list[Callable[..., Any]] = []
+        self._app_error_handlers: dict[int | type[BaseException], Callable[..., Any]] = {}
+
+    def before_app_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._app_before_request.append(func)
+        return func
+
+    def after_app_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._app_after_request.append(func)
+        return func
+
+    def teardown_app_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._app_teardown_request.append(func)
+        return func
+
+    def app_context_processor(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._app_context_processors.append(func)
+        return func
+
+    def url_value_preprocessor(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._url_value_preprocessors.append(func)
+        return func
+
+    def url_defaults(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._url_defaults.append(func)
+        return func
+
+    def app_url_value_preprocessor(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._app_url_value_preprocessors.append(func)
+        return func
+
+    def app_url_defaults(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        self._app_url_defaults.append(func)
+        return func
+
+    def app_errorhandler(self, code_or_exception: int | type[BaseException]):
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            self._app_error_handlers[code_or_exception] = func
+            return func
+
+        return decorator
 
     def register_blueprint(
         self, blueprint: Blueprint, *, url_prefix: str | None = None, name: str | None = None
