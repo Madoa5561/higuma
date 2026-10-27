@@ -168,11 +168,11 @@ for non-JSON responses. If you intentionally parsed those bodies before, use
 `get_json(force=True)`. `silent=True` suppresses parse errors. Response JSON
 results are not cached.
 
-## 0.11 candidate: URL hooks, reusable components, and configuration
+## 0.11: URL hooks, reusable components, and configuration
 
-This section describes the main branch's 0.11.0 candidate, not a promise of an
-already published PyPI version. Install with `python -m pip install -e .` from
-the checkout. Mandatory Python dependencies remain empty.
+This section describes 0.11.0. Install with `python -m pip install "higuma==0.11.0"`,
+or `python -m pip install -e .` for development from a repository checkout.
+Mandatory Python dependencies remain empty.
 
 ### Shared URL values
 
@@ -275,7 +275,7 @@ request input. `Config` is also available through `from higuma import Config`.
   It reparses the already-received body; it does not discard or receive it again.
   Flask's uncached input-stream consumption is intentionally different.
 
-Run `python -m examples.flask_migration` without extra dependencies. Try
+From the repository root, run `python -m examples.flask_migration` without extra dependencies. Try
 GET `/ja/hello/bear`, GET `/`, and POST `/echo` with JSON. Coverage includes
 comparisons with Flask and actual native/ASGI/WSGI HTTP servers.
 

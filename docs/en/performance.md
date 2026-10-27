@@ -1,7 +1,7 @@
 # Performance measurements and tradeoffs
 
 The following are historical 0.9/0.10 candidate measurements, not new results
-for the main branch's 0.11 candidate.
+for 0.11.0.
 
 Rust is not a promise of universally higher speed. HTTP transport, Python work,
 templates, I/O waits, and concurrency change results. Flask-style ergonomics and

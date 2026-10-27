@@ -34,13 +34,13 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
-> **0.11.0候補** — Flask風URL hooks、Blueprintのアプリ全体hooks、設定loader・階層付き環境変数、
-> JSON helper互換性を改善。[使い方と移行時の注意](docs/flask-compat.md)。Release／PyPI公開前のmain向けです。
+> **0.11.0** — Flask風URL hooks、Blueprintのアプリ全体hooks、設定loader・階層付き環境変数、
+> JSON helper互換性を改善。[使い方と移行時の注意](docs/flask-compat.md)。
 >
-> **0.10.0候補** — 条件付きASGI高速経路、async DB、Flask風Signals、Redis共有session/quota、
+> **0.11.0に含まれる0.10開発分** — 条件付きASGI高速経路、async DB、Flask風Signals、Redis共有session/quota、
 > request ID・metrics・任意tracing・health checks。[導入と対応境界](docs/operations.md)。
 >
-> **0.9.0** — 親子Blueprint、独自CLI、非同期テストクライアント、任意のSQLAlchemy／Redis連携、
+> **0.11.0に含まれる0.9開発分** — 親子Blueprint、独自CLI、非同期テストクライアント、任意のSQLAlchemy／Redis連携、
 > 大容量入力のディスク退避を追加。Flask風のまま分割アプリを育てる開発体験を整えました。
 > [開発ガイド](docs/developer-experience.md) / [連携と実用サンプル](docs/integrations.md) /
 > [アップロードの境界](docs/uploads.md) / [実測と制約](docs/performance.md) /

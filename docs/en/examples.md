@@ -1,6 +1,6 @@
 # Examples
 
-The 0.11 candidate adds `python -m examples.flask_migration`: language-prefix
+Version 0.11 adds `python -m examples.flask_migration`: language-prefix
 URL preprocessing/defaults, Blueprint app-wide hooks, namespaced config and JSON
 cache control, without extra dependencies. See [migration boundaries](flask-compat.md).
 

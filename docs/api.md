@@ -1,6 +1,6 @@
 # APIリファレンス
 
-0.11候補の`Config`、URL hooks、Blueprintのapp-wide hooks、`request.blueprints`、
+0.11の`Config`、URL hooks、Blueprintのapp-wide hooks、`request.blueprints`、
 JSON helperの追加仕様は[Flask互換性と移行ガイド](flask-compat.md)を参照してください。
 
 0.10+の`AsyncSQLAlchemyExtension`、`Signal`とライフサイクル通知、`RedisSessionStore`/

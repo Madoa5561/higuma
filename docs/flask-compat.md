@@ -163,10 +163,10 @@ JSON MIMEは`application/json`または`application/*+json`です。requestのJS
 従来どおり非JSON MIMEのbodyを解析する必要がある場合は`get_json(force=True)`を指定します。
 解析失敗を`None`にするには`silent=True`を指定します。responseの解析結果はcacheしません。
 
-## 0.11候補: URL hooks・再利用部品・設定読込
+## 0.11: URL hooks・再利用部品・設定読込
 
-この節はmainの0.11.0候補の仕様です。PyPIで公開済みとは限りません。
-repository rootで`python -m pip install -e .`して利用します。必須Python依存は0のままです。
+この節は0.11.0の仕様です。`python -m pip install "higuma==0.11.0"`で利用します。
+repository rootの開発用には`python -m pip install -e .`も使えます。必須Python依存は0のままです。
 
 ### 言語やtenantなどのURL値をまとめて扱う
 
@@ -259,7 +259,7 @@ loader・import対象・filenameは開発者が管理し、requestの入力を�
 - `request.get_json(cache=False)`は解析済みJSONを再利用・更新せず、受信済みbodyを再解析します。
   bodyそのものを破棄・再受信する指定ではありません。Flaskの未cache stream消費とは異なります。
 
-依存なしの実行例: `python -m examples.flask_migration`。
+repository rootでの依存追加なしの実行例: `python -m examples.flask_migration`。
 GET `/ja/hello/bear`、GET `/`、JSON付きPOST `/echo`を試せます。
 Flaskとの比較テストと、組み込み／ASGI／WSGIの実通信テストで挙動を確認しています。
 

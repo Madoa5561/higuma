@@ -1,6 +1,6 @@
 # Testing and request contexts
 
-The 0.11 candidate compares URL hooks, config and JSON helpers with Flask in
+Version 0.11 compares URL hooks, config and JSON helpers with Flask in
 `tests/test_flask_migration.py`, plus real native/ASGI/WSGI HTTP in
 `tests/test_flask_migration_server.py`. Context-only helpers do not run URL
 preprocessors: dispatch with a client when testing hooks.

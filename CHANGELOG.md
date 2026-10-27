@@ -9,6 +9,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [0.11.0] - 2026-10-27
 
+This release also includes the 0.9 and 0.10 development milestones below;
+those versions were not separately published to PyPI.
+
 ### Added
 
 - Flask-style application and nested Blueprint URL value preprocessors, URL defaults,

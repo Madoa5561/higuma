@@ -1,11 +1,11 @@
 # 非同期処理・共有状態・運用監視（0.10+）
 
 基本パッケージの必須Python依存は0です。外部連携は必要なextraだけ導入します。
-この章は0.10.0候補のsource checkout向けです。公開前の機能はPyPI版へまだ含まれないため、
-repositoryから次のコマンドで試します。
+この章の0.10開発分は0.11.0に含まれます。次のコマンドで導入できます。
+`examples/`の実行はrepositoryを取得し、そのroot directoryで行ってください。
 
 ```bash
-python -m pip install -e ".[asgi,async-db,integrations,observability]"
+python -m pip install "higuma[asgi,async-db,integrations,observability]==0.11.0"
 ```
 
 ## ASGIの非同期高速経路

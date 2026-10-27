@@ -1,6 +1,6 @@
 # API reference
 
-See [Flask compatibility and migration](flask-compat.md) for the 0.11 candidate's
+See [Flask compatibility and migration](flask-compat.md) for 0.11's
 `Config`, URL hooks, Blueprint app-wide hooks, `request.blueprints`, and JSON helpers.
 
 For 0.10+ AsyncSQLAlchemyExtension, Signal/lifecycle events, RedisSessionStore,

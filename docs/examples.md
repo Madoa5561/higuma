@@ -1,6 +1,6 @@
 # Examples
 
-0.11候補の`python -m examples.flask_migration`は、言語prefixのURL前処理・既定値、
+0.11の`python -m examples.flask_migration`は、言語prefixのURL前処理・既定値、
 Blueprintの全体hooks、namespace設定・JSON cache指定を依存追加なしで試せます。
 [使い方と移行境界](flask-compat.md)を参照してください。
 
