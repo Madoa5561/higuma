@@ -50,7 +50,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket
 
-__version__ = "0.11.0"
+__version__ = "0.11.1"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -563,6 +563,7 @@ class Higuma:
             else nullcontext()
         )
         with manager:
+            owns_request = _request_context.get() is not request
             token = _push_request(request)
             error = None
             try:
@@ -574,7 +575,11 @@ class Higuma:
                 try:
                     self._do_teardown_request(error)
                 finally:
-                    _pop_request(token)
+                    try:
+                        if owns_request:
+                            self._close_request(request)
+                    finally:
+                        _pop_request(token)
 
     def test_request_context(self, path: str = "/", **kwargs: Any):
         from .testing import TestClient
@@ -1165,6 +1170,8 @@ class Higuma:
                     combined.tasks.extend(background_tasks.tasks)
                     response.background = combined
             dependency_cleanups = request.state.pop("_higuma_dependency_cleanups", [])
+            if isinstance(response, StreamingResponse):
+                response.background = BackgroundTask(response._finish, response.background)
             if dependency_cleanups:
                 response.background = BackgroundTask(
                     self._finish_response_work,
@@ -1223,7 +1230,7 @@ class Higuma:
     ) -> None:
         try:
             if background is not None:
-                background()
+                _resolve_awaitable(background())
         finally:
             self._run_dependency_cleanups(cleanups)
 

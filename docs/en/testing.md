@@ -1,5 +1,11 @@
 # Testing and request contexts
 
+Since 0.11.1, context helpers close request body streams and uploads after teardown.
+Nested contexts sharing one Request close it only at outer exit. Read needed data
+inside the context instead of retaining open uploads/streams afterwards. See
+`tests/test_response_cleanup.py` and real native/ASGI/WSGI coverage in
+`tests/test_response_cleanup_server.py`.
+
 Version 0.11 compares URL hooks, config and JSON helpers with Flask in
 `tests/test_flask_migration.py`, plus real native/ASGI/WSGI HTTP in
 `tests/test_flask_migration_server.py`. Context-only helpers do not run URL

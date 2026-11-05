@@ -1,5 +1,10 @@
 # テストとrequest context
 
+0.11.1以降、context helperはteardown後にbody streamとuploadを閉じます。
+同じRequestを使う入れ子contextは最外の終了時に閉じます。context外へstreamやuploadを持ち出さず、
+必要な内容をcontext内で読み取ってください。後片付けの回帰テストは`tests/test_response_cleanup.py`、
+組み込み／ASGI／WSGI実通信は`tests/test_response_cleanup_server.py`です。
+
 0.11のURL hooks・設定・JSON helperは`tests/test_flask_migration.py`でFlaskと比較し、
 `tests/test_flask_migration_server.py`で組み込み／ASGI／WSGIの実通信を確認します。
 request contextだけを作ってもURL前処理は実行しません。hookを検証する場合はclientでdispatchします。

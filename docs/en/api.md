@@ -177,7 +177,7 @@ and `input` only when safe. Password, token, secret, and Cookie values are redac
 - `values`: query only for GET, otherwise query-first combined query/form (0.7+)
 - `headers`: case-insensitive `Headers`
 - `cookies`: read-only mapping
-- `json` / `get_json(force=False, silent=False)`
+- `json` / `get_json(force=False, silent=False, cache=True)`
 - `form`, `files`, `body`, `text`, and `get_data(as_text=False)`
 - `path_params` / `view_args`
 - `client_addr` / `remote_addr`
@@ -238,6 +238,13 @@ context captured at response creation remains available until the stream finishe
 `text/event-stream`, `Cache-Control: no-cache`, and a buffering opt-out, and is excluded from gzip.
 
 ### Background tasks
+
+Since 0.11.1, raw `Response(..., background=async_callback)` callables are awaited
+with their captured context. Streams close their iterators before background and
+resource cleanup, including normal completion, HEAD and early termination. ASGI
+post-response disconnect notifications do not cancel successful response background work.
+If a native Python iterator call is in progress when disconnected, cleanup follows
+that call's return. This cannot forcibly stop blocking code or survive process termination.
 
 `BackgroundTask(func, *args, **kwargs)` runs a sync or async callable after the response body is
 sent. `BackgroundTasks` uses `add_task()` to register multiple tasks and can be injected into a

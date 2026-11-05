@@ -1850,20 +1850,55 @@ impl IntoResponse for ResponsePayload {
     }
 }
 
+struct ResponseCompletion {
+    background: Option<Py<PyAny>>,
+    runtime: Option<tokio::runtime::Handle>,
+}
+
+impl ResponseCompletion {
+    fn new(background: Option<Py<PyAny>>) -> Self {
+        Self {
+            background,
+            runtime: tokio::runtime::Handle::try_current().ok(),
+        }
+    }
+
+    async fn finish(&mut self) {
+        run_background_task(self.background.take()).await;
+    }
+}
+
+impl Drop for ResponseCompletion {
+    fn drop(&mut self) {
+        let Some(background) = self.background.take() else {
+            return;
+        };
+        if let Some(runtime) = &self.runtime {
+            runtime.spawn(run_background_task(Some(background)));
+        } else {
+            std::thread::spawn(move || {
+                if let Err(error) = Python::attach(|py| background.call0(py).map(|_| ())) {
+                    eprintln!("higuma background task error: {error}");
+                }
+            });
+        }
+    }
+}
+
 fn bytes_response_body(value: Vec<u8>, background: Option<Py<PyAny>>) -> Body {
     let Some(background) = background else {
         return Body::from(value);
     };
     let body_stream = stream::unfold(
-        (Some(value), Some(background)),
-        |(chunk, background)| async move {
+        (Some(value), ResponseCompletion::new(Some(background))),
+        |(chunk, mut completion)| async move {
             if let Some(chunk) = chunk {
                 return Some((
                     Ok::<Bytes, io::Error>(Bytes::from(chunk)),
-                    (None, background),
+                    (None, completion),
                 ));
             }
-            run_background_task(background).await;
+            completion.finish().await;
             None
         },
     );
@@ -1878,16 +1913,16 @@ fn file_response_body(
         return Body::from_stream(reader);
     };
     let body_stream = stream::unfold(
-        (reader, Some(background)),
-        |(mut reader, background)| async move {
+        (reader, ResponseCompletion::new(Some(background))),
+        |(mut reader, mut completion)| async move {
             match reader.next().await {
-                Some(Ok(chunk)) => Some((Ok(chunk), (reader, background))),
+                Some(Ok(chunk)) => Some((Ok(chunk), (reader, completion))),
                 Some(Err(error)) => {
-                    run_background_task(background).await;
-                    Some((Err(error), (reader, None)))
+                    completion.finish().await;
+                    Some((Err(error), (reader, completion)))
                 }
                 None => {
-                    run_background_task(background).await;
+                    completion.finish().await;
                     None
                 }
             }
@@ -1898,14 +1933,17 @@ fn file_response_body(
 
 fn stream_response_body(response: Py<PyAny>, background: Option<Py<PyAny>>) -> Body {
     let body_stream = stream::unfold(
-        (Some(response), background),
-        |(response, background)| async move {
+        (Some(response), Some(ResponseCompletion::new(background))),
+        |(response, mut completion)| async move {
             let Some(response) = response else {
-                run_background_task(background).await;
+                if let Some(completion) = &mut completion {
+                    completion.finish().await;
+                }
                 return None;
             };
             let next = tokio::task::spawn_blocking(move || {
-                Python::attach(|py| -> PyResult<(Py<PyAny>, Option<Vec<u8>>)> {
+                // Keep completion with a pending Python iterator call, including cancellation.
+                let result = Python::attach(|py| -> PyResult<(Py<PyAny>, Option<Vec<u8>>)> {
                     let chunk = response.call_method0(py, "_next_chunk")?;
                     if chunk.bind(py).is_none() {
                         Ok((response, None))
@@ -1913,28 +1951,32 @@ fn stream_response_body(response: Py<PyAny>, background: Option<Py<PyAny>>) -> B
                         let value = chunk.extract::<Vec<u8>>(py)?;
                         Ok((response, Some(value)))
                     }
-                })
+                });
+                (completion, result)
             })
             .await;
             match next {
-                Ok(Ok((response, Some(chunk)))) => Some((
+                Ok((completion, Ok((response, Some(chunk))))) => Some((
                     Ok::<Bytes, io::Error>(Bytes::from(chunk)),
-                    (Some(response), background),
+                    (Some(response), completion),
                 )),
-                Ok(Ok((_response, None))) => {
-                    run_background_task(background).await;
+                Ok((mut completion, Ok((_response, None)))) => {
+                    if let Some(completion) = &mut completion {
+                        completion.finish().await;
+                    }
                     None
                 }
-                Ok(Err(error)) => {
+                Ok((mut completion, Err(error))) => {
                     let message = format!("Python streaming response failed: {error}");
                     eprintln!("higuma {message}");
-                    run_background_task(background).await;
+                    if let Some(completion) = &mut completion {
+                        completion.finish().await;
+                    }
                     Some((Err(io::Error::other(message)), (None, None)))
                 }
                 Err(error) => {
                     let message = format!("Python streaming task failed: {error}");
                     eprintln!("higuma {message}");
-                    run_background_task(background).await;
                     Some((Err(io::Error::other(message)), (None, None)))
                 }
             }

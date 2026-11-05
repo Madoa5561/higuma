@@ -14,7 +14,7 @@ from weakref import WeakKeyDictionary
 
 from .body import BodyBuffer, receive_body
 from .exceptions import BadRequest, HTTPException
-from .execution import AwaitBridge, await_bridge, resolve_awaitable
+from .execution import AwaitBridge, await_bridge
 from .response import (
     FileResponse,
     HTMLResponse,
@@ -172,13 +172,11 @@ class _Body:
             if self.file is not None:
                 self.file.close()
             if isinstance(self.response, StreamingResponse):
-                iterator = self.response._iterator
-                close = getattr(iterator, "aclose", None) or getattr(iterator, "close", None)
-                if close is not None:
-                    self.response._context.run(lambda: resolve_awaitable(close()))
+                self.response._close()
         finally:
-            if self.response.background is not None:
-                self.response.background()
+            background, self.response.background = self.response.background, None
+            if background is not None:
+                background()
 
 
 class _WSGIResult:
@@ -483,6 +481,20 @@ class ASGIApplication:
             await send({"type": "http.response.body", "body": response.body})
             return
 
+        response_complete = False
+
+        async def send_response(event):
+            nonlocal response_complete
+            await send(event)
+            if event["type"] == "http.response.body" and not event.get("more_body", False):
+                response_complete = True
+
+        async def receive_disconnect():
+            event = await receive()
+            if event["type"] == "http.disconnect" and response_complete:
+                await asyncio.Future()
+            return event
+
         def respond(prebuilt=None) -> None:
             body = None
             started = False
@@ -503,7 +515,7 @@ class ASGIApplication:
                 body = _Body(response, raw["method"])
                 attempted_send = True
                 bridge.resolve(
-                    send(
+                    send_response(
                         {
                             "type": "http.response.start",
                             "status": response.status_code,
@@ -517,10 +529,12 @@ class ASGIApplication:
                 started = True
                 for chunk in body:
                     bridge.resolve(
-                        send({"type": "http.response.body", "body": chunk, "more_body": True})
+                        send_response(
+                            {"type": "http.response.body", "body": chunk, "more_body": True}
+                        )
                     )
                 bridge.resolve(
-                    send({"type": "http.response.body", "body": b"", "more_body": False})
+                    send_response({"type": "http.response.body", "body": b"", "more_body": False})
                 )
             except Exception as error:
                 if isinstance(error, OSError) and attempted_send:
@@ -532,8 +546,10 @@ class ASGIApplication:
                     response.background()
                     response.background = None
                 response = self.app._default_http_error(HTTPException(500))
-                bridge.resolve(send({"type": "http.response.start", "status": 500, "headers": []}))
-                bridge.resolve(send({"type": "http.response.body", "body": response.body}))
+                bridge.resolve(
+                    send_response({"type": "http.response.start", "status": 500, "headers": []})
+                )
+                bridge.resolve(send_response({"type": "http.response.body", "body": response.body}))
             finally:
                 if body is not None:
                     body.close()
@@ -548,9 +564,11 @@ class ASGIApplication:
                     route_pattern=route.rule,
                     allowed_methods=allowed,
                 )
-                await run(self.app, route, raw, send, receive, respond, self._worker)
+                await run(
+                    self.app, route, raw, send_response, receive_disconnect, respond, self._worker
+                )
             else:
-                await self._worker(respond, receive)
+                await self._worker(respond, receive_disconnect)
         finally:
             storage.close()
 

@@ -137,6 +137,8 @@ def _exercise_flask_helpers() -> None:
     with app.test_request_context("/smoke/read", base_url="https://example.test"):
         assert request.endpoint == "smoke.read"
         assert request.host_url == "https://example.test/"
+        context_body = request.stream
+    assert context_body.closed
     assert not has_request_context()
     client = app.test_client()
     response = client.get("/smoke/save")
@@ -273,8 +275,9 @@ def main() -> int:
 
     port = _free_port()
     application = """
+import asyncio
 import os
-from higuma import Higuma
+from higuma import Higuma, Response, request
 
 app = Higuma(__name__, static_folder=None)
 
@@ -285,6 +288,23 @@ def health():
 @app.get('/values/<int:value>')
 def value(value: int):
     return {'value': value, 'typed': isinstance(value, int)}
+
+async def completed():
+    await asyncio.sleep(0)
+    app.state['background_path'] = request.path
+
+@app.get('/background')
+def background():
+    app.state['background_body'] = request.stream
+    return Response('bear', background=completed)
+
+@app.get('/background-state')
+def background_state():
+    body = app.state.get('background_body')
+    return {
+        'done': app.state.get('background_path') == '/background',
+        'closed': body is not None and body.closed,
+    }
 
 app.run(host='127.0.0.1', port=int(os.environ['HIGUMA_SMOKE_PORT']), workers=1)
 """
@@ -300,6 +320,23 @@ app.run(host='127.0.0.1', port=int(os.environ['HIGUMA_SMOKE_PORT']), workers=1)
     try:
         _wait_for_server(process, port)
         _exercise_http(port)
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("GET", "/background")
+        response = connection.getresponse()
+        assert response.status == 200 and response.read() == b"bear"
+        connection.close()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+            connection.request("GET", "/background-state")
+            response = connection.getresponse()
+            state = response.read()
+            connection.close()
+            if state == b'{"done":true,"closed":true}':
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(f"native background or body cleanup failed: {state!r}")
     finally:
         process.terminate()
         try:

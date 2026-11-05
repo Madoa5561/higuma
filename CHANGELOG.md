@@ -7,6 +7,29 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-05
+
+### Fixed
+
+- Await raw async response background callbacks and retain their captured context,
+  including callbacks assigned during response finalization.
+- Close request-context-helper body streams and uploads after teardown, including
+  exception paths; nested contexts sharing one Request close it only at outer exit.
+- Explicitly close sync/async streaming iterators before background work and keep
+  close idempotent across normal completion, HEAD, errors and early termination.
+- Retain native response completion work when the transport drops a byte, file or
+  streaming body. Keep pending Python iteration and its finalizer under one owner.
+- Distinguish ASGI post-response disconnect notifications from mid-response
+  disconnects, so successful response completion does not cancel background work.
+
+### Verification and boundaries
+
+- Add unit and real native/Uvicorn/WSGI regression coverage and strengthen published
+  wheel smoke tests for async background completion and request-body closure.
+- Background work is still non-durable. Cleanup needs the process/runtime to remain
+  alive; uncooperative blocking iterator calls cannot be forcibly stopped and may
+  delay native disconnect cleanup until the call returns. No new dependencies.
+
 ## [0.11.0] - 2026-10-27
 
 This release also includes the 0.9 and 0.10 development milestones below;

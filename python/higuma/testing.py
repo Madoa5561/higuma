@@ -9,7 +9,6 @@ from types import TracebackType
 from typing import Any
 from urllib.parse import urlencode, urljoin, urlsplit
 
-from .execution import resolve_awaitable
 from .request import Request
 from .response import (
     FileResponse,
@@ -184,10 +183,7 @@ class TestClient:
         except BaseException:
             try:
                 if isinstance(value, StreamingResponse):
-                    iterator = value._iterator
-                    close = getattr(iterator, "aclose", None) or getattr(iterator, "close", None)
-                    if close is not None:
-                        value._context.run(lambda: resolve_awaitable(close()))
+                    value._close()
             finally:
                 if isinstance(value, Response) and value.background is not None:
                     background, value.background = value.background, None

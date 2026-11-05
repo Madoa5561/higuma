@@ -108,7 +108,11 @@ class Response:
         self.history: tuple[Response, ...] = ()
         if background is not None and not callable(background):
             raise TypeError("background must be callable")
-        self.background = background
+        self.background = (
+            background
+            if background is None or isinstance(background, (BackgroundTask, BackgroundTasks))
+            else BackgroundTask(background)
+        )
 
     @property
     def status_code(self) -> int:
@@ -405,6 +409,23 @@ class StreamingResponse(Response):
             raise TypeError("streaming content must be an iterable or async iterable")
         self._context = copy_context()
         self._finished = False
+        self._closed = False
+
+    def _close(self) -> None:
+        if self._closed:
+            return
+        self._closed = self._finished = True
+        close = getattr(self._iterator, "aclose", None) or getattr(self._iterator, "close", None)
+        if close is not None:
+            self._context.run(lambda: _resolve_stream_awaitable(close()))
+
+    def _finish(self, background: Callable[[], Any] | None) -> None:
+        self.background = None
+        try:
+            self._close()
+        finally:
+            if background is not None:
+                _resolve_stream_awaitable(background())
 
     def _next_chunk(self) -> bytes | None:
         return self._context.run(self._next_chunk_in_context)

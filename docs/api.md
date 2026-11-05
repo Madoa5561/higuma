@@ -175,7 +175,7 @@ def create_item(
 - `values`: GETではqueryのみ、それ以外はquery優先でformと統合（0.7+）
 - `headers`: case-insensitiveな`Headers`
 - `cookies`: read-only mapping
-- `json` / `get_json(force=False, silent=False)`
+- `json` / `get_json(force=False, silent=False, cache=True)`
 - `form`、`files`、`body`、`text`、`get_data(as_text=False)`
 - `path_params` / `view_args`
 - `client_addr` / `remote_addr`
@@ -233,6 +233,12 @@ SSEには`text/event-stream`、`Cache-Control: no-cache`、buffering抑止header
 gzip対象から除外されます。
 
 ### Background task
+
+0.11.1では`Response(..., background=async_callback)`の直接指定もawaitし、作成時のcontextを保持します。
+streamの正常終了・HEAD・途中切断ではiteratorを閉じ、その後backgroundとリソース解放を実行します。
+ASGIの応答完了後の切断通知はbackgroundを中断しません。
+組み込みサーバーで切断時にPython iteratorの呼び出しが実行中なら、その終了後に後処理します。
+協調しないblocking処理の強制停止や、プロセス強制終了後の実行保証ではありません。
 
 `BackgroundTask(func, *args, **kwargs)`はresponse body送信後に同期・非同期callableを実行します。
 `BackgroundTasks`は`add_task()`で複数登録でき、handler引数へも自動注入できます。登録順に実行し、
