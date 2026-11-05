@@ -21,6 +21,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
   streaming body. Keep pending Python iteration and its finalizer under one owner.
 - Distinguish ASGI post-response disconnect notifications from mid-response
   disconnects, so successful response completion does not cancel background work.
+  Account for HEAD and Content-Length completion before the final ASGI body event.
 
 ### Verification and boundaries
 

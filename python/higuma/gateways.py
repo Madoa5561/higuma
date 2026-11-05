@@ -482,12 +482,28 @@ class ASGIApplication:
             return
 
         response_complete = False
+        response_remaining = None
 
         async def send_response(event):
-            nonlocal response_complete
-            await send(event)
-            if event["type"] == "http.response.body" and not event.get("more_body", False):
+            nonlocal response_complete, response_remaining
+            if event["type"] == "http.response.start":
+                if raw["method"] == "HEAD" or event["status"] in {204, 205, 304}:
+                    response_remaining = 0
+                else:
+                    response_remaining = next(
+                        (int(value) for key, value in event["headers"] if key == b"content-length"),
+                        None,
+                    )
+            elif event["type"] == "http.response.body":
+                if response_remaining is not None:
+                    response_remaining -= len(event.get("body", b""))
+                if not event.get("more_body", False):
+                    response_complete = True
+            # A peer can finish at Content-Length/HEAD before the final ASGI event,
+            # and receive() may wake while send() is still returning.
+            if response_remaining == 0:
                 response_complete = True
+            await send(event)
 
         async def receive_disconnect():
             event = await receive()

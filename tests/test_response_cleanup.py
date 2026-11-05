@@ -107,7 +107,10 @@ def test_background_failure_still_closes_body():
 
 
 @pytest.mark.parametrize("async_handler", [False, True])
-def test_asgi_completed_response_disconnect_does_not_cancel_background(async_handler):
+@pytest.mark.parametrize("disconnect_at", ["final", "length", "head"])
+def test_asgi_completed_response_disconnect_does_not_cancel_background(
+    async_handler, disconnect_at
+):
     from test_gateways import scope
 
     app = Higuma(__name__, static_folder=None)
@@ -130,10 +133,23 @@ def test_asgi_completed_response_disconnect_does_not_cancel_background(async_han
         await incoming.put({"type": "http.request", "body": b""})
 
         async def send(event):
-            if event["type"] == "http.response.body" and not event.get("more_body", False):
+            complete = (disconnect_at == "head" and event["type"] == "http.response.start") or (
+                event["type"] == "http.response.body"
+                and (
+                    (disconnect_at == "length" and event.get("body") == b"bear")
+                    or (disconnect_at == "final" and not event.get("more_body", False))
+                )
+            )
+            if complete:
                 await incoming.put({"type": "http.disconnect"})
+                await asyncio.sleep(0)
 
-        await asyncio.wait_for(app.asgi_app(scope(), incoming.get, send), 3)
+        await asyncio.wait_for(
+            app.asgi_app(
+                scope(method="HEAD" if disconnect_at == "head" else "GET"), incoming.get, send
+            ),
+            3,
+        )
 
     asyncio.run(exercise())
     assert calls == ["/"]
