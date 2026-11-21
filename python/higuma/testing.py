@@ -179,7 +179,7 @@ class TestClient:
         else:
             value = self.app._fallback_callback(raw)
         try:
-            response = self._materialize(value)
+            response = self._materialize(value, method)
         except BaseException:
             try:
                 if isinstance(value, StreamingResponse):
@@ -191,7 +191,8 @@ class TestClient:
             raise
 
         if method == "HEAD":
-            response.headers.setdefault("content-length", str(len(response.body)))
+            if not isinstance(value, StreamingResponse):
+                response.headers.setdefault("content-length", str(len(response.body)))
             response.body = b""
         elif response.status_code in {204, 205, 304}:
             response.headers.pop("content-length", None)
@@ -301,15 +302,17 @@ class TestClient:
     def head(self, path: str, **kwargs: Any) -> Response:
         return self.open(path, method="HEAD", **kwargs)
 
-    def _materialize(self, value: Any) -> Response:
+    def _materialize(self, value: Any, method: str = "GET") -> Response:
         response = make_response(value)
         if isinstance(response, StreamingResponse):
             chunks = []
-            while True:
-                chunk = response._next_chunk()
-                if chunk is None:
-                    break
-                chunks.append(chunk)
+            if method != "HEAD" and response.status_code not in {204, 205, 304}:
+                while True:
+                    chunk = response._next_chunk()
+                    if chunk is None:
+                        break
+                    chunks.append(chunk)
+            response._close()
             materialized = Response(
                 b"".join(chunks),
                 response.status_code,

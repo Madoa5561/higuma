@@ -132,7 +132,7 @@ class _Body:
             self.remaining = response.length
             self.length = response.length
         elif isinstance(response, StreamingResponse):
-            self.length = None
+            self.length = response.content_length
         else:
             self.length = len(response.body)
         self.suppress = method == "HEAD" or response.status_code in {204, 205, 304}
@@ -491,7 +491,11 @@ class ASGIApplication:
                     response_remaining = 0
                 else:
                     response_remaining = next(
-                        (int(value) for key, value in event["headers"] if key == b"content-length"),
+                        (
+                            int(value)
+                            for key, value in event["headers"]
+                            if key.lower() == b"content-length"
+                        ),
                         None,
                     )
             elif event["type"] == "http.response.body":
@@ -501,7 +505,7 @@ class ASGIApplication:
                     response_complete = True
             # A peer can finish at Content-Length/HEAD before the final ASGI event,
             # and receive() may wake while send() is still returning.
-            if response_remaining == 0:
+            if response_remaining is not None and response_remaining <= 0:
                 response_complete = True
             await send(event)
 
@@ -558,17 +562,32 @@ class ASGIApplication:
                 if started:
                     raise
                 self.app.logger.exception("ASGI response failed")
-                if body is None and response is not None and response.background is not None:
-                    response.background()
-                    response.background = None
-                response = self.app._default_http_error(HTTPException(500))
-                bridge.resolve(
-                    send_response({"type": "http.response.start", "status": 500, "headers": []})
-                )
-                bridge.resolve(send_response({"type": "http.response.body", "body": response.body}))
+                fallback = self.app._default_http_error(HTTPException(500))
+                if body is None and response is not None:
+                    fallback.background, response.background = response.background, None
+                    body = _Body(fallback, raw["method"])
+                try:
+                    bridge.resolve(
+                        send_response({"type": "http.response.start", "status": 500, "headers": []})
+                    )
+                    bridge.resolve(
+                        send_response({"type": "http.response.body", "body": fallback.body})
+                    )
+                except OSError:
+                    return
             finally:
+                if bridge is not None:
+                    bridge.begin_cleanup()
                 if body is not None:
                     body.close()
+                elif response is not None:
+                    try:
+                        if isinstance(response, StreamingResponse):
+                            response._close()
+                    finally:
+                        background, response.background = response.background, None
+                        if background is not None:
+                            background()
 
         try:
             from .async_dispatch import eligible, run
@@ -636,6 +655,8 @@ class ASGIApplication:
             if event["type"] == "websocket.disconnect":
                 peer_gone.set()
             await incoming.put(event)
+            if event["type"] == "websocket.disconnect":
+                await asyncio.Future()
             return event
 
         def serve() -> None:
@@ -661,6 +682,8 @@ class ASGIApplication:
                     )
                 else:
                     bridge.resolve(send({"type": "websocket.close", "code": 1008}))
+                if bridge is not None:
+                    bridge.begin_cleanup()
                 if preflight.background is not None:
                     preflight.background()
                 return
@@ -677,17 +700,23 @@ class ASGIApplication:
                 accept["headers"] = headers
             elif any(key == b"set-cookie" for key, _ in headers):
                 bridge.resolve(send({"type": "websocket.close", "code": 1008}))
+                if bridge is not None:
+                    bridge.begin_cleanup()
                 if preflight.background is not None:
                     preflight.background()
                 return
             bridge.resolve(send(accept))
             try:
                 response = self.app._dispatch_websocket(route, raw, session)
+                if bridge is not None:
+                    bridge.begin_cleanup()
                 if response.background is not None:
                     response.background()
                 if response.status_code >= 400:
                     session.close(1011, "")
             finally:
+                if bridge is not None:
+                    bridge.begin_cleanup()
                 if preflight.background is not None:
                     preflight.background()
                 session.close(1000, "")

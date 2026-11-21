@@ -7,6 +7,31 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-11-22
+
+### Fixed
+
+- Track `HEAD`, `Content-Length`, and bodyless (`204`/`205`/`304`) completion in
+  `Observability.wrap_asgi` before the final ASGI body event so post-response
+  disconnects are recorded as `completed` instead of `disconnected` or trace errors.
+- Unwind event-loop cancellation before resolving worker futures in `AwaitBridge`,
+  protect response/stream/WebSocket cleanup phases from late disconnect signals, and
+  let ASGI WebSocket handlers await inside `WebSocketDisconnect` and teardown blocks.
+- Wrap `response.background = callback` assignments in `BackgroundTask` with their
+  captured context, preserve explicit `StreamingResponse(..., content_length=...)`
+  across ASGI, WSGI, and `TestClient`, avoid draining streams on `HEAD` or bodyless
+  statuses in `TestClient`, and close replaced or aborted `StreamingResponse` objects
+  (including custom `Iterable`/`AsyncIterable` containers with `close`/`aclose`).
+- Keep `request.stream` and `request.files` open until dependency cleanups and
+  `teardown_request` finish on unhandled exceptions or cancellations, avoid creating
+  a native `AwaitBridge` on purely synchronous requests, and run native cleanup on
+  `TemplateResponse`/`FileResponse` errors, WebSocket preflight upgrades, bodyless
+  responses (`204`/`205`/`304` without chunked framing), and WebSocket handler errors
+  (closing with `1011`).
+- Await `async def` `@auth.load_user` callbacks in `AuthManager` and treat loaded user
+  objects without an explicit `is_authenticated` attribute as truthy in `current_user`.
+- Update `rustix` to `1.1.6` in `Cargo.lock` (`RUSTSEC-2026-0486`).
+
 ## [0.11.1] - 2026-11-05
 
 ### Fixed

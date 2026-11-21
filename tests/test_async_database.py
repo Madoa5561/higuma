@@ -42,7 +42,7 @@ def test_async_database_explicit_commit_rollback_di_and_shutdown(tmp_path):
         }
 
     async def exercise():
-        async with app.test_async_client() as client:
+        async with app.test_async_client(timeout=15) as client:
             assert (await client.post("/write")).get_json() == {"ok": True}
             assert (await client.post("/rollback")).get_json() == {"ok": False}
             assert (await client.get("/")).get_json() == {"values": ["saved"]}

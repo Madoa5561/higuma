@@ -239,10 +239,12 @@ context captured at response creation remains available until the stream finishe
 
 ### Background tasks
 
-Since 0.11.1, raw `Response(..., background=async_callback)` callables are awaited
-with their captured context. Streams close their iterators before background and
-resource cleanup, including normal completion, HEAD and early termination. ASGI
-post-response disconnect notifications do not cancel successful response background work.
+Since 0.11.1, raw `Response(..., background=async_callback)` and
+`response.background = async_callback` callables are awaited
+with their captured context. Streams close their iterators and closable stream containers
+before background and resource cleanup, including normal completion, HEAD, replacement by
+after-request hooks, and early termination. ASGI post-response disconnect notifications do
+not cancel successful response background work or mark Observability metrics as disconnected.
 If a native Python iterator call is in progress when disconnected, cleanup follows
 that call's return. This cannot forcibly stop blocking code or survive process termination.
 

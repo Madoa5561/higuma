@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import mimetypes
 import re
@@ -106,12 +107,24 @@ class Response:
         self._extra_headers: list[tuple[str, str]] = []
         self.media_type = media_type
         self.history: tuple[Response, ...] = ()
-        if background is not None and not callable(background):
+        self._background: BackgroundTask | BackgroundTasks | None = None
+        self.background = background
+
+    @property
+    def background(self) -> BackgroundTask | BackgroundTasks | None:
+        return self._background
+
+    @background.setter
+    def background(
+        self,
+        value: BackgroundTask | BackgroundTasks | Callable[[], Any] | None,
+    ) -> None:
+        if value is not None and not callable(value):
             raise TypeError("background must be callable")
-        self.background = (
-            background
-            if background is None or isinstance(background, (BackgroundTask, BackgroundTasks))
-            else BackgroundTask(background)
+        self._background = (
+            value
+            if value is None or isinstance(value, (BackgroundTask, BackgroundTasks))
+            else BackgroundTask(value)
         )
 
     @property
@@ -399,6 +412,8 @@ class StreamingResponse(Response):
         else:
             response_headers["content-length"] = str(content_length)
         super().__init__(b"", status, response_headers, media_type, background)
+        self.content_length = content_length
+        self._content = content
         if isinstance(content, AsyncIterable):
             self._iterator = content.__aiter__()
             self._is_async = True
@@ -415,9 +430,27 @@ class StreamingResponse(Response):
         if self._closed:
             return
         self._closed = self._finished = True
-        close = getattr(self._iterator, "aclose", None) or getattr(self._iterator, "close", None)
-        if close is not None:
-            self._context.run(lambda: _resolve_stream_awaitable(close()))
+        targets = [self._iterator]
+        if self._content is not self._iterator:
+            targets.append(self._content)
+        for target in targets:
+            close = getattr(target, "aclose", None) or getattr(target, "close", None)
+            if close is not None:
+                self._context.run(lambda close=close: _resolve_stream_awaitable(close()))
+
+    async def _aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = self._finished = True
+        targets = [self._iterator]
+        if self._content is not self._iterator:
+            targets.append(self._content)
+        for target in targets:
+            close = getattr(target, "aclose", None) or getattr(target, "close", None)
+            if close is not None:
+                result = self._context.run(close)
+                if inspect.isawaitable(result):
+                    await result
 
     def _finish(self, background: Callable[[], Any] | None) -> None:
         self.background = None

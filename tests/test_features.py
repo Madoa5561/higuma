@@ -328,6 +328,46 @@ class FeatureTests(unittest.TestCase):
         )
         self.assertIn("usr_socket123", sent[0])
 
+    def test_async_user_loader_and_implicit_authenticated_truthiness(self):
+        import asyncio
+
+        @dataclass
+        class PlainUser:
+            id: str
+
+        user = PlainUser("usr_async123")
+        app = self.make_app()
+        auth = AuthManager(
+            app,
+            secret_key="async-auth-secret-that-is-at-least-32-bytes",
+        )
+
+        @auth.load_user
+        async def load_user(user_id: str):
+            await asyncio.sleep(0)
+            return user if user_id == user.id else None
+
+        @app.post("/login")
+        def login():
+            auth.login_user(user)
+            return {"ok": True}
+
+        @app.get("/status")
+        def status():
+            return {"logged_in": bool(current_user), "id": getattr(current_user, "id", None)}
+
+        @app.get("/protected")
+        @auth.login_required
+        def protected():
+            return {"id": current_user.id}
+
+        client = app.test_client()
+        self.assertEqual(client.get("/status").json, {"logged_in": False, "id": None})
+        self.assertEqual(client.get("/protected").status_code, 401)
+        self.assertEqual(client.post("/login").status_code, 200)
+        self.assertEqual(client.get("/status").json, {"logged_in": True, "id": "usr_async123"})
+        self.assertEqual(client.get("/protected").json, {"id": "usr_async123"})
+
 
 if __name__ == "__main__":
     unittest.main()

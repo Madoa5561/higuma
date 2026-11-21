@@ -34,6 +34,10 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.2** — ASGI監視・WebSocket切断時やhook差替時の終了処理、`response.background`再代入、
+> `StreamingResponse`の`content_length`・`HEAD`一貫性、native WebSocket/205応答の後処理を改善。
+> [終了処理と運用上の境界](docs/api.md#background-task)。必須Python依存は0のままです。
+>
 > **0.11.1** — 非同期background、context内upload、stream完了・HEAD・切断時の後片付けを修正。
 > [終了処理と運用上の境界](docs/api.md#background-task)。必須Python依存は0のままです。
 >

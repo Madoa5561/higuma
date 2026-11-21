@@ -37,10 +37,9 @@ async def audit_health_check_async() -> None:
 
 @app.get("/health/async-background")
 def health_async_background() -> JSONResponse:
-    return JSONResponse(
-        {"ready": app.state.get("ready", False)},
-        background=audit_health_check_async,
-    )
+    response = JSONResponse({"ready": app.state.get("ready", False)})
+    response.background = audit_health_check_async
+    return response
 
 
 if __name__ == "__main__":

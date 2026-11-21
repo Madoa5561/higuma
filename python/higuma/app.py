@@ -26,7 +26,7 @@ from .blueprint import Blueprint
 from .config import Config
 from .context import _app_context_error, _AppGlobals, _g_context
 from .exceptions import Forbidden, HTTPException, MethodNotAllowed, NotFound
-from .execution import close_native_bridge, resolve_awaitable
+from .execution import _current_bridge, close_native_bridge, resolve_awaitable
 from .mounts import asgi_view, wsgi_view
 from .openapi import generate_openapi, swagger_ui_html
 from .parameters import (
@@ -48,9 +48,9 @@ from .response import (
 )
 from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
-from .websocket import WebSocket
+from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.1"
+__version__ = "0.11.2"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -981,13 +981,18 @@ class Higuma:
                 if name in signature.parameters
             }
             parameters = signature.parameters
-            if "websocket" in parameters:
-                kwargs["websocket"] = websocket
-                return _resolve_awaitable(route.view_func(**kwargs))
-            if "ws" in parameters:
-                kwargs["ws"] = websocket
-                return _resolve_awaitable(route.view_func(**kwargs))
-            return _resolve_awaitable(route.view_func(websocket, **kwargs))
+            try:
+                if "websocket" in parameters:
+                    kwargs["websocket"] = websocket
+                    return _resolve_awaitable(route.view_func(**kwargs))
+                if "ws" in parameters:
+                    kwargs["ws"] = websocket
+                    return _resolve_awaitable(route.view_func(**kwargs))
+                return _resolve_awaitable(route.view_func(websocket, **kwargs))
+            except WebSocketDisconnect as exc:
+                if self._find_error_handler(exc, request) is not None:
+                    raise
+                return None
 
         return self._dispatch(request, endpoint_call)
 
@@ -1134,30 +1139,52 @@ class Higuma:
 
             call_next = call_middleware
 
+        def replace_response(current: Response | None, updated: Response) -> Response:
+            if (
+                current is not None
+                and current is not updated
+                and isinstance(current, StreamingResponse)
+            ):
+                current._close()
+            return updated
+
         try:
             try:
                 if run_hooks:
                     signals.request_started.send(self)
-                response = self._render_signaled_template(make_response(call_next(request)))
+                raw_response = make_response(call_next(request))
+                response = replace_response(
+                    raw_response, self._render_signaled_template(raw_response)
+                )
             except Exception as exc:  # noqa: BLE001 - middleware exception boundary
                 response = make_response(self._handle_exception(exc, request))
 
             if run_hooks:
                 try:
                     for hook in request.state.pop("_higuma_after_request", []):
-                        response = make_response(_resolve_awaitable(hook(response)))
+                        response = replace_response(
+                            response, make_response(_resolve_awaitable(hook(response)))
+                        )
                     for blueprint in reversed(blueprints):
                         for hook in reversed(blueprint._after_request):
-                            response = make_response(_call_after_hook(hook, request, response))
+                            response = replace_response(
+                                response, make_response(_call_after_hook(hook, request, response))
+                            )
                     for hook in reversed(self._after_request):
-                        response = make_response(_call_after_hook(hook, request, response))
+                        response = replace_response(
+                            response, make_response(_call_after_hook(hook, request, response))
+                        )
                 except Exception as exc:  # noqa: BLE001 - after hook exception boundary
-                    response = make_response(self._handle_exception(exc, request))
+                    response = replace_response(
+                        response, make_response(self._handle_exception(exc, request))
+                    )
             try:
                 for finalize in request.state.pop("_higuma_response_finalizers", []):
-                    response = make_response(finalize(response))
+                    response = replace_response(response, make_response(finalize(response)))
             except Exception as exc:  # noqa: BLE001 - response finalization boundary
-                response = make_response(self._handle_exception(exc, request))
+                response = replace_response(
+                    response, make_response(self._handle_exception(exc, request))
+                )
             response = self._prepare_file_response(request, response)
             if run_hooks:
                 signals.request_finished.send(self, response=response)
@@ -1181,18 +1208,38 @@ class Higuma:
             return response
         except BaseException as exc:
             dispatch_error = exc
-            self._run_dependency_cleanups(dependency_cleanups)
-            dependency_cleanups.clear()
-            self._close_request(request)
             raise
         finally:
+            bridge = _current_bridge(create=False)
+            if bridge is not None:
+                if dispatch_error is not None:
+                    bridge.begin_cleanup()
+                else:
+                    bridge.clear_cancel_request()
             try:
-                self._run_dependency_cleanups(request.state.pop("_higuma_dependency_cleanups", []))
+                if dispatch_error is not None and isinstance(response, StreamingResponse):
+                    try:
+                        response._close()
+                    except BaseException:
+                        self.logger.exception("stream cleanup failed")
+                if dispatch_error is not None:
+                    pending_cleanups = [
+                        *dependency_cleanups,
+                        *request.state.pop("_higuma_dependency_cleanups", []),
+                    ]
+                    dependency_cleanups.clear()
+                    self._run_dependency_cleanups(pending_cleanups)
+                else:
+                    self._run_dependency_cleanups(
+                        request.state.pop("_higuma_dependency_cleanups", [])
+                    )
                 handled_error = request.state.pop("_higuma_request_error", None)
                 self._do_teardown_request(
                     dispatch_error if dispatch_error is not None else handled_error
                 )
-                if response is not None and (
+                if dispatch_error is not None:
+                    self._close_request(request)
+                elif response is not None and (
                     request._body_file is not None
                     or request._files_cache
                     or request.state.get("_higuma_native_bridge")
@@ -1205,6 +1252,11 @@ class Higuma:
                         [lambda: self._close_request(request)],
                     )
             except BaseException:
+                if isinstance(response, StreamingResponse):
+                    try:
+                        response._close()
+                    except BaseException:
+                        self.logger.exception("stream cleanup failed")
                 self._run_dependency_cleanups(dependency_cleanups)
                 dependency_cleanups.clear()
                 self._close_request(request)

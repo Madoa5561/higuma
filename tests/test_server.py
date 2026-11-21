@@ -231,6 +231,19 @@ def denied_websocket(ws):
     ws.send_text("must-not-upgrade")
 
 
+@app.websocket("/ws-error")
+def error_websocket(ws):
+    request.state.setdefault("_higuma_after_request", []).append(
+        lambda response: setattr(
+            response,
+            "background",
+            lambda: Path(os.environ["HIGUMA_CLEANUP_FILE"]).write_text("/ws-error", encoding="utf-8"),
+        )
+        or response
+    )
+    raise RuntimeError("websocket failed")
+
+
 app.run(host="127.0.0.1", port=int(os.environ["HIGUMA_TEST_PORT"]), workers=1)
 """
 
@@ -734,6 +747,19 @@ class RealServerTests(unittest.TestCase):
             self.assertEqual(headers.get("location"), "/login")
             self.assertNotIn("sec-websocket-accept", headers)
             self.assertIn(remainder, (b"", b"sign in"))
+
+    def test_websocket_handler_exception_closes_with_internal_error_and_runs_cleanup(self) -> None:
+        self.cleanup_file.unlink(missing_ok=True)
+        with self.websocket_handshake("/ws-error") as (connection, status, _, remainder):
+            self.assertEqual(status, 101)
+            frame_buffer = bytearray(remainder)
+            opcode, payload = _read_frame(connection, frame_buffer)
+            self.assertEqual(opcode, 0x8)
+            self.assertEqual(struct.unpack("!H", payload[:2])[0], 1011)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and not self.cleanup_file.exists():
+            time.sleep(0.01)
+        self.assertEqual(self.cleanup_file.read_text(encoding="utf-8"), "/ws-error")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,10 @@
 # Testing and request contexts
 
-Since 0.11.1, context helpers close request body streams and uploads after teardown.
+Since 0.11.1, context helpers and request dispatch close request body streams and uploads
+after dependency cleanups and teardown complete (including exception and cancellation paths).
 Nested contexts sharing one Request close it only at outer exit. Read needed data
-inside the context instead of retaining open uploads/streams afterwards. See
+inside the context instead of retaining open uploads/streams afterwards. `TestClient.head()`
+also closes streams without draining them. See
 `tests/test_response_cleanup.py` and real native/ASGI/WSGI coverage in
 `tests/test_response_cleanup_server.py`.
 

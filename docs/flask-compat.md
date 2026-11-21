@@ -165,7 +165,7 @@ JSON MIMEは`application/json`または`application/*+json`です。requestのJS
 
 ## 0.11: URL hooks・再利用部品・設定読込
 
-この節は0.11系列の仕様です。`python -m pip install "higuma==0.11.1"`で利用します。
+この節は0.11系列の仕様です。`python -m pip install "higuma==0.11.2"`で利用します。
 repository rootの開発用には`python -m pip install -e .`も使えます。必須Python依存は0のままです。
 
 ### 言語やtenantなどのURL値をまとめて扱う

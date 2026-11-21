@@ -234,9 +234,11 @@ gzip対象から除外されます。
 
 ### Background task
 
-0.11.1では`Response(..., background=async_callback)`の直接指定もawaitし、作成時のcontextを保持します。
-streamの正常終了・HEAD・途中切断ではiteratorを閉じ、その後backgroundとリソース解放を実行します。
-ASGIの応答完了後の切断通知はbackgroundを中断しません。
+0.11.1以降では`Response(..., background=async_callback)`や`response.background = async_callback`の
+直接指定もawaitし、設定時のcontextを保持します。
+streamの正常終了・HEAD・途中切断・after hookによるresponse差替ではiteratorとclose可能なstream本体を閉じ、
+その後backgroundとリソース解放を実行します。
+ASGIの応答完了後の切断通知はbackgroundやObservabilityの完了記録を中断しません。
 組み込みサーバーで切断時にPython iteratorの呼び出しが実行中なら、その終了後に後処理します。
 協調しないblocking処理の強制停止や、プロセス強制終了後の実行保証ではありません。
 

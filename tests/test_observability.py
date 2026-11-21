@@ -139,33 +139,45 @@ def test_opentelemetry_span_export_is_explicit_and_contains_no_exception_message
     provider.shutdown()
 
 
-def test_asgi_post_response_disconnect_is_not_a_failed_request():
+@pytest.mark.parametrize("async_handler", [False, True])
+@pytest.mark.parametrize("disconnect_at", ["final", "length", "head", "no_content"])
+def test_asgi_post_response_disconnect_is_not_a_failed_request(async_handler, disconnect_at):
     from test_gateways import scope
 
     observer = Observability()
     app = Higuma(__name__, static_folder=None)
 
-    @app.get("/")
     def index():
+        if disconnect_at == "no_content":
+            return "", 204
         return "bear"
 
-    async def exercise():
-        complete = asyncio.Event()
-        first = True
+    async def async_index():
+        return index()
 
-        async def receive():
-            nonlocal first
-            if first:
-                first = False
-                return {"type": "http.request", "body": b""}
-            await complete.wait()
-            return {"type": "http.disconnect"}
+    app.get("/")(async_index if async_handler else index)
+
+    async def exercise():
+        incoming = asyncio.Queue()
+        await incoming.put({"type": "http.request", "body": b""})
 
         async def send(event):
-            if event["type"] == "http.response.body" and not event.get("more_body", False):
-                complete.set()
+            complete = (
+                disconnect_at in {"head", "no_content"} and event["type"] == "http.response.start"
+            ) or (
+                event["type"] == "http.response.body"
+                and (
+                    (disconnect_at == "length" and event.get("body") == b"bear")
+                    or (disconnect_at == "final" and not event.get("more_body", False))
+                )
+            )
+            if complete:
+                await incoming.put({"type": "http.disconnect"})
+                await asyncio.sleep(0)
 
-        await observer.wrap_asgi(app)(scope(), receive, send)
+        await observer.wrap_asgi(app)(
+            scope(method="HEAD" if disconnect_at == "head" else "GET"), incoming.get, send
+        )
 
     asyncio.run(exercise())
     assert observer.snapshot()["series"][0]["outcome"] == "completed"

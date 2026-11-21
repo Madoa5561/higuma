@@ -98,7 +98,9 @@ def _exercise_flask_helpers() -> None:
         Blueprint,
         Config,
         Higuma,
+        Response,
         SessionMiddleware,
+        StreamingResponse,
         after_this_request,
         has_request_context,
         request,
@@ -147,6 +149,25 @@ def _exercise_flask_helpers() -> None:
     assert "cookie" in response.headers["Vary"].lower()
     assert client.get("/smoke/read").get_json() == {"saved": True}
     assert cleanup_paths == ["/smoke/read", "/smoke/save", "/smoke/read"]
+    assigned = []
+
+    @app.get("/assigned-background")
+    def assigned_background():
+        async def finish():
+            await asyncio.sleep(0)
+            assigned.append(request.path)
+
+        res = Response("bear")
+        res.background = finish
+        return res
+
+    @app.get("/sized-stream")
+    def sized_stream():
+        return StreamingResponse([b"be", b"ar"], content_length=4)
+
+    assert client.get("/assigned-background").body == b"bear"
+    assert assigned == ["/assigned-background"]
+    assert client.head("/sized-stream").headers["content-length"] == "4"
     assert not has_request_context()
 
 

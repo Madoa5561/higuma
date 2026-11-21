@@ -311,10 +311,12 @@ supervisor, streaming, and proxy changes.
 
 ## Compatibility expectations
 
-- 0.11.1 closes context-helper body streams/uploads after teardown. Keep reads within
-  the context. Response background callables may be sync/async; streams close before
-  background/DI cleanup. Native disconnect finalization waits for pending iterator
-  calls to return; it is not forced cancellation or durable task delivery.
+- 0.11.1+ closes context-helper body streams/uploads after teardown (including on
+  cancellation/unhandled errors in 0.11.2+). Keep reads within the context. Response
+  background callables may be sync/async (including `response.background = fn`);
+  streams close before background/DI cleanup and when replaced by after-request hooks.
+  Native disconnect finalization waits for pending iterator calls to return; it is not
+  forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide
   callbacks (once per app, even with aliases). Preprocessors run before before hooks
   and disable the ASGI async fast path. Use `g` for popped route values. Context-only

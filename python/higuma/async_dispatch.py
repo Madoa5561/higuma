@@ -79,6 +79,7 @@ async def run(app, route, raw, send, receive, respond, worker):
             min(request.max_form_memory_size, request.max_form_parts, request.upload_memory_limit)
             < 1
         ):
+            request.close()
             raise ValueError("multipart limits must be positive")
         request.state["_higuma_dispatching"] = True
         request.state["_higuma_async_fast_path"] = True
@@ -96,10 +97,18 @@ async def run(app, route, raw, send, receive, respond, worker):
                     response = make_response(app._handle_exception(error, request))
                 try:
                     for callback in request.state.pop("_higuma_after_request", []):
-                        response = make_response(await call(callback, response))
+                        updated = make_response(await call(callback, response))
+                        if updated is not response and isinstance(response, StreamingResponse):
+                            await response._aclose()
+                        response = updated
                     for callback in request.state.pop("_higuma_response_finalizers", []):
-                        response = make_response(await call(callback, response))
+                        updated = make_response(await call(callback, response))
+                        if updated is not response and isinstance(response, StreamingResponse):
+                            await response._aclose()
+                        response = updated
                 except Exception as error:  # noqa: BLE001 - response finalizer exception boundary
+                    if isinstance(response, StreamingResponse):
+                        await response._aclose()
                     response = make_response(app._handle_exception(error, request))
                 if (
                     isinstance(response, (FileResponse, StreamingResponse, TemplateResponse))
@@ -158,9 +167,13 @@ async def run(app, route, raw, send, receive, respond, worker):
                     )
             finally:
                 try:
-                    if response is not None and response.background is not None:
-                        await call(response.background)
-                        response.background = None
+                    try:
+                        if isinstance(response, StreamingResponse):
+                            await response._aclose()
+                    finally:
+                        if response is not None and response.background is not None:
+                            await call(response.background)
+                            response.background = None
                 finally:
                     request.state.pop("_higuma_dispatching", None)
                     try:

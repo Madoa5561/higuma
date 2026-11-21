@@ -12,7 +12,7 @@ APPLICATION = """
 import asyncio
 import io
 import sys
-from higuma import Higuma, Response, StreamingResponse, request
+from higuma import Higuma, Response, StreamingResponse, render_template, request
 
 app = Higuma(__name__, static_folder=None)
 events, bodies = [], []
@@ -52,6 +52,20 @@ async def async_stream():
 
 app.get("/stream")(async_stream if sys.argv[2] == "asgi-fast" else stream)
 
+@app.get("/broken-template")
+def broken_template():
+    bodies.append(request.stream)
+    response = render_template("missing_template_that_does_not_exist.html")
+    response.background = after
+    return response
+
+@app.websocket("/ws-fail")
+def ws_fail(ws):
+    request.state.setdefault("_higuma_after_request", []).append(
+        lambda response: setattr(response, "background", after) or response
+    )
+    raise RuntimeError("ws failure")
+
 @app.get("/state")
 def state():
     return {"events": list(events), "bodies_closed": all(body.closed for body in bodies)}
@@ -79,12 +93,12 @@ def test_real_http_background_stream_close_and_disconnect_cleanup(mode):
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
 
-    def fetch(path, method="GET"):
+    def fetch(path, method="GET", expected_status=200):
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
         try:
             connection.request(method, path)
             response = connection.getresponse()
-            assert response.status == 200
+            assert response.status == expected_status
             return response.read()
         finally:
             connection.close()
@@ -124,6 +138,10 @@ def test_real_http_background_stream_close_and_disconnect_cleanup(mode):
             wait_for(lambda state: "after:/finite" in state["events"])
             assert fetch("/finite", "HEAD") == b""
             wait_for(lambda state: state["events"].count("after:/finite") == 2)
+            fetch("/broken-template", expected_status=500)
+            wait_for(
+                lambda state: "after:/broken-template" in state["events"] and state["bodies_closed"]
+            )
 
             connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
             try:

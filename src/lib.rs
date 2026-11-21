@@ -464,7 +464,7 @@ impl HigumaCore {
                              _version: Version,
                              _headers: &HeaderMap,
                              _extensions: &Extensions| {
-                                status != StatusCode::PARTIAL_CONTENT
+                                status_allows_body(status) && status != StatusCode::PARTIAL_CONTENT
                             },
                         )),
                     );
@@ -534,7 +534,7 @@ async fn handle_websocket(
 
     let handler_task = tokio::task::spawn_blocking(move || {
         let _websocket_permit = websocket_permit;
-        let result = Python::attach(|py| -> PyResult<()> {
+        let result = Python::attach(|py| -> PyResult<u16> {
             let raw = websocket_request_to_dict(py, &request)?;
             let session = Py::new(
                 py,
@@ -543,12 +543,25 @@ async fn handle_websocket(
                     outgoing: outgoing_tx,
                 },
             )?;
-            callback.call1(py, (raw, session))?;
-            Ok(())
+            let py_obj = callback.call1(py, (raw, session))?;
+            let bound = py_obj.bind(py);
+            let status = bound
+                .getattr("status_code")
+                .and_then(|value| value.extract::<u16>())
+                .unwrap_or(200);
+            if let Ok(Some(background)) = extract_background(bound) {
+                if let Err(error) = background.call0(py) {
+                    eprintln!("higuma WebSocket background task error: {error}");
+                }
+            }
+            Ok(status)
         });
 
         let close = match result {
-            Ok(()) => OutgoingMessage::Close(1000, "handler completed".to_string()),
+            Ok(status) if status < 400 => {
+                OutgoingMessage::Close(1000, "handler completed".to_string())
+            }
+            Ok(_) => OutgoingMessage::Close(1011, "internal server error".to_string()),
             Err(error) => {
                 eprintln!("higuma WebSocket handler error: {error}");
                 OutgoingMessage::Close(1011, "internal server error".to_string())
@@ -926,11 +939,18 @@ async fn dispatch(
                 Python::attach(|py| -> PyResult<ResponsePayload> {
                     let raw = websocket_request_to_dict(py, &preflight_request)?;
                     let py_obj = preflight.call1(py, (raw,))?;
-                    py_to_response(py, py_obj.bind(py), &template_env)
+                    let bound = py_obj.bind(py);
+                    match py_to_response(py, bound, &template_env) {
+                        Ok(payload) => Ok(payload),
+                        Err(error) => {
+                            cleanup_failed_python_response(py, bound);
+                            Err(error)
+                        }
+                    }
                 })
             })
             .await;
-            let payload = match result {
+            let mut payload = match result {
                 Ok(Ok(payload)) => payload,
                 Ok(Err(error)) => {
                     eprintln!("higuma WebSocket preflight error: {error}");
@@ -944,6 +964,7 @@ async fn dispatch(
             if !websocket_preflight_allows_upgrade(&payload) {
                 return finalize_response(payload, &state, false);
             }
+            run_background_task(payload.background.take()).await;
         }
         let websocket_permit = match state.websocket_slots.clone().try_acquire_owned() {
             Ok(permit) => permit,
@@ -1064,7 +1085,14 @@ async fn dispatch(
             request.set_item("client_addr", client_addr)?;
 
             let py_obj = callback.call1(py, (request,))?;
-            py_to_response(py, py_obj.bind(py), &template_env)
+            let bound = py_obj.bind(py);
+            match py_to_response(py, bound, &template_env) {
+                Ok(payload) => Ok(payload),
+                Err(error) => {
+                    cleanup_failed_python_response(py, bound);
+                    Err(error)
+                }
+            }
         })
     })
     .await;
@@ -1466,6 +1494,19 @@ fn extract_background(obj: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
     }
 }
 
+fn cleanup_failed_python_response(py: Python<'_>, obj: &Bound<'_, PyAny>) {
+    if obj.hasattr("_close").unwrap_or(false) {
+        if let Err(error) = obj.call_method0("_close") {
+            eprintln!("higuma response cleanup error: {error}");
+        }
+    }
+    if let Ok(Some(background)) = extract_background(obj) {
+        if let Err(error) = background.call0(py) {
+            eprintln!("higuma background task error: {error}");
+        }
+    }
+}
+
 fn is_truthy_marker(obj: &Bound<'_, PyAny>, marker: &str) -> PyResult<bool> {
     if !obj.hasattr(marker)? {
         return Ok(false);
@@ -1788,16 +1829,27 @@ impl IntoResponse for ResponsePayload {
         }
         let body_length = self.body.length();
         let body_is_empty = body_length == Some(0);
-        let background = self.background.take();
-        let body = match self.body {
-            PayloadBody::Bytes(value) => bytes_response_body(value, background),
-            PayloadBody::File { file, length } => {
-                let reader = tokio::fs::File::from_std(file).take(length);
-                file_response_body(ReaderStream::new(reader), background)
+        let mut background = self.background.take();
+        let body = if !status_allows_body(status) {
+            Body::empty()
+        } else {
+            match self.body {
+                PayloadBody::Bytes(value) => bytes_response_body(value, background.take()),
+                PayloadBody::File { file, length } => {
+                    let reader = tokio::fs::File::from_std(file).take(length);
+                    file_response_body(ReaderStream::new(reader), background.take())
+                }
+                PayloadBody::Stream { response, .. } => {
+                    stream_response_body(response, background.take())
+                }
             }
-            PayloadBody::Stream { response, .. } => stream_response_body(response, background),
         };
         let mut response = Response::new(body);
+        if let Some(background) = background {
+            response
+                .extensions_mut()
+                .insert(Arc::new(ResponseCompletion::new(Some(background))));
+        }
         *response.status_mut() = status;
         if !body_is_empty && status_allows_body(status) {
             if let Some(body_length) = body_length {
@@ -1890,7 +1942,10 @@ fn bytes_response_body(value: Vec<u8>, background: Option<Py<PyAny>>) -> Body {
         return Body::from(value);
     };
     let body_stream = stream::unfold(
-        (Some(value), ResponseCompletion::new(Some(background))),
+        (
+            (!value.is_empty()).then_some(value),
+            ResponseCompletion::new(Some(background)),
+        ),
         |(chunk, mut completion)| async move {
             if let Some(chunk) = chunk {
                 return Some((

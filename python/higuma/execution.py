@@ -17,6 +17,7 @@ class _AwaitChannel:
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
         self.task: asyncio.Task[Any] | None = None
         self.active: Future[Any] | None = None
+        self.cancelled: set[Future[Any]] = set()
         self.previous: dict[ContextVar[Any], Any] = {}
         self.completion = asyncio.run_coroutine_threadsafe(self._run(), loop)
 
@@ -27,9 +28,12 @@ class _AwaitChannel:
             if command is None:
                 return
             value, context, future = command
-            if future.cancelled():
+            if future in self.cancelled or not future.set_running_or_notify_cancel():
+                self.cancelled.discard(future)
                 if inspect.iscoroutine(value):
                     value.close()
+                if not future.done():
+                    future.set_exception(asyncio.CancelledError())
                 continue
             for variable, item in context.items():
                 if variable not in self.previous or self.previous[variable] is not item:
@@ -49,23 +53,23 @@ class _AwaitChannel:
                     future.set_result(result)
             finally:
                 self.active = None
+                self.cancelled.discard(future)
 
     def submit(self, value: Any) -> Future[Any]:
         future: Future[Any] = Future()
-
-        def cancel(done: Future[Any]) -> None:
-            if done.cancelled():
-                self.loop.call_soon_threadsafe(self._cancel, done)
-
-        future.add_done_callback(cancel)
         self.loop.call_soon_threadsafe(
             self.queue.put_nowait, (value, dict(copy_context().items()), future)
         )
         return future
 
+    def cancel(self, future: Future[Any]) -> None:
+        self.loop.call_soon_threadsafe(self._cancel, future)
+
     def _cancel(self, future: Future[Any]) -> None:
         if self.active is future and self.task is not None:
             self.task.cancel()
+        elif not future.done():
+            self.cancelled.add(future)
 
     async def close(self) -> None:
         self.queue.put_nowait(None)
@@ -77,9 +81,10 @@ class AwaitBridge:
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
-        self._pending: set[Future[Any]] = set()
+        self._pending: dict[Future[Any], _AwaitChannel] = {}
         self._lock = Lock()
         self._cancel_requested = False
+        self._cleaning_up = False
         self._channels: dict[int, _AwaitChannel] = {}
         self._closed = False
 
@@ -101,21 +106,34 @@ class AwaitBridge:
             if channel is None:
                 channel = self._channel()
             future = channel.submit(value)
-            self._pending.add(future)
+            self._pending[future] = channel
         try:
             return future.result()
         except CancelledError as error:
             raise asyncio.CancelledError() from error
         finally:
             with self._lock:
-                self._pending.discard(future)
+                self._pending.pop(future, None)
 
-    def cancel_pending(self) -> None:
+    def begin_cleanup(self) -> None:
         with self._lock:
-            pending = [future for future in self._pending if not future.done()]
+            self._cleaning_up = True
+            self._cancel_requested = False
+
+    def clear_cancel_request(self) -> None:
+        with self._lock:
+            self._cancel_requested = False
+
+    def cancel_pending(self, *, force: bool = False) -> None:
+        with self._lock:
+            if self._cleaning_up and not force:
+                return
+            pending = [
+                (future, channel) for future, channel in self._pending.items() if not future.done()
+            ]
             self._cancel_requested = not pending
-        for future in pending:
-            future.cancel()
+        for future, channel in pending:
+            channel.cancel(future)
 
     def _channel(self) -> _AwaitChannel:
         owner = get_ident()
@@ -134,7 +152,7 @@ class AwaitBridge:
         with self._lock:
             self._closed = True
             channels = list(self._channels.values())
-        self.cancel_pending()
+        self.cancel_pending(force=True)
         for channel in channels:
             await channel.close()
 
@@ -212,7 +230,7 @@ def _stop_native_runtime():
 atexit.register(_stop_native_runtime)
 
 
-def _current_bridge() -> AwaitBridge | None:
+def _current_bridge(*, create: bool = True) -> AwaitBridge | None:
     global _native_runtime
     bridge = await_bridge.get()
     if bridge is not None or _native_bypass.get():
@@ -224,6 +242,8 @@ def _current_bridge() -> AwaitBridge | None:
         return None
     bridge = current.state.get("_higuma_native_bridge")
     if bridge is None:
+        if not create:
+            return None
         with _native_runtime_lock:
             if _native_runtime is None:
                 _native_runtime = _NativeRuntime()

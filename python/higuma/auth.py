@@ -14,6 +14,7 @@ from urllib.request import HTTPRedirectHandler, build_opener
 from urllib.request import Request as URLRequest
 
 from .exceptions import Forbidden, Unauthorized
+from .execution import resolve_awaitable
 from .request import Request, request
 from .response import ResponseValue
 from .security import TokenSigner
@@ -47,7 +48,7 @@ class _CurrentUserProxy(Generic[UserT]):
         return getattr(self._get(), name)
 
     def __bool__(self) -> bool:
-        return bool(getattr(self._get(), "is_authenticated", False))
+        return bool(getattr(self._get(), "is_authenticated", True))
 
     def __repr__(self) -> str:
         return repr(self._get())
@@ -97,7 +98,7 @@ class AuthManager:
         user = None
         user_id = current.session.get(self.session_key)
         if user_id is not None and self.user_loader is not None:
-            user = self.user_loader(str(user_id))
+            user = resolve_awaitable(self.user_loader(str(user_id)))
         current.user = user if user is not None else AnonymousUser()
         token: Token[Any] = _current_user.set(current.user)
         try:

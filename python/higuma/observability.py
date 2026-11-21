@@ -171,25 +171,40 @@ class Observability:
             scope = {**scope, "state": {**scope.get("state", {}), "request_id": identifier}}
             started, status, outcome = time.perf_counter(), 0, "completed"
             response_complete = False
+            response_remaining = None
 
             async def sent(event):
-                nonlocal status, outcome, response_complete
+                nonlocal status, outcome, response_complete, response_remaining
                 if event["type"] == "http.response.start":
                     status = event["status"]
-                    event = {
-                        **event,
-                        "headers": [
-                            (key, value)
-                            for key, value in event.get("headers", [])
-                            if key.lower() != b"x-request-id"
-                        ]
-                        + [(b"x-request-id", identifier.encode())],
-                    }
+                    headers = [
+                        (key, value)
+                        for key, value in event.get("headers", [])
+                        if key.lower() != b"x-request-id"
+                    ] + [(b"x-request-id", identifier.encode())]
+                    event = {**event, "headers": headers}
+                    if scope.get("method", "GET").upper() == "HEAD" or status in {204, 205, 304}:
+                        response_remaining = 0
+                    else:
+                        response_remaining = next(
+                            (
+                                int(value)
+                                for key, value in headers
+                                if key.lower() == b"content-length"
+                            ),
+                            None,
+                        )
+                elif event["type"] == "http.response.body":
+                    if response_remaining is not None:
+                        response_remaining -= len(event.get("body", b""))
+                    if not event.get("more_body", False):
+                        response_complete = True
+                if response_remaining is not None and response_remaining <= 0:
+                    response_complete = True
                 try:
                     await send(event)
-                    if event["type"] == "http.response.body" and not event.get("more_body", False):
-                        response_complete = True
                 except OSError:
+                    response_complete = False
                     outcome = "disconnected"
                     raise
 
