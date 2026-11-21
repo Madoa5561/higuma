@@ -168,6 +168,12 @@ def _exercise_flask_helpers() -> None:
     assert client.get("/assigned-background").body == b"bear"
     assert assigned == ["/assigned-background"]
     assert client.head("/sized-stream").headers["content-length"] == "4"
+    with app.test_request_context(
+        "/smoke/read",
+        headers={"cookie": "filter[page]=1; path=/admin; higuma_session=token"},
+    ):
+        assert request.cookies["higuma_session"] == "token"
+        assert request.cookies["filter[page]"] == "1"
     assert not has_request_context()
 
 
@@ -237,7 +243,7 @@ def _exercise_developer_apis() -> None:
     def greet(name: str):
         return "hello " + name
 
-    result = app.test_cli_runner().invoke(["greet", "bear"])
+    result = app.test_cli_runner().invoke("greet bear")
     assert result.exit_code == 0 and result.output.strip() == "hello bear"
 
     events = []

@@ -123,6 +123,8 @@ HTTPエラーや登録handlerで処理済みの例外では通常`None`です。
 `View.as_view(name, *class_args, **class_kwargs)`はclassをview functionへ変換します。
 `View`では`dispatch_request()`を、`MethodView`では`get()`、`post()`等を実装します。
 `MethodView`の許可methodは実装したmethod名から自動導出されます。
+0.11.3以降は`MethodView`の各HTTP methodおよび`View.dispatch_request()`でも型付きparameter
+（`QueryParam`、`Body`、`Depends`、`BackgroundTasks`等）の自動解決とmethod別OpenAPI schema生成に対応します。
 
 ## 型付き入力とdependency injection
 

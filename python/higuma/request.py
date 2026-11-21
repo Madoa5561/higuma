@@ -7,7 +7,7 @@ import shutil
 import unicodedata
 from collections.abc import Iterator, Mapping
 from contextvars import ContextVar, Token
-from http.cookies import SimpleCookie
+from http.cookies import _unquote
 from io import BytesIO
 from pathlib import Path
 from types import MappingProxyType
@@ -420,10 +420,8 @@ class Request:
     @property
     def cookies(self) -> Mapping[str, str]:
         if self._cookies_cache is None:
-            cookie = SimpleCookie()
-            cookie.load(str(self.headers.get("cookie", "")))
             self._cookies_cache = MappingProxyType(
-                {key: morsel.value for key, morsel in cookie.items()}
+                _parse_cookie_header(str(self.headers.get("cookie", "")))
             )
         return self._cookies_cache
 
@@ -436,6 +434,19 @@ class Request:
         fields, files = parse_multipart(self)
         self._form_cache = MultiDict(fields)
         self._files_cache = MultiDict(files)
+
+
+_COOKIE_PAIR_RE = re.compile(r'(?:^|;)\s*([^=;\s]+)\s*=\s*("(?:[^"\\]|\\.)*"|[^;]*)')
+
+
+def _parse_cookie_header(raw_cookie: str) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for match in _COOKIE_PAIR_RE.finditer(raw_cookie):
+        key = match.group(1).strip()
+        if not key or any(ord(char) < 32 or ord(char) == 127 for char in key):
+            continue
+        parsed[key] = _unquote(match.group(2).strip())
+    return parsed
 
 
 _MISSING = object()

@@ -121,7 +121,9 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
     if origin is Annotated:
         annotated_schema = schema_for(args[0], schemas)
         for metadata in args[1:]:
-            if isinstance(metadata, Mapping):
+            if isinstance(metadata, Parameter):
+                annotated_schema = {**annotated_schema, **parameter_schema_metadata(metadata)}
+            elif isinstance(metadata, Mapping):
                 annotated_schema = {**annotated_schema, **dict(metadata)}
         return annotated_schema
     if str(origin) in {"typing.Required", "typing.NotRequired"}:
@@ -159,6 +161,16 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         schema: dict[str, Any] = {"enum": values}
         if values and all(isinstance(value, str) for value in values):
             schema["type"] = "string"
+        elif values and all(isinstance(value, bool) for value in values):
+            schema["type"] = "boolean"
+        elif values and all(
+            isinstance(value, int) and not isinstance(value, bool) for value in values
+        ):
+            schema["type"] = "integer"
+        elif values and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool) for value in values
+        ):
+            schema["type"] = "number"
         return schema
 
     if annotation in {list, tuple, set, frozenset, Sequence}:
@@ -184,7 +196,10 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
     if inspect.isclass(annotation) and issubclass(annotation, Enum):
         values = [member.value for member in annotation]
         schema_type = (
-            "integer" if values and all(isinstance(value, int) for value in values) else "string"
+            "integer"
+            if values
+            and all(isinstance(value, int) and not isinstance(value, bool) for value in values)
+            else "string"
         )
         return {"type": schema_type, "enum": values}
 
@@ -209,7 +224,7 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         }
         return {"$ref": f"#/components/schemas/{name}"}
 
-    if is_dataclass(annotation):
+    if inspect.isclass(annotation) and is_dataclass(annotation):
         name = annotation.__name__
         if name in schemas:
             return {"$ref": f"#/components/schemas/{name}"}
@@ -221,6 +236,8 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         properties = {}
         required = []
         for item in fields(annotation):
+            if not item.init:
+                continue
             properties[item.name] = schema_for(
                 field_hints.get(item.name, item.type),
                 schemas,
@@ -248,11 +265,35 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
     return {"type": "string"}
 
 
+def _target_view_func(view_func: Any, method: str) -> Any:
+    view_class = getattr(view_func, "view_class", None)
+    if inspect.isclass(view_class):
+        method_handler = getattr(view_class, method.lower(), None)
+        if callable(method_handler):
+            return method_handler
+        dispatch_handler = getattr(view_class, "dispatch_request", None)
+        if callable(dispatch_handler):
+            return dispatch_handler
+    return view_func
+
+
+def _is_required_parameter(parameter: inspect.Parameter) -> bool:
+    return parameter.default is inspect.Parameter.empty or isinstance(
+        parameter.default, (Parameter, Depends)
+    )
+
+
 def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(route.openapi)
-    signature = inspect.signature(route.view_func)
-    type_hints = resolved_parameter_hints(route.view_func)
-    description = metadata.pop("description", None) or inspect.getdoc(route.view_func) or ""
+    target_func = _target_view_func(route.view_func, method)
+    signature = inspect.signature(target_func)
+    type_hints = resolved_parameter_hints(target_func)
+    description = (
+        metadata.pop("description", None)
+        or inspect.getdoc(target_func)
+        or inspect.getdoc(route.view_func)
+        or ""
+    )
     summary = metadata.pop("summary", None)
     success_status = str(metadata.pop("status_code", 200))
     response_model = metadata.pop("response_model", None)
@@ -285,7 +326,7 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
     if tags:
         operation["tags"] = list(tags)
 
-    input_specs = list(_input_specs(route.view_func))
+    input_specs = list(_input_specs(target_func))
     parameters = []
     for name, converter in route.converters.items():
         annotation = type_hints.get(
@@ -313,9 +354,7 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
             alias = alias.replace("_", "-")
         schema = schema_for(annotation, schemas)
         schema.update(parameter_schema_metadata(marker))
-        required = parameter.default is inspect.Parameter.empty or isinstance(
-            parameter.default, (Parameter, Depends)
-        )
+        required = _is_required_parameter(parameter)
         if not required:
             schema["default"] = serialize_json_value(parameter.default)
         item: dict[str, Any] = {
@@ -346,7 +385,7 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
         if body_specs:
             parameter, annotation, marker = body_specs[0]
             operation["requestBody"] = {
-                "required": parameter.default is inspect.Parameter.empty,
+                "required": _is_required_parameter(parameter),
                 "content": {
                     "application/json": {
                         "schema": {
@@ -368,7 +407,7 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
                 )
                 schema.update(parameter_schema_metadata(marker))
                 properties[alias] = schema
-                if parameter.default is inspect.Parameter.empty:
+                if _is_required_parameter(parameter):
                     required_fields.append(alias)
             multipart_schema: dict[str, Any] = {"type": "object", "properties": properties}
             if required_fields:

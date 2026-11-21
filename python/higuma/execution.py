@@ -230,8 +230,19 @@ def _stop_native_runtime():
 atexit.register(_stop_native_runtime)
 
 
-def _current_bridge(*, create: bool = True) -> AwaitBridge | None:
+def _ensure_native_loop() -> asyncio.AbstractEventLoop:
     global _native_runtime
+    with _native_runtime_lock:
+        if (
+            _native_runtime is None
+            or _native_runtime.loop is None
+            or _native_runtime.loop.is_closed()
+        ):
+            _native_runtime = _NativeRuntime()
+        return _native_runtime.loop
+
+
+def _current_bridge(*, create: bool = True) -> AwaitBridge | None:
     bridge = await_bridge.get()
     if bridge is not None or _native_bypass.get():
         return bridge
@@ -244,12 +255,8 @@ def _current_bridge(*, create: bool = True) -> AwaitBridge | None:
     if bridge is None:
         if not create:
             return None
-        with _native_runtime_lock:
-            if _native_runtime is None:
-                _native_runtime = _NativeRuntime()
-            bridge = current.state.setdefault(
-                "_higuma_native_bridge", AwaitBridge(_native_runtime.loop)
-            )
+        loop = _ensure_native_loop()
+        bridge = current.state.setdefault("_higuma_native_bridge", AwaitBridge(loop))
     try:
         if asyncio.get_running_loop() is bridge.loop:
             return None  # Preserve the legacy nested synchronous middleware bridge.

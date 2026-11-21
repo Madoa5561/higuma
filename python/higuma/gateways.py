@@ -393,7 +393,9 @@ class ASGIApplication:
                 await asyncio.to_thread(executor.shutdown, wait=True)
 
     async def _lifecycle_hook(self, handler: Any) -> None:
-        args = (self.app,) if inspect.signature(handler).parameters else ()
+        from .app import _accepts_first_arg
+
+        args = (self.app,) if _accepts_first_arg(handler) else ()
         result = (
             handler(*args)
             if inspect.iscoroutinefunction(handler)

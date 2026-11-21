@@ -1,4 +1,6 @@
-from higuma import Higuma, MethodView, View, request
+from typing import Annotated
+
+from higuma import Higuma, MethodView, QueryParam, View, request
 
 app = Higuma(__name__)
 
@@ -11,8 +13,8 @@ class HealthView(View):
 
 
 class ItemsView(MethodView):
-    def get(self):
-        return {"items": []}
+    def get(self, limit: Annotated[int, QueryParam(ge=1, le=100)] = 20):
+        return {"items": [], "limit": limit}
 
     def post(self):
         return {"item": request.json}, 201

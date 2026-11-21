@@ -116,3 +116,51 @@ def test_async_client_startup_failure_and_timeout_do_not_leak_tasks():
                 pass
 
     asyncio.run(start())
+
+
+def test_async_client_follow_redirects_base_url_override_and_case_insensitive_headers():
+    from higuma import Response, redirect
+
+    app = Higuma(__name__, static_folder=None)
+
+    @app.post("/start")
+    async def start():
+        return redirect("/finish", 303)
+
+    @app.get("/finish")
+    async def finish():
+        return {"scheme": request.scheme, "host": request.host, "method": request.method}
+
+    @app.get("/empty")
+    async def empty():
+        return Response(b"", 204)
+
+    @app.cli.command()
+    def greet(name: str):
+        return f"hi {name}"
+
+    assert app.test_cli_runner().invoke("greet bear").output.strip() == "hi bear"
+
+    async def exercise():
+        async with app.test_async_client() as client:
+            followed = await client.post(
+                "/start",
+                data="payload",
+                follow_redirects=True,
+                base_url="https://example.test:8443",
+            )
+            assert followed.get_json() == {
+                "scheme": "https",
+                "host": "example.test:8443",
+                "method": "GET",
+            }
+            assert [item.status_code for item in followed.history] == [303]
+
+            no_content = await client.get("/empty")
+            assert no_content.status_code == 204
+            assert no_content.media_type is None
+
+            async with client.stream("/finish") as streamed:
+                assert "application/json" in streamed.headers["Content-Type"]
+
+    asyncio.run(exercise())

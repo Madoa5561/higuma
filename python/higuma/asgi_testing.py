@@ -4,9 +4,10 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from typing import Any
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
-from .response import Response
+from .request import Request
+from .response import Response, _ResponseHeaders
 from .testing import TestClient
 from .websocket import WebSocketDisconnect
 
@@ -76,9 +77,9 @@ class ASGIStreamResponse:
         self._consumed = False
         self.status_code = event["status"]
         self.raw_headers = tuple(event.get("headers", ()))
-        self.headers = {
-            key.decode("latin-1"): value.decode("latin-1") for key, value in self.raw_headers
-        }
+        self.headers = _ResponseHeaders(
+            {key.decode("latin-1"): value.decode("latin-1") for key, value in self.raw_headers}
+        )
 
     async def aiter_bytes(self):
         if self._consumed:
@@ -212,8 +213,11 @@ class ASGITestClient:
                         await asyncio.gather(exchange.task, return_exceptions=True)
 
     def _scope(self, path: str, *, method: str = "GET", **kwargs):
-        raw, _ = self._helper._build_request(path, method=method, base_url=self.base_url, **kwargs)
-        origin = urlsplit(self.base_url)
+        effective_base_url = kwargs.pop("base_url", None) or self.base_url
+        raw, _ = self._helper._build_request(
+            path, method=method, base_url=effective_base_url, **kwargs
+        )
+        origin = urlsplit(effective_base_url)
         encoded = quote(self.root_path, safe="/") + quote(raw["path"], safe="/%!$&'()*+,-.:;=@_~")
         return raw, {
             "type": "http",
@@ -251,17 +255,100 @@ class ASGITestClient:
             self._active.discard(exchange)
             await exchange.close({"type": "http.disconnect"})
 
-    async def open(self, path: str, *, method: str = "GET", **kwargs) -> Response:
+    async def open(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        follow_redirects: bool = False,
+        max_redirects: int = 20,
+        **kwargs,
+    ) -> Response:
+        if max_redirects < 1:
+            raise ValueError("max_redirects must be positive")
+        raw, _ = self._scope(path, method=method, **kwargs)
         async with self.stream(path, method=method, **kwargs) as streamed:
             chunks = [chunk async for chunk in streamed.aiter_bytes()]
-            response = Response(b"".join(chunks), streamed.status_code)
+            response = Response(
+                b"".join(chunks),
+                streamed.status_code,
+                media_type=streamed.headers.get("content-type"),
+            )
             for key, value in streamed.raw_headers:
                 name, text = key.decode("latin-1"), value.decode("latin-1")
                 if name in response.headers:
                     response.append_header(name, text)
                 else:
                     response.headers[name] = text
+        if not follow_redirects:
             return response
+        return await self._follow_redirects(
+            response,
+            request_url=Request(raw).url,
+            method=raw["method"],
+            max_redirects=max_redirects,
+            **kwargs,
+        )
+
+    async def _follow_redirects(
+        self,
+        response: Response,
+        *,
+        request_url: str,
+        method: str,
+        max_redirects: int,
+        **kwargs: Any,
+    ) -> Response:
+        history: list[Response] = []
+        visited: set[tuple[str, str]] = set()
+        current = response
+        current_method = method
+        current_kwargs = dict(kwargs)
+        current_headers = {
+            str(key).lower(): str(value)
+            for key, value in (current_kwargs.get("headers") or {}).items()
+        }
+        if current_kwargs.get("content_type") is not None:
+            current_headers["content-type"] = str(current_kwargs.pop("content_type"))
+
+        while current.status_code in {301, 302, 303, 307, 308} and "location" in current.headers:
+            if len(history) >= max_redirects:
+                raise RuntimeError(f"redirect limit exceeded ({max_redirects})")
+            location = current.headers["location"]
+            target = urljoin(request_url, location)
+            split = urlsplit(target)
+            if (
+                split.scheme not in {"http", "https"}
+                or split.netloc != urlsplit(request_url).netloc
+            ):
+                raise RuntimeError("test client does not follow external redirects")
+            request_url = target
+
+            if current.status_code == 303 or (
+                current.status_code in {301, 302} and current_method not in {"GET", "HEAD"}
+            ):
+                current_method = "HEAD" if current_method == "HEAD" else "GET"
+                current_kwargs.pop("data", None)
+                current_kwargs.pop("json", None)
+                current_kwargs.pop("files", None)
+                current_headers.pop("content-type", None)
+                current_headers.pop("content-length", None)
+
+            key = (current_method, target)
+            if key in visited:
+                raise RuntimeError(f"redirect loop detected at {location!r}")
+            visited.add(key)
+            history.append(current)
+            current_kwargs["headers"] = current_headers
+            current = await self.open(
+                target,
+                method=current_method,
+                follow_redirects=False,
+                **current_kwargs,
+            )
+
+        current.history = tuple(history)
+        return current
 
     async def get(self, path: str, **kwargs):
         return await self.open(path, method="GET", **kwargs)

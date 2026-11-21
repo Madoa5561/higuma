@@ -315,6 +315,8 @@ supervisor, streaming, and proxy changes.
   cancellation/unhandled errors in 0.11.2+). Keep reads within the context. Response
   background callables may be sync/async (including `response.background = fn`);
   streams close before background/DI cleanup and when replaced by after-request hooks.
+  In 0.11.3+, `View`/`MethodView` also resolve typed parameters/DI and emit per-method
+  OpenAPI schemas, and `Request.cookies` isolates malformed/reserved cookie pairs.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

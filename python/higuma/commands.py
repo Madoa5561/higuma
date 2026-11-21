@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import io
+import shlex
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
@@ -91,15 +92,16 @@ class CliRunner:
     def __init__(self, app: Any) -> None:
         self.app = app
 
-    def invoke(self, args: list[str] | tuple[str, ...] = ()) -> CliResult:
+    def invoke(self, args: list[str] | tuple[str, ...] | str = ()) -> CliResult:
         from .cli import build_parser, execute
 
+        parsed_args = shlex.split(args) if isinstance(args, str) else list(args)
         output = io.StringIO()
         error = None
         code = 0
         with redirect_stdout(output), redirect_stderr(output):
             try:
-                code = execute(self.app, build_parser(self.app).parse_args(list(args)))
+                code = execute(self.app, build_parser(self.app).parse_args(parsed_args))
             except SystemExit as exception:
                 if exception.code is None or isinstance(exception.code, int):
                     code = int(exception.code or 0)

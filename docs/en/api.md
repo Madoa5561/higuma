@@ -124,6 +124,9 @@ execution, configuration, and protocol boundaries.
 `View.as_view(name, *class_args, **class_kwargs)` converts a class into a view function.
 Implement `dispatch_request()` on `View`, or `get()`, `post()`, and other HTTP methods on
 `MethodView`. `MethodView` derives its allowed methods from implemented method names.
+Since 0.11.3, `MethodView` HTTP methods and `View.dispatch_request()` also resolve typed
+parameters (`QueryParam`, `Body`, `Depends`, `BackgroundTasks`, etc.) and emit per-method
+OpenAPI schemas.
 
 ## Typed inputs and dependency injection
 

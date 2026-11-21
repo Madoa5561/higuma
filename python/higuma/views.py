@@ -5,7 +5,9 @@ from functools import update_wrapper
 from typing import Any, ClassVar
 
 from .exceptions import MethodNotAllowed
-from .request import request
+from .execution import resolve_awaitable
+from .parameters import resolve_arguments
+from .request import _request_context, request
 
 _HTTP_METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
 
@@ -23,16 +25,30 @@ class View:
         if not name or not name.isidentifier():
             raise ValueError("view name must be a valid Python identifier")
 
+        def invoke(instance: View, supplied: dict[str, Any]) -> Any:
+            if type(instance).dispatch_request is MethodView.dispatch_request:
+                return instance.dispatch_request(**supplied)
+            current = _request_context.get()
+            if current is None:
+                return instance.dispatch_request(**supplied)
+            args, resolved_kwargs = resolve_arguments(
+                instance.dispatch_request,
+                current,
+                supplied or current.path_params,
+                resolve_awaitable,
+            )
+            return instance.dispatch_request(*args, **resolved_kwargs)
+
         if cls.init_every_request:
 
             def view(**kwargs: Any) -> Any:
-                return cls(*class_args, **class_kwargs).dispatch_request(**kwargs)
+                return invoke(cls(*class_args, **class_kwargs), kwargs)
 
         else:
             instance = cls(*class_args, **class_kwargs)
 
             def view(**kwargs: Any) -> Any:
-                return instance.dispatch_request(**kwargs)
+                return invoke(instance, kwargs)
 
         for decorator in cls.decorators:
             view = decorator(view)
@@ -41,6 +57,18 @@ class View:
         view.__name__ = name
         view.methods = set(cls.methods or ())  # type: ignore[attr-defined]
         view.view_class = cls  # type: ignore[attr-defined]
+        import inspect
+
+        from .parameters import cache_parameter_hints
+
+        frame = inspect.currentframe()
+        try:
+            cache_parameter_hints(
+                view,
+                frame.f_back.f_locals if frame is not None and frame.f_back is not None else {},
+            )
+        finally:
+            del frame
         return view
 
 
@@ -58,4 +86,13 @@ class MethodView(View):
         if handler is None:
             allowed = sorted(self.methods or ())
             raise MethodNotAllowed(headers={"allow": ", ".join(allowed)})
-        return handler(**kwargs)
+        current = _request_context.get()
+        if current is None:
+            return handler(**kwargs)
+        args, resolved_kwargs = resolve_arguments(
+            handler,
+            current,
+            kwargs or current.path_params,
+            resolve_awaitable,
+        )
+        return handler(*args, **resolved_kwargs)

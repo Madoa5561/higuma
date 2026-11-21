@@ -137,18 +137,9 @@ class RedisSessionMiddleware(SessionMiddleware):
             return ServerSession()
 
     def _save(self, response, session):
-        response.headers["vary"] = ", ".join(
-            dict.fromkeys(
-                [
-                    *[
-                        value.strip()
-                        for value in response.headers.get("vary", "").split(",")
-                        if value.strip()
-                    ],
-                    "Cookie",
-                ]
-            )
-        )
+        vary = response.headers.get("vary", "")
+        if not {"cookie", "*"} & {item.strip().lower() for item in vary.split(",")}:
+            response.headers["vary"] = f"{vary}, Cookie" if vary else "Cookie"
         if not session.modified:
             return response
         payload = json.dumps(

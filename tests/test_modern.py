@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID
 
 from higuma import (
@@ -495,6 +495,145 @@ class ModernApiTests(unittest.TestCase):
             {"method": "POST", "item_id": 7},
         )
         self.assertEqual(client.delete("/class-items/7").status_code, 405)
+
+    def test_method_view_supports_typed_parameters_dependencies_and_openapi(self) -> None:
+        app = self.make_app()
+        events: list[str] = []
+
+        def dep() -> str:
+            return "injected"
+
+        class TypedItemView(MethodView):
+            def get(
+                self,
+                item_id: int,
+                q: Annotated[str, QueryParam(min_length=2)] = "all",
+                source: Annotated[str, Depends(dep)] = "",
+            ) -> dict[str, object]:
+                return {"item_id": item_id, "q": q, "source": source}
+
+            def post(
+                self,
+                item_id: int,
+                payload: Annotated[ItemInput, Body()],
+                tasks: BackgroundTasks,
+            ) -> ItemOutput:
+                tasks.add_task(events.append, f"created:{item_id}:{payload.name}")
+                return ItemOutput(
+                    identifier=UUID("12345678-1234-5678-1234-567812345678"),
+                    name=payload.name,
+                    visibility=Visibility.PUBLIC,
+                )
+
+        app.add_url_rule(
+            "/typed-view/<int:item_id>",
+            endpoint="typed_view",
+            view_func=TypedItemView.as_view("typed_view"),
+        )
+        client = app.test_client()
+        self.assertEqual(
+            client.get("/typed-view/5?q=bear").json,
+            {"item_id": 5, "q": "bear", "source": "injected"},
+        )
+        self.assertEqual(client.get("/typed-view/5?q=a").status_code, 422)
+        created = client.post(
+            "/typed-view/5",
+            json={"name": "Bear", "quantity": 2, "available_on": "2026-11-22"},
+        )
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json["name"], "Bear")
+        self.assertEqual(events, ["created:5:Bear"])
+
+        spec = app.openapi()["paths"]["/typed-view/{item_id}"]
+        get_params = {(p["in"], p["name"]): p for p in spec["get"]["parameters"]}
+        self.assertEqual(get_params[("query", "q")]["schema"]["minLength"], 2)
+        self.assertTrue(spec["post"]["requestBody"]["required"])
+
+    def test_openapi_dataclass_init_false_annotated_fields_and_optional_raw_body(self) -> None:
+        from dataclasses import field
+
+        @dataclass
+        class ConstrainedModel:
+            code: Annotated[str, QueryParam(min_length=3, max_length=8)]
+            tier: Literal[1, 2] = 1
+            computed: str = field(init=False, default="internal")
+
+        app = self.make_app()
+
+        @app.post("/constrained")
+        def constrained(
+            model: ConstrainedModel = Body(),  # noqa: B008 - verify default marker OpenAPI required
+        ) -> dict[str, object]:
+            return {"code": model.code, "tier": model.tier}
+
+        @app.post("/only-text")
+        def only_text(
+            text: Annotated[str | None, Body()] = None,
+        ) -> dict[str, object]:
+            return {"text": text}
+
+        @app.post("/only-bytes")
+        def only_bytes(
+            raw: Annotated[bytes | None, Body()] = None,
+        ) -> dict[str, object]:
+            return {"size": None if raw is None else len(raw)}
+
+        schema = app.openapi()["components"]["schemas"]["ConstrainedModel"]
+        self.assertNotIn("computed", schema["properties"])
+        self.assertEqual(schema["properties"]["code"]["minLength"], 3)
+        self.assertEqual(schema["properties"]["tier"]["type"], "integer")
+
+        client = app.test_client()
+        self.assertEqual(client.post("/only-text").json, {"text": None})
+        self.assertEqual(
+            client.post("/only-text", data="bear", headers={"content-type": "text/plain"}).json,
+            {"text": "bear"},
+        )
+        self.assertEqual(client.post("/only-bytes").json, {"size": None})
+        self.assertEqual(
+            client.post(
+                "/only-bytes", data=b"bear", headers={"content-type": "application/octet-stream"}
+            ).json,
+            {"size": 4},
+        )
+
+    def test_async_lifespan_preserves_contextvar_and_shared_loop_in_test_client(self) -> None:
+        from contextvars import ContextVar
+
+        marker: ContextVar[str | None] = ContextVar("lifespan_marker", default=None)
+        loops: list[asyncio.AbstractEventLoop] = []
+
+        @asynccontextmanager
+        async def lifespan(app: Higuma):
+            token = marker.set("active")
+            loops.append(asyncio.get_running_loop())
+            try:
+                yield {"ready": True}
+            finally:
+                loops.append(asyncio.get_running_loop())
+                marker.reset(token)
+
+        app = Higuma(__name__, static_folder=None, lifespan=lifespan)
+
+        @app.on_startup
+        async def startup() -> None:
+            loops.append(asyncio.get_running_loop())
+
+        @app.on_shutdown
+        async def shutdown() -> None:
+            loops.append(asyncio.get_running_loop())
+
+        @app.get("/loop")
+        async def check_loop() -> dict[str, bool]:
+            loops.append(asyncio.get_running_loop())
+            return {"same": loops[-1] is loops[0]}
+
+        with app.test_client() as client:
+            self.assertEqual(client.get("/loop").json, {"same": True})
+
+        self.assertEqual(len(loops), 5)
+        self.assertTrue(all(loop is loops[0] for loop in loops))
+        self.assertIsNone(marker.get())
 
 
 if __name__ == "__main__":

@@ -106,6 +106,21 @@ def cache_parameter_hints(
     if func in seen:
         return
     seen.add(func)
+    view_class = getattr(func, "view_class", None)
+    if inspect.isclass(view_class):
+        for attr in (
+            "dispatch_request",
+            "get",
+            "head",
+            "post",
+            "put",
+            "patch",
+            "delete",
+            "options",
+        ):
+            member = getattr(view_class, attr, None)
+            if callable(member):
+                cache_parameter_hints(member, localns, seen)
     try:
         hints = get_type_hints(
             func,
@@ -345,10 +360,12 @@ def _read_parameter(
     if isinstance(marker, Cookie):
         return request.cookies.get(alias, _MISSING)
     if isinstance(marker, Body):
-        if annotation is bytes:
-            return request.body
-        if annotation is str:
-            return request.text
+        unwrapped = _unwrap_optional_type(annotation)
+        is_optional = unwrapped is not annotation
+        if unwrapped is bytes:
+            return _MISSING if (is_optional and not request.body) else request.body
+        if unwrapped is str:
+            return _MISSING if (is_optional and not request.body) else request.text
         if not request.body:
             return _MISSING
         return request.get_json()
@@ -376,7 +393,7 @@ def _resolve_dependency(
     overrides = request.state.get("_higuma_dependency_overrides", {})
     dependency = overrides.get(declared_dependency, declared_dependency)
     if dependency in stack:
-        names = " -> ".join(item.__name__ for item in (*stack, dependency))
+        names = " -> ".join(getattr(item, "__name__", repr(item)) for item in (*stack, dependency))
         raise RuntimeError(f"circular dependency: {names}")
     cache = request.state.setdefault("_higuma_dependency_cache", {})
     if marker.use_cache and declared_dependency in cache:
@@ -572,7 +589,7 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
                 raise ValueError(f"value must be a valid {annotation.__name__}") from exc
     if _is_typed_dict(annotation):
         return _convert_typed_dict(value, annotation, response=response)
-    if is_dataclass(annotation):
+    if inspect.isclass(annotation) and is_dataclass(annotation):
         return _convert_dataclass(value, annotation, response=response)
     if inspect.isclass(annotation) and isinstance(value, annotation):
         return value
@@ -705,6 +722,15 @@ def _is_sensitive_name(name: str) -> bool:
         marker in normalized
         for marker in ("password", "passwd", "token", "secret", "authorization", "api_key")
     )
+
+
+def _unwrap_optional_type(annotation: Any) -> Any:
+    origin = get_origin(annotation)
+    if origin in (types.UnionType, Union):
+        non_none = [item for item in get_args(annotation) if item is not type(None)]
+        if len(non_none) == 1:
+            return non_none[0]
+    return annotation
 
 
 def _is_collection_annotation(annotation: Any) -> bool:

@@ -32,20 +32,11 @@ class CORSMiddleware:
             raise ValueError("credentialed CORS requires explicit origins")
 
     def __call__(self, request: Request, call_next: NextHandler) -> Response:
-        response = make_response(call_next(request))
         origin = str(request.headers.get("origin", ""))
         allowed_origin = self._allowed_origin(origin)
-        if allowed_origin is None:
-            return response
-
-        response.headers["access-control-allow-origin"] = allowed_origin
-        if allowed_origin != "*":
-            _add_vary(response, "Origin")
-        if self.allow_credentials:
-            response.headers["access-control-allow-credentials"] = "true"
-        if self.expose_headers:
-            response.headers["access-control-expose-headers"] = ", ".join(self.expose_headers)
-        if request.method == "OPTIONS":
+        requested_headers: set[str] = set()
+        allowed_headers: set[str] = set()
+        if allowed_origin is not None and request.method == "OPTIONS":
             requested_method = str(request.headers.get("access-control-request-method", "")).upper()
             if requested_method and requested_method not in self.allow_methods:
                 raise Forbidden(detail="CORS method is not allowed")
@@ -59,6 +50,19 @@ class CORSMiddleware:
             allowed_headers = {value.lower() for value in self.allow_headers}
             if "*" not in allowed_headers and not requested_headers <= allowed_headers:
                 raise Forbidden(detail="CORS headers are not allowed")
+
+        response = make_response(call_next(request))
+        if allowed_origin is None:
+            return response
+
+        response.headers["access-control-allow-origin"] = allowed_origin
+        if allowed_origin != "*":
+            _add_vary(response, "Origin")
+        if self.allow_credentials:
+            response.headers["access-control-allow-credentials"] = "true"
+        if self.expose_headers:
+            response.headers["access-control-expose-headers"] = ", ".join(self.expose_headers)
+        if request.method == "OPTIONS":
             response.headers["access-control-allow-methods"] = ", ".join(self.allow_methods)
             response.headers["access-control-allow-headers"] = (
                 ", ".join(sorted(requested_headers))

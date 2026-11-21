@@ -82,3 +82,76 @@ def test_json_depth_boundary_and_failed_parse_cache():
             assert current.get_json(silent=True) is None
             with pytest.raises(BadRequest):
                 current.get_json()
+
+
+def test_request_cookies_survive_bracketed_reserved_and_malformed_siblings():
+    current = Request(
+        {
+            "headers": {
+                "cookie": (
+                    "filter[page]=1; path=/admin; malformed_token; "
+                    'higuma_session=valid_token; quoted="a; b"'
+                )
+            }
+        }
+    )
+    assert dict(current.cookies) == {
+        "filter[page]": "1",
+        "path": "/admin",
+        "higuma_session": "valid_token",
+        "quoted": "a; b",
+    }
+
+
+def test_mounted_asgi_app_with_async_handler_and_unicode_prefix():
+    import asyncio
+
+    sub = Higuma(__name__, static_folder=None)
+
+    @sub.get("/items")
+    async def items():
+        await asyncio.sleep(0.01)
+        return {"mounted": True, "root": request.root_path, "path": request.path}
+
+    app = Higuma(__name__, static_folder=None)
+    app.mount_asgi("/管理", sub.asgi_app)
+
+    response = app.test_client().get("/管理/items")
+    assert response.status_code == 200
+    assert response.get_json() == {"mounted": True, "root": "/管理", "path": "/items"}
+
+
+def test_blueprint_relative_rules_zero_arg_teardown_and_optional_hook_defaults():
+    from higuma import Blueprint
+
+    app = Higuma(__name__, static_folder=None)
+    events = []
+
+    parent = Blueprint("api", __name__, url_prefix="api")
+    child = Blueprint("v1", __name__, url_prefix="v1")
+
+    @child.get("items")
+    def list_items():
+        return {"items": []}
+
+    parent.register_blueprint(child)
+    app.register_blueprint(parent)
+
+    @app.after_request
+    def add_tag(response, tag="v1"):
+        response.headers["x-tag"] = tag
+        return response
+
+    @app.teardown_request
+    def teardown_req():
+        events.append("teardown_request")
+
+    @app.teardown_appcontext
+    def teardown_app():
+        events.append("teardown_appcontext")
+
+    response = app.test_client().get("/api/v1/items")
+    assert response.status_code == 200
+    assert response.get_json() == {"items": []}
+    assert response.headers["x-tag"] == "v1"
+    assert events == ["teardown_request", "teardown_appcontext"]

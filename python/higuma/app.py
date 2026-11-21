@@ -14,7 +14,6 @@ from email.utils import formatdate, parsedate_to_datetime
 from functools import wraps
 from html import escape
 from pathlib import Path
-from threading import Event, Thread
 from types import TracebackType
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
@@ -26,7 +25,13 @@ from .blueprint import Blueprint
 from .config import Config
 from .context import _app_context_error, _AppGlobals, _g_context
 from .exceptions import Forbidden, HTTPException, MethodNotAllowed, NotFound
-from .execution import _current_bridge, close_native_bridge, resolve_awaitable
+from .execution import (
+    AwaitBridge,
+    _current_bridge,
+    _ensure_native_loop,
+    close_native_bridge,
+    resolve_awaitable,
+)
 from .mounts import asgi_view, wsgi_view
 from .openapi import generate_openapi, swagger_ui_html
 from .parameters import (
@@ -50,7 +55,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.2"
+__version__ = "0.11.3"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -374,19 +379,25 @@ class Higuma:
             )
         planned: list[tuple[str, Blueprint, str]] = []
 
+        def normalize_prefix(value: str) -> str:
+            if not value or value == "/":
+                return ""
+            return normalize_rule(value)
+
         def collect(item: Blueprint, registered: str, prefix: str, ancestors: set[int]) -> None:
             if id(item) in ancestors:
                 raise ValueError("blueprint registration contains a cycle")
             if registered in self._blueprints or any(key == registered for key, _, _ in planned):
                 raise ValueError(f"blueprint {registered!r} is already registered")
-            planned.append((registered, item, prefix.rstrip("/")))
+            normalized_prefix = normalize_prefix(prefix)
+            planned.append((registered, item, normalized_prefix))
             for child, options in item._children:
                 child_prefix = options["url_prefix"]
                 child_prefix = child.url_prefix if child_prefix is None else child_prefix
                 collect(
                     child,
                     registered + "." + (options["name"] or child.name),
-                    prefix.rstrip("/") + child_prefix,
+                    normalized_prefix + normalize_prefix(child_prefix),
                     ancestors | {id(item)},
                 )
 
@@ -430,7 +441,9 @@ class Higuma:
             )
             for rule, endpoint, view, methods, options, websocket in routes:
                 endpoint = registered + "." + endpoint
-                candidate = Rule(prefix + rule, methods, endpoint, view)
+                normalized_rule = normalize_rule(rule)
+                full_rule = (prefix + ("" if normalized_rule == "/" else normalized_rule)) or "/"
+                candidate = Rule(full_rule, methods, endpoint, view)
                 if endpoint in endpoints:
                     raise ValueError(f"endpoint {endpoint!r} is already registered")
                 endpoints.add(endpoint)
@@ -548,9 +561,9 @@ class Higuma:
         current = _request_context.get()
         for blueprint in reversed(self._blueprint_chain(current.blueprint if current else None)):
             for handler in reversed(blueprint._teardown_request):
-                _resolve_awaitable(handler(error))
+                _call_teardown_hook(handler, error)
         for handler in reversed(self._teardown_request):
-            _resolve_awaitable(handler(error))
+            _call_teardown_hook(handler, error)
         signals.request_tearing_down.send(self, exc=error)
 
     @contextmanager
@@ -607,7 +620,7 @@ class Higuma:
         finally:
             try:
                 for handler in reversed(self._teardown_appcontext):
-                    _resolve_awaitable(handler(_app_context_error.get()))
+                    _call_teardown_hook(handler, _app_context_error.get())
                 signals.appcontext_tearing_down.send(self, exc=_app_context_error.get())
             finally:
                 _app_context_error.reset(error_token)
@@ -642,16 +655,16 @@ class Higuma:
                 self.state.update(lifespan_state)
             try:
                 for handler in self._startup_handlers:
-                    _resolve_awaitable(
-                        handler(self) if inspect.signature(handler).parameters else handler()
+                    _resolve_lifespan_awaitable(
+                        handler(self) if _accepts_first_arg(handler) else handler()
                     )
                 yield self
             finally:
                 failure = None
                 for handler in reversed(self._shutdown_handlers):
                     try:
-                        _resolve_awaitable(
-                            handler(self) if inspect.signature(handler).parameters else handler()
+                        _resolve_lifespan_awaitable(
+                            handler(self) if _accepts_first_arg(handler) else handler()
                         )
                     except BaseException as error:  # noqa: BLE001 - finish every cleanup before re-raising
                         failure = failure or error
@@ -1533,20 +1546,77 @@ def _resolve_awaitable(value: Any) -> Any:
     return resolve_awaitable(value)
 
 
+def _resolve_lifespan_awaitable(value: Any) -> Any:
+    if not inspect.isawaitable(value):
+        return value
+    if _current_bridge(create=False) is None:
+        loop = _ensure_native_loop()
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is not loop:
+            bridge = AwaitBridge(loop)
+            try:
+                return bridge.resolve(value)
+            finally:
+                asyncio.run_coroutine_threadsafe(bridge.close(), loop).result()
+    return _resolve_awaitable(value)
+
+
+def _positional_params(func: Callable[..., Any]) -> tuple[list[inspect.Parameter], bool]:
+    params = list(inspect.signature(func).parameters.values())
+    positional = [
+        item
+        for item in params
+        if item.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    has_varargs = any(item.kind == inspect.Parameter.VAR_POSITIONAL for item in params)
+    return positional, has_varargs
+
+
+def _accepts_first_arg(func: Callable[..., Any]) -> bool:
+    positional, _ = _positional_params(func)
+    if not positional:
+        return False
+    first = positional[0]
+    return first.default is inspect.Parameter.empty or first.name in {
+        "request",
+        "current",
+        "current_request",
+        "req",
+        "app",
+        "error",
+        "exc",
+        "exception",
+    }
+
+
 def _call_hook(func: Callable[..., Any], request: Request) -> Any:
-    return _resolve_awaitable(func(request) if inspect.signature(func).parameters else func())
+    return _resolve_awaitable(func(request) if _accepts_first_arg(func) else func())
+
+
+def _call_teardown_hook(func: Callable[..., Any], error: BaseException | None) -> Any:
+    positional, has_varargs = _positional_params(func)
+    return _resolve_awaitable(func(error) if (positional or has_varargs) else func())
 
 
 def _call_after_hook(func: Callable[..., Any], request: Request, response: Any) -> Any:
-    count = len(inspect.signature(func).parameters)
-    if count >= 2:
+    positional, _ = _positional_params(func)
+    if len(positional) >= 2 and (
+        positional[1].default is inspect.Parameter.empty
+        or positional[0].name in {"request", "current", "current_request", "req"}
+    ):
         return _resolve_awaitable(func(request, response))
     return _resolve_awaitable(func(response))
 
 
 def _call_error_handler(func: ErrorHandler, error: BaseException, request: Request) -> Any:
-    count = len(inspect.signature(func).parameters)
-    if count >= 2:
+    positional, _ = _positional_params(func)
+    if len(positional) >= 2 and (
+        positional[1].default is inspect.Parameter.empty
+        or positional[1].name in {"request", "current", "current_request", "req"}
+    ):
         return _resolve_awaitable(func(error, request))
     return _resolve_awaitable(func(error))
 
@@ -1618,30 +1688,14 @@ def _http_timestamp(value: str | None) -> int | None:
 class _AsyncContextManagerAdapter:
     def __init__(self, context: Any) -> None:
         self.context = context
-        self.loop: asyncio.AbstractEventLoop | None = None
-        self.ready = Event()
-        self.thread = Thread(target=self._run_loop, daemon=True, name="higuma-lifespan")
-
-    def _run_loop(self) -> None:
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        self.ready.set()
-        self.loop.run_forever()
-        self.loop.run_until_complete(self.loop.shutdown_asyncgens())
-        self.loop.close()
-
-    def _submit(self, awaitable: Any) -> Any:
-        self.ready.wait()
-        if self.loop is None:
-            raise RuntimeError("lifespan event loop failed to start")
-        return asyncio.run_coroutine_threadsafe(awaitable, self.loop).result()
+        self.bridge: AwaitBridge | None = None
 
     def __enter__(self) -> Any:
-        self.thread.start()
+        self.bridge = AwaitBridge(_ensure_native_loop())
         try:
-            return self._submit(self.context.__aenter__())
+            return self.bridge.resolve(self.context.__aenter__())
         except BaseException:
-            self._stop()
+            self._close()
             raise
 
     def __exit__(
@@ -1651,12 +1705,12 @@ class _AsyncContextManagerAdapter:
         traceback: TracebackType | None,
     ) -> bool:
         try:
-            return bool(self._submit(self.context.__aexit__(exc_type, exc_value, traceback)))
+            assert self.bridge is not None
+            return bool(self.bridge.resolve(self.context.__aexit__(exc_type, exc_value, traceback)))
         finally:
-            self._stop()
+            self._close()
 
-    def _stop(self) -> None:
-        if self.loop is not None:
-            self.loop.call_soon_threadsafe(self.loop.stop)
-        if self.thread.is_alive():
-            self.thread.join()
+    def _close(self) -> None:
+        if self.bridge is not None:
+            bridge, self.bridge = self.bridge, None
+            asyncio.run_coroutine_threadsafe(bridge.close(), bridge.loop).result()

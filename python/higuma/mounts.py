@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import unquote, unquote_to_bytes
+from urllib.parse import quote, unquote, unquote_to_bytes
 
 from .request import Request
 from .response import Response
@@ -49,10 +50,13 @@ def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
     async def mounted(request: Request) -> Response:
         events: list[dict[str, Any]] = []
         received = False
+        response_complete = asyncio.Event()
+        response_remaining: int | None = None
 
         async def receive() -> dict[str, Any]:
             nonlocal received
             if received:
+                await response_complete.wait()
                 return {"type": "http.disconnect"}
             received = True
             return {
@@ -62,7 +66,27 @@ def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
             }
 
         async def send(event: dict[str, Any]) -> None:
+            nonlocal response_remaining
             events.append(event)
+            if event.get("type") == "http.response.start":
+                if request.method == "HEAD" or int(event.get("status", 200)) in {204, 205, 304}:
+                    response_remaining = 0
+                else:
+                    response_remaining = next(
+                        (
+                            int(value)
+                            for key, value in event.get("headers", [])
+                            if bytes(key).lower() == b"content-length"
+                        ),
+                        None,
+                    )
+            elif event.get("type") == "http.response.body":
+                if response_remaining is not None:
+                    response_remaining -= len(event.get("body", b""))
+                if not event.get("more_body", False):
+                    response_complete.set()
+            if response_remaining is not None and response_remaining <= 0:
+                response_complete.set()
 
         await application(_asgi_scope(request, prefix), receive, send)
         start = next(
@@ -84,7 +108,22 @@ def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
 
 
 def _mounted_path(path: str, prefix: str) -> str:
-    value = path[len(prefix) :] if prefix != "/" and path.startswith(prefix) else path
+    if prefix != "/":
+        if path.startswith(prefix):
+            value = path[len(prefix) :]
+        else:
+            encoded_prefix = quote(prefix, safe="/!$&'()*+,-.:;=@_~")
+            decoded = unquote(path)
+            if path.startswith(encoded_prefix):
+                value = path[len(encoded_prefix) :]
+            elif decoded == prefix or decoded.startswith(prefix + "/"):
+                count = len(prefix.split("/")) - 1
+                parts = path.split("/")
+                value = "/" + "/".join(parts[count + 1 :])
+            else:
+                value = path
+    else:
+        value = path
     return value if value.startswith("/") else f"/{value}"
 
 
@@ -130,14 +169,15 @@ def _wsgi_environ(request: Request, prefix: str) -> dict[str, Any]:
 
 def _asgi_scope(request: Request, prefix: str) -> dict[str, Any]:
     host, port = _server_address(str(request.headers.get("host", "localhost")), request.scheme)
+    mounted_path = _mounted_path(request.path, prefix)
     return {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
         "http_version": "1.1",
         "method": request.method,
         "scheme": request.scheme,
-        "path": unquote(_mounted_path(request.path, prefix)),
-        "raw_path": _mounted_path(request.path, prefix).encode(),
+        "path": unquote(mounted_path),
+        "raw_path": quote(mounted_path, safe="/%!$&'()*+,-.:;=@_~").encode("ascii"),
         "root_path": request.root_path + ("" if prefix == "/" else prefix),
         "query_string": request.query_string.encode(),
         "headers": list(request.raw_headers),

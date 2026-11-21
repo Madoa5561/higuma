@@ -7,6 +7,38 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-11-22
+
+### Fixed
+
+- Wait for mounted ASGI applications in `mount_asgi` (`asgi_view`) to complete their
+  HTTP response before delivering `http.disconnect` on `receive()`, and normalize
+  percent-encoded/Unicode mount prefixes so mounted `Higuma.asgi_app` or ASGI sub-apps
+  with `async def` routes are not prematurely cancelled.
+- Parse `Request.cookies` per cookie pair with RFC 6265 unquoting so cookies containing
+  brackets (e.g. `filter[page]=1`), names overlapping `Set-Cookie` attributes (`path`,
+  `domain`, `version`, `secure`), or malformed sibling tokens do not discard valid
+  cookies such as `higuma_session`.
+- Run async `lifespan` context managers (`__aenter__`/`__aexit__`) and `on_startup`/
+  `on_shutdown` hooks on the shared native async event loop so `ContextVar` tokens and
+  loop-bound resources remain on the same task/loop across `with app.test_client():`
+  and `app.run()`.
+- Resolve `MethodView` (`get`, `post`, etc.) and `View.dispatch_request` arguments
+  through `resolve_arguments` and inspect them in `generate_openapi` so class-based
+  views support typed parameters (`QueryParam`, `Body`, `Depends`, `BackgroundTasks`)
+  and per-method OpenAPI schemas.
+- Handle optional `str | None` and `bytes | None` `Body()` annotations without routing
+  text/binary payloads to JSON parsing, exclude `field(init=False)` dataclass fields
+  from OpenAPI schemas, propagate `Parameter` constraints inside `Annotated[...]` in
+  `schema_for`, and mark `= Body()` / `= Form()` / `= File()` defaults as `required`
+  in OpenAPI `requestBody`.
+- Normalize relative Blueprint `url_prefix` and route `rule` strings without leading
+  slashes, support 0-argument `teardown_request` / `teardown_appcontext` hooks, avoid
+  miscounting optional default arguments in hook signatures, validate CORS `OPTIONS`
+  preflights before calling downstream handlers, deduplicate `Vary: Cookie`
+  case-insensitively in `RedisSessionMiddleware`, and add `follow_redirects`, per-call
+  `base_url`, case-insensitive stream headers, and string CLI invocation to test helpers.
+
 ## [0.11.2] - 2026-11-22
 
 ### Fixed
