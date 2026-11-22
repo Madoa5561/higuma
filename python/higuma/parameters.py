@@ -5,8 +5,9 @@ import math
 import re
 import types
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Union, get_args, get_origin, get_type_hints
@@ -404,7 +405,9 @@ def parameter_schema_metadata(marker: Parameter) -> dict[str, Any]:
 
 def serialize_json_value(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
-        return {key: serialize_json_value(item) for key, item in asdict(value).items()}
+        return {
+            field.name: serialize_json_value(getattr(value, field.name)) for field in fields(value)
+        }
     if isinstance(value, Mapping):
         return {str(key): serialize_json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
@@ -413,7 +416,7 @@ def serialize_json_value(value: Any) -> Any:
         return serialize_json_value(value.value)
     if isinstance(value, (date, datetime)):
         return value.isoformat()
-    if isinstance(value, (UUID, Path)):
+    if isinstance(value, (UUID, Path, Decimal)):
         return str(value)
     return value
 
@@ -639,15 +642,23 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
             raise ValueError("value must be finite")
         return converted
     if annotation is UUID:
+        if isinstance(value, UUID):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("value must be a UUID")
         try:
-            return value if isinstance(value, UUID) else UUID(str(value))
+            return UUID(value)
         except ValueError as exc:
             raise ValueError("value must be a UUID") from exc
     if annotation is date:
         if isinstance(value, datetime):
             raise TypeError("value must be a date, not a date-time")
+        if isinstance(value, date):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("value must be an ISO date")
         try:
-            return value if isinstance(value, date) else date.fromisoformat(str(value))
+            return date.fromisoformat(value)
         except ValueError as exc:
             raise ValueError("value must be an ISO date") from exc
     if annotation is type(None):
@@ -659,7 +670,9 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
             return value
         if isinstance(value, date):
             raise TypeError("value must be a date-time, not a date")
-        text = str(value)
+        if not isinstance(value, str):
+            raise TypeError("value must be an ISO date-time")
+        text = value
         if text.endswith(("Z", "z")):
             text = text[:-1] + "+00:00"
         try:
@@ -773,6 +786,8 @@ def _validate_constraints(value: Any, marker: Parameter) -> None:
         (marker.lt, lambda left, right: left < right, "less than"),
     ):
         if boundary is not None:
+            if isinstance(value, bool):
+                raise TypeError("numeric constraints require a comparable value")
             try:
                 valid = comparison(value, boundary)
             except TypeError as exc:

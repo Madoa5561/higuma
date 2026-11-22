@@ -794,6 +794,78 @@ class ModernApiTests(unittest.TestCase):
             spec["paths"]["/raw-bytes"]["post"]["requestBody"]["content"],
         )
 
+    def test_parameter_coercion_decimal_no_deepcopy_and_openapi_metadata(self) -> None:
+        from datetime import datetime
+        from decimal import Decimal
+        from typing import Any
+
+        from higuma import ServerSentEvent
+        from higuma.parameters import (
+            _convert_value,
+            _validate_constraints,
+            serialize_json_value,
+        )
+
+        class NoCopy:
+            def __deepcopy__(self, memo: Any) -> Any:
+                raise AssertionError("serialize_json_value must not deepcopy")
+
+            def __str__(self) -> str:
+                return "nocopy"
+
+        @dataclass
+        class Quote:
+            price: Decimal
+            marker: Any
+
+        serialized = serialize_json_value(Quote(price=Decimal("19.95"), marker=NoCopy()))
+        self.assertEqual(serialized["price"], "19.95")
+        self.assertIsInstance(serialized["marker"], NoCopy)
+        self.assertIn(b'"19.95"', ServerSentEvent(data={"price": Decimal("19.95")}).encode())
+
+        with self.assertRaises(TypeError):
+            _convert_value(20260102, date)
+        with self.assertRaises(TypeError):
+            _convert_value(20260102, datetime)
+        with self.assertRaises(TypeError):
+            _convert_value(12345, UUID)
+        with self.assertRaises(TypeError):
+            _validate_constraints(True, QueryParam(ge=0))
+
+        class Color(Enum):
+            RED = "red"
+            BLUE = "blue"
+
+        app = Higuma(__name__, static_folder=None)
+        custom_responses = {"200": {"description": "Custom OK"}}
+
+        @app.post("/paint/<item_id>", responses=custom_responses)
+        def paint(
+            item_id: Annotated[str, PathParam(description="Item identifier", deprecated=True)],
+            color: Annotated[Literal[Color.RED, Color.BLUE], QueryParam()],
+            note: Annotated[str, Body(description="Paint note")],
+        ) -> dict[str, str]:
+            return {"id": item_id, "color": color.value, "note": note}
+
+        @app.delete("/paint/<item_id>", status_code=204)
+        def remove(item_id: str) -> None:
+            return None
+
+        spec = app.openapi()
+        self.assertNotIn("422", custom_responses)
+        post_op = spec["paths"]["/paint/{item_id}"]["post"]
+        self.assertIn("422", post_op["responses"])
+        params = {(p["in"], p["name"]): p for p in post_op["parameters"]}
+        self.assertEqual(params[("path", "item_id")]["description"], "Item identifier")
+        self.assertTrue(params[("path", "item_id")]["deprecated"])
+        self.assertEqual(
+            params[("query", "color")]["schema"],
+            {"enum": ["red", "blue"], "type": "string"},
+        )
+        self.assertEqual(post_op["requestBody"]["description"], "Paint note")
+        delete_op = spec["paths"]["/paint/{item_id}"]["delete"]
+        self.assertNotIn("content", delete_op["responses"]["204"])
+
 
 if __name__ == "__main__":
     unittest.main()

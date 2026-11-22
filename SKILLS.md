@@ -375,6 +375,10 @@ supervisor, streaming, and proxy changes.
   (413), built-in ORM `Query.delete()`/`delete_all()` refuse `.limit()`/`.offset()` to prevent
   unbounded deletes, `JSONLogFormatter` serializes extras with `default=str` and includes
   `exc_info`, and `HealthChecks` recognizes async callable probe objects.
+  In 0.11.16+, `serialize_json_value()` avoids dataclass `deepcopy()` and handles `Decimal`,
+  `UUID`/`date`/`datetime` coercion requires `str`, numeric parameter bounds reject `bool`,
+  and OpenAPI serializes `Literal[Enum]` values, preserves caller `responses`, omits `content`
+  on `204`/`304`, and includes `PathParam`/`Body` descriptions.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

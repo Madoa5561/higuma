@@ -125,9 +125,10 @@ class Supervisor:
             bind_host, family = _bind_target(self.host)
             listener = socket.create_server((bind_host, self.port), family=family, reuse_port=False)
             listener.settimeout(0.5)
+            bound_port = listener.getsockname()[1]
             display_host = f"[{bind_host}]" if ":" in bind_host else bind_host
             print(
-                f"higuma supervisor listening on http://{display_host}:{self.port} "
+                f"higuma supervisor listening on http://{display_host}:{bound_port} "
                 f"with {self.processes} processes"
             )
             while not self._stopped.is_set():

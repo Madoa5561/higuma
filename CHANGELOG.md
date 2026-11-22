@@ -7,6 +7,25 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.16] - 2026-11-23
+
+### Fixed
+
+- Improve parameter serialization and validation (`parameters.py`): iterate dataclass
+  `fields()` directly in `serialize_json_value()` instead of `dataclasses.asdict()`
+  (eliminating unnecessary `copy.deepcopy()` calls and crashes on uncopyable fields),
+  serialize `Decimal` values consistently across JSON/SSE/WebSocket outputs, require `str`
+  inputs when parsing `UUID`/`date`/`datetime` values (preventing JSON integers such as
+  `20260102` from coercing inconsistently across Python versions), and reject `bool` values
+  in numeric constraint checks (`ge`/`gt`/`le`/`lt`).
+- Improve OpenAPI 3.1 schema generation (`openapi.py`): serialize `Literal` and `Enum`
+  values via `serialize_json_value()` (fixing `Literal[MyEnum.VALUE]` enum schemas), copy
+  custom `responses` dicts before adding `"422"` so `app.openapi()` never mutates caller
+  metadata, omit `"content"` on default `204`/`304` responses, and propagate
+  `PathParam(description=..., deprecated=True)` and `Body(description=...)` metadata.
+- Log the actual bound ephemeral port (`listener.getsockname()[1]`) in `Supervisor._serve()`
+  when `port=0` is configured.
+
 ## [0.11.15] - 2026-11-23
 
 ### Fixed

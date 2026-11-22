@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.16** — `serialize_json_value()` の dataclass 非 deepcopy 化＆`Decimal` 対応、
+> `UUID`/`date`/`datetime` の非文字列入力拒否と数値制約での `bool` 拒否、OpenAPI の
+> `Literal[Enum]` 値正規化・`responses` 非破壊化・`204`/`304` `content` 省略・
+> `PathParam`/`Body` メタデータ反映、`Supervisor(port=0)` 実バインドポート表示を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.15** — WSGI マウント（`wsgi_view`）の PEP 3333 `start_response(..., exc_info)` 準拠・
 > エンコード済み `/` 越境防止・ポート範囲検証、multipart `max_form_parts` 後の不正終端 `400` 判定、
 > 組み込み ORM の `limit`/`offset` 付き `delete()` 拒否・`Model` 型検証・close 済み接続の例外隠蔽防止、

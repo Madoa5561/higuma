@@ -352,6 +352,21 @@ def _exercise_developer_apis() -> None:
         assert smoke_sess.query(SmokeItem).count() == 1
     smoke_db.close()
 
+    from decimal import Decimal
+
+    from higuma import ServerSentEvent
+
+    assert b'"12.50"' in ServerSentEvent(data={"amount": Decimal("12.50")}).encode()
+
+    @ipv6_app.delete("/ipv6/<item_id>", status_code=204)
+    def delete_ipv6(item_id: str) -> None:
+        return None
+
+    assert (
+        "content"
+        not in ipv6_app.openapi()["paths"]["/ipv6/{item_id}"]["delete"]["responses"]["204"]
+    )
+
     try:
         TrustedHostMiddleware("example.com")  # type: ignore[arg-type]
     except TypeError:

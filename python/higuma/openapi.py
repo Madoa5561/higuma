@@ -209,7 +209,7 @@ def schema_for(
         options = [schema_for(item, schemas, _registry=registry) for item in args]
         return {"anyOf": options}
     if origin is Literal:
-        values = list(args)
+        values = [serialize_json_value(value) for value in args]
         schema: dict[str, Any] = {"enum": values}
         if values and all(isinstance(value, str) for value in values):
             schema["type"] = "string"
@@ -247,7 +247,7 @@ def schema_for(
     if primitive is not None:
         return primitive
     if inspect.isclass(annotation) and issubclass(annotation, Enum):
-        values = [member.value for member in annotation]
+        values = [serialize_json_value(member.value) for member in annotation]
         schema = {"enum": values}
         if values and all(isinstance(value, str) for value in values):
             schema["type"] = "string"
@@ -354,27 +354,27 @@ def _operation_for(
     summary = metadata.pop("summary", None)
     success_status = str(metadata.pop("status_code", 200))
     response_model = metadata.pop("response_model", None)
+    custom_responses = metadata.pop("responses", None)
+    if custom_responses is not None:
+        responses: dict[str, Any] = dict(custom_responses)
+    else:
+        default_response: dict[str, Any] = {"description": "Successful response"}
+        if success_status not in {"204", "304"}:
+            default_response["content"] = {
+                "application/json": {
+                    "schema": schema_for(
+                        response_model
+                        if response_model is not None
+                        else type_hints.get("return", signature.return_annotation),
+                        schemas,
+                        _registry=registry,
+                    )
+                }
+            }
+        responses = {success_status: default_response}
     operation: dict[str, Any] = {
         "operationId": metadata.pop("operation_id", route.endpoint),
-        "responses": metadata.pop(
-            "responses",
-            {
-                success_status: {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": schema_for(
-                                response_model
-                                if response_model is not None
-                                else type_hints.get("return", signature.return_annotation),
-                                schemas,
-                                _registry=registry,
-                            )
-                        }
-                    },
-                }
-            },
-        ),
+        "responses": responses,
     }
     if summary:
         operation["summary"] = summary
@@ -400,9 +400,19 @@ def _operation_for(
             ).default,
         )
         schema = schema_for(annotation, schemas, _registry=registry) or _converter_schema(converter)
+        path_item: dict[str, Any] = {
+            "name": name,
+            "in": "path",
+            "required": True,
+            "schema": schema,
+        }
         if isinstance(declared_marker, PathParam):
             schema.update(parameter_schema_metadata(declared_marker))
-        parameters.append({"name": name, "in": "path", "required": True, "schema": schema})
+            if declared_marker.description:
+                path_item["description"] = declared_marker.description
+            if declared_marker.deprecated:
+                path_item["deprecated"] = True
+        parameters.append(path_item)
 
     for parameter, annotation, marker in input_specs:
         if not isinstance(marker, (QueryParam, Header, Cookie)):
@@ -446,7 +456,7 @@ def _operation_for(
         multipart_specs = [item for item in input_specs if isinstance(item[2], (Form, File))]
         if body_specs:
             parameter, annotation, marker = body_specs[0]
-            operation["requestBody"] = {
+            body_entry: dict[str, Any] = {
                 "required": _is_required_parameter(parameter),
                 "content": {
                     _body_media_type(annotation): {
@@ -457,6 +467,9 @@ def _operation_for(
                     }
                 },
             }
+            if marker.description:
+                body_entry["description"] = marker.description
+            operation["requestBody"] = body_entry
         elif multipart_specs:
             properties = {}
             required_fields = []
