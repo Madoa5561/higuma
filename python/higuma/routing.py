@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -71,6 +72,8 @@ class Rule:
 
             converter = match.group("converter") or "string"
             name = match.group("name")
+            if name in self.converters:
+                raise ValueError(f"duplicate route parameter name: {name}")
             if converter == "path" and index + 1 != len(segments):
                 raise ValueError("<path:...> must be the final route segment")
             self._segments.append(("parameter", name, converter))
@@ -116,7 +119,13 @@ class Rule:
                 or re.fullmatch(_converter_pattern(converter), decoded) is None
             ):
                 return None
-            parameters[value] = _convert_value(converter, decoded)
+            try:
+                converted = _convert_value(converter, decoded)
+            except (ValueError, OverflowError):
+                return None
+            if converter == "float" and not math.isfinite(converted):
+                return None
+            parameters[value] = converted
             path_index += 1
 
         return parameters if path_index == len(parts) else None

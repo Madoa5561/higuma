@@ -535,6 +535,56 @@ class PythonCoreRegressionTests(unittest.TestCase):
             sup._serve([1, 2])
         self.assertIs(signal.getsignal(signal.SIGINT), before_sigint)
 
+    def test_routing_rejects_duplicates_huge_ints_inf_floats_and_bad_multipart_ct(self) -> None:
+        from higuma import Higuma, request
+        from higuma._core import HigumaCore
+
+        app = Higuma(__name__, static_folder=None)
+        with self.assertRaises(ValueError):
+
+            @app.get("/users/<int:id>/posts/<int:id>")
+            def dup(id: int):
+                return {"id": id}
+
+        core = HigumaCore()
+        with self.assertRaises(ValueError):
+            core.add_route("/users/<int:id>/posts/<int:id>", ["GET"], lambda req: "dup")
+        with self.assertRaises(ValueError):
+            core.add_route("/users/<int:1bad>", ["GET"], lambda req: "bad")
+
+        @app.get("/items/<int:item_id>")
+        def get_item(item_id: int):
+            return {"id": item_id}
+
+        @app.get("/price/<float:amount>")
+        def get_price(amount: float):
+            return {"amount": amount}
+
+        @app.post("/upload")
+        def upload():
+            return {"keys": list(request.form.keys())}
+
+        client = app.test_client()
+        self.assertEqual(client.get("/items/" + "9" * 5000).status_code, 404)
+        self.assertEqual(client.get("/price/" + "9" * 400).status_code, 404)
+        self.assertEqual(client.get("/items/42").json, {"id": 42})
+        self.assertEqual(client.get("/price/12.5").json, {"amount": 12.5})
+
+        from types import SimpleNamespace
+
+        from higuma.exceptions import BadRequest
+        from higuma.multipart import parse_multipart
+
+        with self.assertRaises(BadRequest):
+            parse_multipart(SimpleNamespace(content_type="multipart/form-data; boundary=熊"))
+
+        bad_ct = client.post(
+            "/upload",
+            data=b"--b--\r\n",
+            headers={"content-type": "multipart/form-data; boundary=\xff"},
+        )
+        self.assertEqual(bad_ct.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

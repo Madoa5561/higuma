@@ -1674,6 +1674,7 @@ fn create_template_env(template_dir: &Path) -> Environment<'static> {
 fn parse_route_pattern(pattern: &str) -> Result<(Vec<RouteSegment>, usize), String> {
     let parts = split_path(pattern);
     let mut segments = Vec::with_capacity(parts.len());
+    let mut seen_params = HashSet::new();
     let mut specificity = 0;
 
     for (index, part) in parts.iter().enumerate() {
@@ -1684,12 +1685,17 @@ fn parse_route_pattern(pattern: &str) -> Result<(Vec<RouteSegment>, usize), Stri
                 None => ("string", inner),
             };
 
-            if name.is_empty()
-                || !name
-                    .chars()
-                    .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-            {
+            let mut chars = name.chars();
+            let valid_start = chars
+                .next()
+                .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic());
+            if !valid_start || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
                 return Err(format!("invalid route parameter name in {pattern}"));
+            }
+            if !seen_params.insert(name.to_string()) {
+                return Err(format!(
+                    "duplicate route parameter name in {pattern}: {name}"
+                ));
             }
 
             let converter = match converter_name {
@@ -1797,20 +1803,20 @@ fn is_uuid(value: &str) -> bool {
 
 fn is_integer_literal(value: &str) -> bool {
     let digits = value.strip_prefix('-').unwrap_or(value);
-    is_ascii_digits(digits)
+    digits.len() <= 4000 && is_ascii_digits(digits)
 }
 
 fn is_float_literal(value: &str) -> bool {
     let unsigned = value.strip_prefix('-').unwrap_or(value);
-    let Some((whole, fraction)) = unsigned.split_once('.') else {
-        return is_ascii_digits(unsigned);
+    let lexical = match unsigned.split_once('.') {
+        None => is_ascii_digits(unsigned),
+        Some((whole, fraction)) => {
+            !fraction.contains('.')
+                && ((is_ascii_digits(whole) && fraction.chars().all(|ch| ch.is_ascii_digit()))
+                    || (whole.is_empty() && is_ascii_digits(fraction)))
+        }
     };
-    if fraction.contains('.') {
-        return false;
-    }
-
-    (is_ascii_digits(whole) && fraction.chars().all(|ch| ch.is_ascii_digit()))
-        || (whole.is_empty() && is_ascii_digits(fraction))
+    lexical && value.parse::<f64>().is_ok_and(f64::is_finite)
 }
 
 fn is_ascii_digits(value: &str) -> bool {
@@ -2274,6 +2280,10 @@ mod tests {
         assert!(parse_route_pattern("/files/<path:name>/metadata").is_err());
         assert!(parse_route_pattern("/users/<unknown:id>").is_err());
         assert!(parse_route_pattern("/users/<invalid-name>").is_err());
+        assert!(parse_route_pattern("/users/<int:1bad>").is_err());
+        assert!(parse_route_pattern("/users/<int:id>/posts/<int:id>").is_err());
+        assert!(!is_integer_literal(&"9".repeat(5000)));
+        assert!(!is_float_literal(&"9".repeat(400)));
     }
 
     #[test]

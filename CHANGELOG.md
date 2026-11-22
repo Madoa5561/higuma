@@ -7,6 +7,29 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.9] - 2026-11-22
+
+### Fixed
+
+- Prevent `500` crashes on oversized `<int:...>` URL segments (exceeding Python's integer
+  string conversion limit) and reject non-finite overflowing `<float:...>` segments as `404`
+  in both the Rust core and Python `Rule.match()`.
+- Reject duplicate route parameter names (such as `/users/<int:id>/posts/<int:id>`) in both
+  Python `Rule` and Rust `parse_route_pattern()`, and enforce Python identifier start rules
+  (`[A-Za-z_][A-Za-z0-9_]*`) on route parameter names in Rust.
+- Validate `Parameter` numeric/length bounds (rejecting booleans, non-finite numbers, and
+  contradictory `ge`/`gt`/`le`/`lt` ranges), construct unwrapped optional unions safely on
+  Python 3.10+ (`Optional[Annotated[Any, ...]]`), parse `IntEnum` string values while
+  rejecting boolean coercion, support lowercase RFC 3339 `z` UTC suffixes without accepting
+  bare `date` objects for `datetime`, and reject non-`None` values for `type(None)`.
+- Disambiguate colliding OpenAPI schema names when distinct `dataclass`/`TypedDict`/ORM models
+  share a class name, and emit `text/plain` / `application/octet-stream` requestBody content
+  types for raw `str` / `bytes` `Body()` parameters.
+- Percent-encode non-ASCII directory paths in `StaticFiles` `308` trailing-slash redirects,
+  trim optional whitespace before `;` in `SPAFiles` `Accept` negotiation, reject `bytes` and
+  non-string elements in `SPAFiles` prefixes, and return `400 Bad Request` on non-Latin-1
+  multipart `Content-Type` headers.
+
 ## [0.11.8] - 2026-11-22
 
 ### Fixed

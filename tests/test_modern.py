@@ -693,6 +693,107 @@ class ModernApiTests(unittest.TestCase):
             {"type": "array", "items": {"type": "string", "format": "binary"}},
         )
 
+    def test_parameter_validation_intenum_rfc3339_and_openapi_disambiguation(self) -> None:
+        import typing
+        from datetime import date, datetime
+        from enum import IntEnum
+        from typing import Any
+
+        from higuma import Parameter
+        from higuma.parameters import _convert_value
+
+        class Priority(IntEnum):
+            LOW = 1
+            HIGH = 2
+
+        for bad_kwargs in (
+            {"min_length": True},
+            {"max_length": True},
+            {"ge": True},
+            {"ge": float("nan")},
+            {"lt": float("inf")},
+            {"ge": 10, "le": 5},
+            {"gt": 5, "le": 5},
+            {"ge": 5, "lt": 5},
+            {"gt": 5, "lt": 5},
+        ):
+            with self.assertRaises(ValueError):
+                Parameter(**bad_kwargs)  # type: ignore[arg-type]
+
+        with self.assertRaises(TypeError):
+            _convert_value("not-null", type(None))
+        self.assertIsNone(_convert_value(None, type(None)))
+        with self.assertRaises(TypeError):
+            _convert_value(date(2026, 11, 22), datetime)
+
+        def make_order_item():
+            @dataclass
+            class Item:
+                sku: str
+
+            return Item
+
+        def make_stock_item():
+            @dataclass
+            class Item:
+                quantity: int
+
+            return Item
+
+        OrderItem = make_order_item()
+        StockItem = make_stock_item()
+
+        app = self.make_app()
+
+        @app.get("/priority")
+        def priority_route(
+            level: Annotated[Priority, QueryParam()],
+            when: Annotated[datetime | None, QueryParam()] = None,
+            extra: typing.Optional[Annotated[Any, QueryParam()]] = None,  # noqa: UP045 - verify Optional[Annotated[Any, ...]]
+        ) -> dict[str, object]:
+            return {
+                "level": int(level),
+                "tz": when.tzinfo is not None if when else None,
+                "extra": extra,
+            }
+
+        @app.post("/order")
+        def create_order(payload: Annotated[OrderItem, Body()]) -> OrderItem:
+            return payload
+
+        @app.post("/stock")
+        def update_stock(payload: Annotated[StockItem, Body()]) -> StockItem:
+            return payload
+
+        @app.post("/raw-text")
+        def raw_text(text: Annotated[str, Body()]) -> dict[str, str]:
+            return {"text": text}
+
+        @app.post("/raw-bytes")
+        def raw_bytes(raw: Annotated[bytes | None, Body()] = None) -> dict[str, int]:
+            return {"len": len(raw or b"")}
+
+        client = app.test_client()
+        self.assertEqual(
+            client.get("/priority?level=2&when=2026-11-22T12:00:00z&extra=hi").json,
+            {"level": 2, "tz": True, "extra": "hi"},
+        )
+        self.assertEqual(client.get("/priority?level=HIGH").json["level"], 2)
+        with self.assertRaises(ValueError):
+            _convert_value(True, Priority)
+
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
+        self.assertIn("Item", schemas)
+        self.assertIn("Item_2", schemas)
+        self.assertIn("sku", schemas["Item"]["properties"])
+        self.assertIn("quantity", schemas["Item_2"]["properties"])
+        self.assertIn("text/plain", spec["paths"]["/raw-text"]["post"]["requestBody"]["content"])
+        self.assertIn(
+            "application/octet-stream",
+            spec["paths"]["/raw-bytes"]["post"]["requestBody"]["content"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

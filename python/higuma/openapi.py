@@ -12,6 +12,7 @@ from typing import (
     Annotated,
     Any,
     Literal,
+    Union,
     get_args,
     get_origin,
     is_typeddict,
@@ -40,6 +41,7 @@ from .request import UploadFile
 def generate_openapi(app: Any) -> dict[str, Any]:
     paths: dict[str, dict[str, Any]] = {}
     schemas: dict[str, Any] = {}
+    registry: dict[str, Any] = {}
     operation_ids: set[str] = set()
     for route in app._routes:
         if not route.include_in_schema:
@@ -49,7 +51,7 @@ def generate_openapi(app: Any) -> dict[str, Any]:
         for method in route.methods:
             if method in {"HEAD", "OPTIONS"}:
                 continue
-            operation = _operation_for(route, method, schemas)
+            operation = _operation_for(route, method, schemas, registry)
             operation_id = str(operation["operationId"])
             if operation_id in operation_ids:
                 operation_id = f"{operation_id}_{method.lower()}"
@@ -106,8 +108,53 @@ def swagger_ui_html(openapi_url: str, title: str) -> str:
 </html>"""
 
 
-def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[str, Any]:
+def _register_schema(
+    annotation: Any,
+    schemas: dict[str, Any],
+    registry: dict[str, Any],
+) -> tuple[str, bool]:
+    for existing_name, existing_type in registry.items():
+        if existing_type is annotation:
+            return existing_name, True
+    base = annotation.__name__
+    if base in schemas and base not in registry:
+        registry[base] = annotation
+        return base, True
+    name = base
+    suffix = 2
+    while name in schemas or name in registry:
+        name = f"{base}_{suffix}"
+        suffix += 1
+    registry[name] = annotation
+    schemas[name] = {}
+    return name, False
+
+
+def _body_media_type(annotation: Any) -> str:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        args = get_args(annotation)
+        if args:
+            return _body_media_type(args[0])
+    if origin in {types.UnionType, Union}:
+        non_none = [item for item in get_args(annotation) if item is not type(None)]
+        if len(non_none) == 1:
+            return _body_media_type(non_none[0])
+    if annotation is bytes:
+        return "application/octet-stream"
+    if annotation is str:
+        return "text/plain"
+    return "application/json"
+
+
+def schema_for(
+    annotation: Any,
+    schemas: dict[str, Any] | None = None,
+    *,
+    _registry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     schemas = schemas if schemas is not None else {}
+    registry = _registry if _registry is not None else {}
     if (
         annotation is inspect.Parameter.empty
         or annotation is inspect.Signature.empty
@@ -120,7 +167,7 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
     origin = get_origin(annotation)
     args = get_args(annotation)
     if origin is Annotated:
-        annotated_schema = schema_for(args[0], schemas)
+        annotated_schema = schema_for(args[0], schemas, _registry=registry)
         for metadata in args[1:]:
             if isinstance(metadata, Parameter):
                 annotated_schema = {**annotated_schema, **parameter_schema_metadata(metadata)}
@@ -128,11 +175,11 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
                 annotated_schema = {**annotated_schema, **dict(metadata)}
         return annotated_schema
     if str(origin) in {"typing.Required", "typing.NotRequired"}:
-        return schema_for(args[0] if args else Any, schemas)
+        return schema_for(args[0] if args else Any, schemas, _registry=registry)
     if origin in {list, set, frozenset, Sequence}:
         schema = {
             "type": "array",
-            "items": schema_for(args[0] if args else Any, schemas),
+            "items": schema_for(args[0] if args else Any, schemas, _registry=registry),
         }
         if origin in {set, frozenset}:
             schema["uniqueItems"] = True
@@ -141,21 +188,25 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         if args and args[-1] is not Ellipsis and args != ((),):
             return {
                 "type": "array",
-                "prefixItems": [schema_for(item, schemas) for item in args],
+                "prefixItems": [schema_for(item, schemas, _registry=registry) for item in args],
                 "minItems": len(args),
                 "maxItems": len(args),
             }
         return {
             "type": "array",
-            "items": schema_for(args[0] if args and args != ((),) else Any, schemas),
+            "items": schema_for(
+                args[0] if args and args != ((),) else Any, schemas, _registry=registry
+            ),
         }
     if origin in {dict, Mapping}:
         return {
             "type": "object",
-            "additionalProperties": schema_for(args[1] if len(args) > 1 else Any, schemas),
+            "additionalProperties": schema_for(
+                args[1] if len(args) > 1 else Any, schemas, _registry=registry
+            ),
         }
-    if origin in {types.UnionType, __import__("typing").Union}:
-        options = [schema_for(item, schemas) for item in args]
+    if origin in {types.UnionType, Union}:
+        options = [schema_for(item, schemas, _registry=registry) for item in args]
         return {"anyOf": options}
     if origin is Literal:
         values = list(args)
@@ -213,13 +264,12 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         return schema
 
     if is_typeddict(annotation):
-        name = annotation.__name__
-        if name in schemas:
+        name, already_defined = _register_schema(annotation, schemas, registry)
+        if already_defined:
             return {"$ref": f"#/components/schemas/{name}"}
-        schemas[name] = {}
         type_hints = resolved_model_hints(annotation) or dict(annotation.__annotations__)
         properties = {
-            field_name: schema_for(field_annotation, schemas)
+            field_name: schema_for(field_annotation, schemas, _registry=registry)
             for field_name, field_annotation in type_hints.items()
         }
         required_keys = sorted(getattr(annotation, "__required_keys__", ()))
@@ -231,10 +281,9 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         return {"$ref": f"#/components/schemas/{name}"}
 
     if inspect.isclass(annotation) and is_dataclass(annotation):
-        name = annotation.__name__
-        if name in schemas:
+        name, already_defined = _register_schema(annotation, schemas, registry)
+        if already_defined:
             return {"$ref": f"#/components/schemas/{name}"}
-        schemas[name] = {}
         field_hints = resolved_model_hints(annotation)
         properties = {}
         required = []
@@ -244,6 +293,7 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
             properties[item.name] = schema_for(
                 field_hints.get(item.name, item.type),
                 schemas,
+                _registry=registry,
             )
             if item.default is MISSING and item.default_factory is MISSING:
                 required.append(item.name)
@@ -255,10 +305,9 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         return {"$ref": f"#/components/schemas/{name}"}
 
     if inspect.isclass(annotation) and hasattr(annotation, "__fields__"):
-        name = annotation.__name__
-        if name in schemas:
+        name, already_defined = _register_schema(annotation, schemas, registry)
+        if already_defined:
             return {"$ref": f"#/components/schemas/{name}"}
-        schemas[name] = {}
         properties = {
             field_name: _orm_field_schema(field)
             for field_name, field in annotation.__fields__.items()
@@ -286,7 +335,12 @@ def _is_required_parameter(parameter: inspect.Parameter) -> bool:
     )
 
 
-def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str, Any]:
+def _operation_for(
+    route: Any,
+    method: str,
+    schemas: dict[str, Any],
+    registry: dict[str, Any],
+) -> dict[str, Any]:
     metadata = dict(route.openapi)
     target_func = _target_view_func(route.view_func, method)
     signature = inspect.signature(target_func)
@@ -314,6 +368,7 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
                                 if response_model is not None
                                 else type_hints.get("return", signature.return_annotation),
                                 schemas,
+                                _registry=registry,
                             )
                         }
                     },
@@ -344,7 +399,7 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
                 name, inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
             ).default,
         )
-        schema = schema_for(annotation, schemas) or _converter_schema(converter)
+        schema = schema_for(annotation, schemas, _registry=registry) or _converter_schema(converter)
         if isinstance(declared_marker, PathParam):
             schema.update(parameter_schema_metadata(declared_marker))
         parameters.append({"name": name, "in": "path", "required": True, "schema": schema})
@@ -355,7 +410,7 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
         alias = marker.alias or parameter.name
         if isinstance(marker, Header) and marker.alias is None:
             alias = alias.replace("_", "-")
-        schema = schema_for(annotation, schemas)
+        schema = schema_for(annotation, schemas, _registry=registry)
         schema.update(parameter_schema_metadata(marker))
         required = _is_required_parameter(parameter)
         if not required:
@@ -380,7 +435,11 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
     if request_body is not None and method not in {"GET", "HEAD"}:
         operation["requestBody"] = {
             "required": True,
-            "content": {"application/json": {"schema": schema_for(request_body, schemas)}},
+            "content": {
+                _body_media_type(request_body): {
+                    "schema": schema_for(request_body, schemas, _registry=registry)
+                }
+            },
         }
     elif method not in {"GET", "HEAD"}:
         body_specs = [item for item in input_specs if isinstance(item[2], Body)]
@@ -390,9 +449,9 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
             operation["requestBody"] = {
                 "required": _is_required_parameter(parameter),
                 "content": {
-                    "application/json": {
+                    _body_media_type(annotation): {
                         "schema": {
-                            **schema_for(annotation, schemas),
+                            **schema_for(annotation, schemas, _registry=registry),
                             **parameter_schema_metadata(marker),
                         }
                     }
@@ -407,10 +466,10 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
                     schema = (
                         {"type": "string", "format": "binary"}
                         if annotation in (inspect.Parameter.empty, Any, UploadFile, bytes)
-                        else schema_for(annotation, schemas)
+                        else schema_for(annotation, schemas, _registry=registry)
                     )
                 else:
-                    schema = schema_for(annotation, schemas)
+                    schema = schema_for(annotation, schemas, _registry=registry)
                 schema.update(parameter_schema_metadata(marker))
                 properties[alias] = schema
                 if _is_required_parameter(parameter):

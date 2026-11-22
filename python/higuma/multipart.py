@@ -73,7 +73,11 @@ def parse_multipart(request: Any) -> tuple[list[Any], list[Any]]:
     if any(char in content_type for char in "\r\n\x00"):
         raise BadRequest(detail="invalid multipart Content-Type")
     parser = BytesHeaderParser(policy=policy.default)
-    header = parser.parsebytes(b"Content-Type: " + content_type.encode("latin-1") + b"\r\n\r\n")
+    try:
+        encoded_content_type = content_type.encode("latin-1")
+    except UnicodeEncodeError as error:
+        raise BadRequest(detail="invalid multipart Content-Type") from error
+    header = parser.parsebytes(b"Content-Type: " + encoded_content_type + b"\r\n\r\n")
     boundary = header.get_boundary()
     if (
         boundary is None

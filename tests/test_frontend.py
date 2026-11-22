@@ -485,3 +485,29 @@ def test_root_static_url_path_blueprint_cache_age_and_case_insensitive_range(tmp
     assert ranged.status_code == 206 and ranged.body == b"console"
     assert client.get("/app.js", headers={"range": "bytes=+0-6"}).status_code == 416
     assert client.get("/app.js", headers={"range": "bytes=0-+6"}).status_code == 416
+
+
+def test_static_non_ascii_redirect_accept_ows_and_prefix_validation(tmp_path):
+    from higuma import SPAFiles
+
+    non_ascii_dir = tmp_path / "熊"
+    non_ascii_dir.mkdir()
+    (non_ascii_dir / "index.html").write_text("<h1>kuma</h1>", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<h1>spa</h1>", encoding="utf-8")
+
+    app = Higuma(__name__, static_folder=None, docs_url=None, openapi_url=None)
+    app.mount_static("/files", tmp_path, html=True)
+    app.mount_spa("/app", tmp_path)
+
+    client = app.test_client()
+    redirected = client.get("/files/熊")
+    assert redirected.status_code == 308
+    assert redirected.headers["location"] == "/files/%E7%86%8A/"
+
+    ows_accept = client.get("/app/dashboard", headers={"accept": "text/html ; q=0.9"})
+    assert ows_accept.status_code == 200
+
+    with pytest.raises(TypeError):
+        SPAFiles(tmp_path, api_prefixes=b"/api")  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        SPAFiles(tmp_path, api_prefixes=[123])  # type: ignore[list-item]

@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.9** — 長大 `<int:...>`/`<float:...>` URL セグメントによる 500 クラッシュ・`inf` 防止と
+> 重複ルートパラメータ名拒否（Rust/Python 双方）、`IntEnum` クエリ変換・RFC 3339 `z`・`Parameter` 境界検証、
+> OpenAPI 同名モデル衝突の自動分離と `str`/`bytes` `Body()` media type 整合、`StaticFiles` 非 ASCII
+> `308` リダイレクトと `Accept` OWS 対応を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.8** — ASGI 500 フォールバック時のヘッダ／`HEAD` 応答整合、不正 WebSocket scope/`spec_version` 耐性、
 > Python/Rust 双方での WebSocket same-origin 空 Host・`:0` 拒否と IPv6 正規化、`Response.set_cookie()` の
 > `timedelta` 対応・属性インジェクション防止、`StreamingResponse` 全資源クローズ、`Supervisor` bind 失敗時の

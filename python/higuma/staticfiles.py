@@ -104,8 +104,9 @@ class StaticFiles:
             candidate = self._path("/".join(filter(None, (filename, self.index_file))))
             if candidate.is_file() and not request.path.endswith("/"):
                 prefix = quote(request.root_path, safe="/") if request.root_path else ""
+                encoded_path = quote(request.path, safe="/%!$&'()*+,-.:;=@_~")
                 query = f"?{request.query_string}" if request.query_string else ""
-                return RedirectResponse(f"{prefix}{request.path}/{query}", status=308)
+                return RedirectResponse(f"{prefix}{encoded_path}/{query}", status=308)
         if not candidate.is_file():
             raise NotFound()
         return self._response(candidate, html=self.html and candidate.name == self.index_file)
@@ -157,10 +158,12 @@ class SPAFiles(StaticFiles):
 
 
 def _prefixes(values: Iterable[str]) -> tuple[str, ...]:
-    if isinstance(values, str):
+    if isinstance(values, (str, bytes, bytearray)):
         raise TypeError("prefixes must be an iterable of paths, not one string")
     result = []
     for value in values:
+        if not isinstance(value, str):
+            raise TypeError("prefixes must contain strings")
         if not value.startswith("/") or value.startswith("//"):
             raise ValueError("prefixes must be root-relative paths")
         try:
@@ -185,6 +188,7 @@ def _accepts_html(value: str | None) -> bool:
     matches = []
     for item in value.lower().split(","):
         media_type, *parameters = item.strip().split(";")
+        media_type = media_type.strip()
         if media_type not in {"text/html", "text/*", "*/*"}:
             continue
         quality = 1.0

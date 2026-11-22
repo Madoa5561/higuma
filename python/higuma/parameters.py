@@ -35,16 +35,44 @@ class Parameter:
     location: ClassVar[str]
 
     def __post_init__(self) -> None:
-        if self.min_length is not None and self.min_length < 0:
-            raise ValueError("min_length must be non-negative")
-        if self.max_length is not None and self.max_length < 0:
-            raise ValueError("max_length must be non-negative")
+        if self.min_length is not None and (
+            isinstance(self.min_length, bool)
+            or not isinstance(self.min_length, int)
+            or self.min_length < 0
+        ):
+            raise ValueError("min_length must be a non-negative integer")
+        if self.max_length is not None and (
+            isinstance(self.max_length, bool)
+            or not isinstance(self.max_length, int)
+            or self.max_length < 0
+        ):
+            raise ValueError("max_length must be a non-negative integer")
         if (
             self.min_length is not None
             and self.max_length is not None
             and self.min_length > self.max_length
         ):
             raise ValueError("min_length must not exceed max_length")
+        for bound_name, bound in (
+            ("ge", self.ge),
+            ("gt", self.gt),
+            ("le", self.le),
+            ("lt", self.lt),
+        ):
+            if bound is not None and (
+                isinstance(bound, bool)
+                or not isinstance(bound, (int, float))
+                or not math.isfinite(bound)
+            ):
+                raise ValueError(f"{bound_name} must be a finite number")
+        if self.ge is not None and self.le is not None and self.ge > self.le:
+            raise ValueError("ge must not exceed le")
+        if self.gt is not None and self.le is not None and self.gt >= self.le:
+            raise ValueError("gt must be less than le")
+        if self.ge is not None and self.lt is not None and self.ge >= self.lt:
+            raise ValueError("ge must be less than lt")
+        if self.gt is not None and self.lt is not None and self.gt >= self.lt:
+            raise ValueError("gt must be less than lt")
         if self.pattern is not None:
             re.compile(self.pattern)
 
@@ -339,9 +367,9 @@ def _unwrap_parameter_annotation(annotation: Any) -> tuple[Any, tuple[Any, ...]]
         return annotation, ()
 
     unique_options = list(dict.fromkeys(options))
-    base_annotation = unique_options[0]
-    for option in unique_options[1:]:
-        base_annotation = base_annotation | option
+    base_annotation = (
+        unique_options[0] if len(unique_options) == 1 else Union[tuple(unique_options)]  # noqa: UP007 - runtime dynamic Union supports Any on Python 3.10
+    )
     return base_annotation, tuple(metadata)
 
 
@@ -622,13 +650,20 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
             return value if isinstance(value, date) else date.fromisoformat(str(value))
         except ValueError as exc:
             raise ValueError("value must be an ISO date") from exc
+    if annotation is type(None):
+        if value is None:
+            return None
+        raise TypeError("value must be null")
     if annotation is datetime:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, date):
+            raise TypeError("value must be a date-time, not a date")
+        text = str(value)
+        if text.endswith(("Z", "z")):
+            text = text[:-1] + "+00:00"
         try:
-            return (
-                value
-                if isinstance(value, datetime)
-                else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            )
+            return datetime.fromisoformat(text)
         except ValueError as exc:
             raise ValueError("value must be an ISO date-time") from exc
     if annotation is UploadFile:
@@ -636,9 +671,18 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
             raise TypeError("value must be an uploaded file")
         return value
     if inspect.isclass(annotation) and issubclass(annotation, Enum):
+        if isinstance(value, annotation):
+            return value
+        if issubclass(annotation, int) and isinstance(value, bool):
+            raise ValueError(f"value must be a valid {annotation.__name__}")
         try:
-            return value if isinstance(value, annotation) else annotation(value)
+            return annotation(value)
         except ValueError:
+            if issubclass(annotation, int) and isinstance(value, str):
+                try:
+                    return annotation(int(value))
+                except ValueError:
+                    pass
             try:
                 return annotation[str(value)]
             except KeyError as exc:

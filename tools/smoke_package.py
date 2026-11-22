@@ -93,6 +93,13 @@ def _exercise_http(port: int) -> None:
     connection.close()
 
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request("GET", "/values/" + "9" * 4500)
+    response = connection.getresponse()
+    assert response.status == 404, response.status
+    response.read()
+    connection.close()
+
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     connection.request("GET", "/echo-path/")
     response = connection.getresponse()
     assert response.status == 200, response.status
