@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.17** — `_CurrentUserProxy` の `__eq__`/`__hash__` 実装、`AuthManager` の
+> `SessionMiddleware` 未設定エラー明確化・`session_key` 検証、認証デコレータの `async def` 保持＆
+> claim 検証、`OAuth2Client` の HTTPS/URL/空 `code` 検証、CLI のドット属性パス読み込み
+> （`module:Holder.create()`）と入れ子 Blueprint コマンド衝突検出を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.16** — `serialize_json_value()` の dataclass 非 deepcopy 化＆`Decimal` 対応、
 > `UUID`/`date`/`datetime` の非文字列入力拒否と数値制約での `bool` 拒否、OpenAPI の
 > `Literal[Enum]` 値正規化・`responses` 非破壊化・`204`/`304` `content` 省略・

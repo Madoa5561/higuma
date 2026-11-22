@@ -7,6 +7,24 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.17] - 2026-11-23
+
+### Fixed
+
+- Harden authentication & OAuth2 (`auth.py`): implement `__eq__` and `__hash__` on
+  `_CurrentUserProxy` so `current_user == user` works properly; validate non-empty
+  `session_key` and raise a clear `RuntimeError("AuthManager requires SessionMiddleware")`
+  when `SessionMiddleware` is absent; preserve `async def` coroutine functions in
+  `login_required`, `fresh_login_required`, `roles_required`, and `permissions_required`
+  while rejecting empty/non-string claim names; validate HTTPS provider URLs
+  (`authorize_url`, `token_url`, `userinfo_url`), HTTP(S) `redirect_uri`, and non-empty
+  credentials upfront in `OAuth2Client.__init__()`; validate non-empty authorization `code`
+  in `OAuth2Client.fetch_token()` before consuming the PKCE verifier.
+- Improve CLI app loading and parser validation (`cli.py`): support dotted attribute paths
+  in `load_app()` (such as `module:Holder.create()` or `module:container.app`) with
+  identifier validation, and detect nested blueprint CLI command/group collisions cleanly
+  with `ValueError` instead of internal `argparse.ArgumentError`.
+
 ## [0.11.16] - 2026-11-23
 
 ### Fixed

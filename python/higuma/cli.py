@@ -22,8 +22,13 @@ def load_app(reference: str) -> Higuma:
     object_name = object_name.removesuffix("()")
     if not object_name:
         raise ValueError(f"invalid application reference {reference!r}: missing object name")
+    parts = object_name.split(".")
+    if not all(part.isidentifier() for part in parts):
+        raise ValueError(f"invalid application reference {reference!r}: invalid object path")
     module = importlib.import_module(module_name)
-    app_object: Any = getattr(module, object_name)
+    app_object: Any = module
+    for part in parts:
+        app_object = getattr(app_object, part)
     if callable(app_object) and not isinstance(app_object, Higuma):
         app_object = app_object()
     if not isinstance(app_object, Higuma):
@@ -75,7 +80,10 @@ def build_parser(app: Higuma | None = None) -> argparse.ArgumentParser:
             for part in name.split("."):
                 prefix = (prefix + "." + part).lstrip(".")
                 if prefix not in groups:
-                    if current is subcommands and part in reserved_top:
+                    existing_parsers = getattr(current, "_name_parser_map", {})
+                    if (current is subcommands and part in reserved_top) or (
+                        part in existing_parsers
+                    ):
                         raise ValueError(
                             f"blueprint CLI group {part!r} conflicts with an existing command"
                         )
@@ -84,6 +92,12 @@ def build_parser(app: Higuma | None = None) -> argparse.ArgumentParser:
                         dest="_group_" + prefix, required=True
                     )
                 current = groups[prefix]
+            existing_parsers = getattr(current, "_name_parser_map", {})
+            for command_name in blueprint.cli.commands:
+                if command_name in existing_parsers:
+                    raise ValueError(
+                        f"blueprint CLI command {command_name!r} conflicts with an existing group"
+                    )
             blueprint.cli.add_to(current)
     return parser
 

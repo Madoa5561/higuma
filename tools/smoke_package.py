@@ -367,6 +367,16 @@ def _exercise_developer_apis() -> None:
         not in ipv6_app.openapi()["paths"]["/ipv6/{item_id}"]["delete"]["responses"]["204"]
     )
 
+    import inspect
+
+    from higuma import login_required
+
+    @login_required
+    async def smoke_protected():
+        return {"ok": True}
+
+    assert inspect.iscoroutinefunction(smoke_protected)
+
     try:
         TrustedHostMiddleware("example.com")  # type: ignore[arg-type]
     except TypeError:

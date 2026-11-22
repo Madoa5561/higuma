@@ -379,6 +379,10 @@ supervisor, streaming, and proxy changes.
   `UUID`/`date`/`datetime` coercion requires `str`, numeric parameter bounds reject `bool`,
   and OpenAPI serializes `Literal[Enum]` values, preserves caller `responses`, omits `content`
   on `204`/`304`, and includes `PathParam`/`Body` descriptions.
+  In 0.11.17+, `current_user` supports `==`/`hash`, auth decorators preserve `async def`
+  functions and validate non-empty claim names, `OAuth2Client` validates HTTPS endpoints,
+  HTTP(S) `redirect_uri`, and non-empty `code` upfront, and CLI `load_app()` supports dotted
+  attribute paths while `build_parser()` catches nested blueprint command/group collisions.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

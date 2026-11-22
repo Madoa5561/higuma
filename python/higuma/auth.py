@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import secrets
 from collections.abc import Callable, Mapping, MutableMapping
@@ -61,6 +62,14 @@ class _CurrentUserProxy(Generic[UserT]):
     def __bool__(self) -> bool:
         return bool(getattr(self._get(), "is_authenticated", True))
 
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _CurrentUserProxy):
+            other = other._get()
+        return self._get() == other
+
+    def __hash__(self) -> int:
+        return hash(self._get())
+
     def __repr__(self) -> str:
         return repr(self._get())
 
@@ -79,6 +88,8 @@ class AuthManager:
         session_options: Mapping[str, Any] | None = None,
         session_middleware: type = SessionMiddleware,
     ) -> None:
+        if not isinstance(session_key, str) or not session_key:
+            raise ValueError("session_key must be a non-empty string")
         self.secret_key = secret_key
         self.user_loader = user_loader
         self.session_key = session_key
@@ -106,8 +117,11 @@ class AuthManager:
         current: Request,
         call_next: Callable[[Request], ResponseValue],
     ) -> ResponseValue:
+        active_session = getattr(current, "session", None)
+        if active_session is None:
+            raise RuntimeError("AuthManager requires SessionMiddleware")
         user = None
-        user_id = current.session.get(self.session_key)
+        user_id = active_session.get(self.session_key)
         if user_id is not None and self.user_loader is not None:
             user = resolve_awaitable(self.user_loader(str(user_id)))
         current.user = user if user is not None else AnonymousUser()
@@ -121,25 +135,28 @@ class AuthManager:
         user_id = getattr(user, "id", None)
         if user_id is None:
             raise TypeError("authenticated user must expose an id attribute")
+        active_session = _require_auth_session()
         csrf_field_name = request.state.get("_higuma_csrf_field_name", "_csrf_token")
-        request.session.clear()
-        request.session[self.session_key] = str(user_id)
-        request.session["_remember"] = bool(remember)
-        request.session["_fresh"] = True
-        request.session[csrf_field_name] = secrets.token_urlsafe(32)
-        request.session.permanent = bool(remember)
+        active_session.clear()
+        active_session[self.session_key] = str(user_id)
+        active_session["_remember"] = bool(remember)
+        active_session["_fresh"] = True
+        active_session[csrf_field_name] = secrets.token_urlsafe(32)
+        active_session.permanent = bool(remember)
         current = _request_context.get()
         if current is not None:
             current.user = user
 
     def confirm_login(self) -> None:
-        if self.session_key not in request.session:
+        active_session = _require_auth_session()
+        if self.session_key not in active_session:
             raise Unauthorized(detail="authentication required")
-        request.session["_fresh"] = True
+        active_session["_fresh"] = True
 
     def logout_user(self) -> None:
-        request.session.clear()
-        request.session.permanent = False
+        active_session = _require_auth_session()
+        active_session.clear()
+        active_session.permanent = False
         current = _request_context.get()
         if current is not None:
             current.user = AnonymousUser()
@@ -157,28 +174,54 @@ class AuthManager:
         return permissions_required(*permissions, match_all=match_all)
 
 
-def login_required(func: Callable[..., ResponseValue]):
+def _check_login() -> None:
+    if not current_user or not getattr(current_user, "is_authenticated", True):
+        raise Unauthorized(
+            detail="authentication required",
+            headers={"www-authenticate": "Session"},
+        )
+
+
+def _check_fresh_login() -> None:
+    _check_login()
+    if not _require_auth_session().get("_fresh"):
+        raise Unauthorized(detail="fresh authentication required")
+
+
+def _check_claims(attribute: str, required: tuple[str, ...], *, match_all: bool) -> None:
+    _check_login()
+    claims = _claim_values(getattr(current_user, attribute, None))
+    allowed = all(value in claims for value in required)
+    if not match_all:
+        allowed = any(value in claims for value in required)
+    if not allowed:
+        raise Forbidden(detail=f"required {attribute} are missing")
+
+
+def _wrap_auth(func: Callable[..., Any], guard: Callable[[], None]) -> Callable[..., Any]:
+    if inspect.iscoroutinefunction(func):
+
+        @wraps(func)
+        async def async_decorated(*args: Any, **kwargs: Any) -> Any:
+            guard()
+            return await func(*args, **kwargs)
+
+        return async_decorated
+
     @wraps(func)
-    def decorated(*args: Any, **kwargs: Any) -> ResponseValue:
-        if not current_user or not getattr(current_user, "is_authenticated", True):
-            raise Unauthorized(
-                detail="authentication required",
-                headers={"www-authenticate": "Session"},
-            )
+    def sync_decorated(*args: Any, **kwargs: Any) -> Any:
+        guard()
         return func(*args, **kwargs)
 
-    return _mark_auth_check(decorated, ("login",))
+    return sync_decorated
+
+
+def login_required(func: Callable[..., ResponseValue]):
+    return _mark_auth_check(_wrap_auth(func, _check_login), ("login",))
 
 
 def fresh_login_required(func: Callable[..., ResponseValue]):
-    @wraps(func)
-    @login_required
-    def decorated(*args: Any, **kwargs: Any) -> ResponseValue:
-        if not request.session.get("_fresh"):
-            raise Unauthorized(detail="fresh authentication required")
-        return func(*args, **kwargs)
-
-    return _mark_auth_check(decorated, ("fresh",))
+    return _mark_auth_check(_wrap_auth(func, _check_fresh_login), ("login",), ("fresh",))
 
 
 def roles_required(*roles: str, match_all: bool = True):
@@ -198,23 +241,16 @@ def _claim_values(raw_claims: Any) -> set[str]:
 
 
 def _claims_required(attribute: str, required: tuple[str, ...], *, match_all: bool):
-    if not required:
-        raise ValueError(f"at least one required {attribute[:-1]} must be provided")
+    if not required or not all(isinstance(value, str) and value for value in required):
+        raise ValueError(f"required {attribute} must be non-empty strings")
 
     def decorator(func: Callable[..., ResponseValue]):
-        @wraps(func)
-        @login_required
-        def decorated(*args: Any, **kwargs: Any) -> ResponseValue:
-            claims = _claim_values(getattr(current_user, attribute, None))
-            allowed = all(value in claims for value in required)
-            if not match_all:
-                allowed = any(value in claims for value in required)
-            if not allowed:
-                raise Forbidden(detail=f"required {attribute} are missing")
-            return func(*args, **kwargs)
-
         return _mark_auth_check(
-            decorated,
+            _wrap_auth(
+                func,
+                lambda: _check_claims(attribute, required, match_all=match_all),
+            ),
+            ("login",),
             ("claims", attribute, tuple(required), bool(match_all)),
         )
 
@@ -235,6 +271,28 @@ class OAuth2Client:
         secret_key: str | bytes,
         extra_authorize_params: Mapping[str, str] | None = None,
     ) -> None:
+        if (
+            not isinstance(client_id, str)
+            or not client_id.strip()
+            or not isinstance(client_secret, str)
+            or not client_secret.strip()
+        ):
+            raise ValueError("client_id and client_secret must be non-empty strings")
+        for label, url in (
+            ("authorize_url", authorize_url),
+            ("token_url", token_url),
+            ("userinfo_url", userinfo_url),
+        ):
+            if not isinstance(url, str):
+                raise ValueError(f"{label} must be an HTTPS URL")  # noqa: TRY004 - uniform URL validation
+            parsed = urlsplit(url)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise ValueError(f"{label} must be an HTTPS URL")
+        if not isinstance(redirect_uri, str):
+            raise ValueError("redirect_uri must be an HTTP(S) URL")  # noqa: TRY004 - uniform URL validation
+        parsed_redirect = urlsplit(redirect_uri)
+        if parsed_redirect.scheme not in {"http", "https"} or not parsed_redirect.netloc:
+            raise ValueError("redirect_uri must be an HTTP(S) URL")
         if isinstance(scopes, (str, bytes, bytearray)):
             raise TypeError("scopes must be an iterable of scope strings, not a single string")
         normalized_scopes = tuple(scopes)
@@ -314,6 +372,8 @@ class OAuth2Client:
 
     def fetch_token(self, code: str) -> dict[str, Any]:
         _require_active_session()
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("authorization code must be a non-empty string")
         data = {
             "grant_type": "authorization_code",
             "code": code,
@@ -416,6 +476,16 @@ class OAuth2Client:
         return f"{self._oauth_session_key}_verifier"
 
 
+def _require_auth_session() -> Any:
+    current = _request_context.get()
+    if current is None:
+        raise RuntimeError("working outside of a request context")
+    active_session = getattr(current, "session", None)
+    if active_session is None:
+        raise RuntimeError("AuthManager requires SessionMiddleware")
+    return active_session
+
+
 def _active_session() -> MutableMapping[str, Any] | None:
     try:
         value = request.session
@@ -435,9 +505,9 @@ def _urlsafe_b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
-def _mark_auth_check(func: Any, check: tuple[Any, ...]) -> Any:
+def _mark_auth_check(func: Any, *new_checks: tuple[Any, ...]) -> Any:
     checks = list(getattr(func, "__higuma_auth_checks__", ()))
-    checks.append(check)
+    checks.extend(new_checks)
     func.__higuma_auth_checks__ = tuple(checks)
     return func
 
@@ -446,19 +516,9 @@ def _run_auth_checks(func: Any) -> None:
     for check in getattr(func, "__higuma_auth_checks__", ()):
         kind = check[0]
         if kind == "login":
-            if not current_user or not getattr(current_user, "is_authenticated", True):
-                raise Unauthorized(
-                    detail="authentication required",
-                    headers={"www-authenticate": "Session"},
-                )
+            _check_login()
         elif kind == "fresh":
-            if not current_user or not request.session.get("_fresh"):
-                raise Unauthorized(detail="fresh authentication required")
+            _check_fresh_login()
         elif kind == "claims":
             _, attribute, required, match_all = check
-            claims = _claim_values(getattr(current_user, attribute, None))
-            allowed = all(value in claims for value in required)
-            if not match_all:
-                allowed = any(value in claims for value in required)
-            if not allowed:
-                raise Forbidden(detail=f"required {attribute} are missing")
+            _check_claims(attribute, required, match_all=match_all)

@@ -449,3 +449,145 @@ def test_login_logout_syncs_current_user_and_oauth_session_validation(monkeypatc
     store = RedisSessionStore(object(), prefix="app:", ttl=1)
     with pytest.raises(ValueError, match="max_age"):
         RedisSessionMiddleware(SECRET, store=store, max_age=True)  # type: ignore[arg-type]
+
+
+def test_auth_proxy_eq_async_decorators_session_checks_and_oauth_endpoint_validation():
+    import asyncio
+    import inspect
+    from dataclasses import dataclass
+
+    from higuma import (
+        AuthManager,
+        Higuma,
+        OAuth2Client,
+        SessionMiddleware,
+        current_user,
+        fresh_login_required,
+        login_required,
+        permissions_required,
+        roles_required,
+    )
+
+    @dataclass(frozen=True)
+    class User:
+        id: str
+        roles: tuple[str, ...] = ("admin",)
+        permissions: tuple[str, ...] = ("write",)
+        is_authenticated: bool = True
+
+    with pytest.raises(ValueError, match="session_key"):
+        AuthManager(session_key="")
+    with pytest.raises(ValueError, match="non-empty"):
+        roles_required("")
+    with pytest.raises(ValueError, match="non-empty"):
+        permissions_required(123)  # type: ignore[arg-type]
+
+    # AuthManager without SessionMiddleware raises clear RuntimeError
+    bare_app = Higuma(__name__, static_folder=None)
+    bare_auth = AuthManager(secret_key=SECRET)
+    bare_app.add_middleware(bare_auth)
+
+    @bare_app.get("/bare")
+    def bare_view():
+        return "ok"
+
+    with pytest.raises(RuntimeError, match="SessionMiddleware"):
+        bare_auth(Request({"path": "/bare"}), lambda req: "ok")
+
+    # _CurrentUserProxy __eq__/__hash__ and async auth decorator preservation
+    alice = User("alice")
+    app = Higuma(__name__, static_folder=None)
+    auth = AuthManager(
+        app, secret_key=SECRET, user_loader=lambda uid: alice if uid == "alice" else None
+    )
+
+    @app.post("/login")
+    def do_login():
+        from higuma.auth import _CurrentUserProxy
+
+        auth.login_user(alice)
+        return {
+            "eq": current_user == alice,
+            "self_eq": current_user == _CurrentUserProxy(),
+            "hash": hash(current_user) == hash(alice),
+        }
+
+    @login_required
+    async def secret_handler():
+        await asyncio.sleep(0)
+        return {"user": current_user.id, "eq": current_user == alice}
+
+    @fresh_login_required
+    @roles_required("admin")
+    @permissions_required("write")
+    async def admin_handler():
+        await asyncio.sleep(0)
+        return {"ok": True}
+
+    assert inspect.iscoroutinefunction(secret_handler)
+    assert inspect.iscoroutinefunction(admin_handler)
+    app.get("/secret")(secret_handler)
+    app.get("/admin")(admin_handler)
+
+    client = app.test_client()
+    assert client.get("/secret").status_code == 401
+    assert client.post("/login").json == {"eq": True, "self_eq": True, "hash": True}
+    assert client.get("/secret").json == {"user": "alice", "eq": True}
+    assert client.get("/admin").json == {"ok": True}
+
+    # OAuth2Client endpoint/credential/code validation
+    with pytest.raises(ValueError, match="authorize_url"):
+        OAuth2Client(
+            client_id="cid",
+            client_secret="csec",
+            authorize_url="javascript:alert(1)",
+            token_url="https://provider.test/token",
+            userinfo_url="https://provider.test/userinfo",
+            redirect_uri="https://app.test/cb",
+            scopes=("openid",),
+            secret_key=SECRET,
+        )
+    with pytest.raises(ValueError, match="redirect_uri"):
+        OAuth2Client.google(
+            client_id="cid",
+            client_secret="csec",
+            redirect_uri="javascript:alert(1)",
+            secret_key=SECRET,
+        )
+    with pytest.raises(ValueError, match="client_id"):
+        OAuth2Client.google(
+            client_id="  ",
+            client_secret="csec",
+            redirect_uri="https://app.test/cb",
+            secret_key=SECRET,
+        )
+
+    oauth = OAuth2Client.google(
+        client_id="cid",
+        client_secret="csec",
+        redirect_uri="https://app.test/cb",
+        secret_key=SECRET,
+    )
+    oauth_app = Higuma(__name__, static_folder=None)
+    oauth_app.add_middleware(SessionMiddleware, SECRET)
+
+    @oauth_app.get("/start")
+    def start():
+        from urllib.parse import parse_qs, urlsplit
+
+        url = oauth.authorization_url()
+        return {"state": parse_qs(urlsplit(url).query)["state"][0]}
+
+    @oauth_app.get("/cb")
+    def cb():
+        from higuma import request as active_request
+
+        oauth.validate_state(active_request.args["state"])
+        with pytest.raises(ValueError, match="authorization code"):
+            oauth.fetch_token("")
+        # Verifier must still be present (not consumed by the rejected empty code)
+        return {"has_verifier": oauth._oauth_verifier_key in active_request.state}
+
+    oauth_client = oauth_app.test_client()
+    state = oauth_client.get("/start").json["state"]
+    assert oauth_client.get(f"/cb?state={state}").json == {"has_verifier": True}

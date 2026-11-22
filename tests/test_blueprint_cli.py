@@ -208,3 +208,40 @@ def test_cli_load_app_and_blueprint_group_collisions():
     app2.register_blueprint(bp)
     with pytest.raises(ValueError, match="conflicts"):
         build_parser(app2)
+
+
+def test_cli_dotted_load_app_and_nested_blueprint_command_collision(tmp_path, monkeypatch):
+    from higuma.cli import build_parser, load_app
+
+    module_file = tmp_path / "dotted_app_mod.py"
+    module_file.write_text(
+        "from higuma import Higuma\n"
+        "class Holder:\n"
+        "    app = Higuma(__name__, static_folder=None)\n"
+        "    @classmethod\n"
+        "    def create(cls):\n"
+        "        return cls.app\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert isinstance(load_app("dotted_app_mod:Holder.app"), Higuma)
+    assert isinstance(load_app("dotted_app_mod:Holder.create()"), Higuma)
+    with pytest.raises(ValueError, match="invalid object path"):
+        load_app("dotted_app_mod:Holder..app")
+
+    app = Higuma(__name__, static_folder=None)
+    parent = Blueprint("admin", __name__)
+    child = Blueprint("users", __name__)
+
+    @parent.cli.command()
+    def users():
+        return "parent command"
+
+    @child.cli.command()
+    def list_all():
+        return "child command"
+
+    parent.register_blueprint(child)
+    app.register_blueprint(parent)
+    with pytest.raises(ValueError, match="conflicts"):
+        build_parser(app)
