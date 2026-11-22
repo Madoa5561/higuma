@@ -33,14 +33,14 @@ def _parse_content_length(headers) -> int | None:
 
 class JSONLogFormatter(logging.Formatter):
     def format(self, record):
-        return json.dumps(
-            {
-                "level": record.levelname,
-                "event": record.getMessage(),
-                **getattr(record, "higuma", {}),
-            },
-            ensure_ascii=False,
-        )
+        payload = {
+            "level": record.levelname,
+            "event": record.getMessage(),
+            **getattr(record, "higuma", {}),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 class Observability:
@@ -187,9 +187,9 @@ class Observability:
             method = method if method in _METHODS else "OTHER"
             supplied = next(
                 (
-                    value.decode("latin-1")
+                    bytes(value).decode("latin-1")
                     for key, value in scope.get("headers", [])
-                    if key.lower() == b"x-request-id"
+                    if bytes(key).lower() == b"x-request-id"
                 ),
                 None,
             )
@@ -274,7 +274,9 @@ class HealthChecks:
             pending = self._pending.get(name)
             if pending is not None and not pending.done():
                 return False
-            if inspect.iscoroutinefunction(callback):
+            if inspect.iscoroutinefunction(callback) or inspect.iscoroutinefunction(
+                type(callback).__call__
+            ):
                 pending = loop.create_task(callback())
                 pending.add_done_callback(
                     lambda task: None if task.cancelled() else task.exception()

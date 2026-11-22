@@ -157,9 +157,12 @@ def parse_multipart(request: Any) -> tuple[list[Any], list[Any]]:
                     )
                 )
         # A closing delimiter does not count as another part.
-        if reader.take(2) == b"--":
+        suffix = reader.take(2)
+        if suffix == b"--":
             return fields, files
-        raise RequestEntityTooLarge(detail="too many multipart parts")
+        if suffix == b"\r\n":
+            raise RequestEntityTooLarge(detail="too many multipart parts")
+        raise BadRequest(detail="invalid multipart delimiter")
     except BaseException:
         for file in opened:
             file.close()

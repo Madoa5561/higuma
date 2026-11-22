@@ -1051,6 +1051,160 @@ class PythonCoreRegressionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 AsyncSQLAlchemyExtension().init_app(db_app, bad_url)  # type: ignore[arg-type]
 
+    def test_mounts_multipart_database_observability_and_staticfiles_hardening(self) -> None:
+        import asyncio
+        import json
+        import logging
+        import sys
+        import tempfile
+        from uuid import UUID
+
+        from higuma import (
+            Database,
+            HealthChecks,
+            Higuma,
+            Integer,
+            JSONLogFormatter,
+            Model,
+            Request,
+            StaticFiles,
+            String,
+        )
+        from higuma.database import quote_identifier
+        from higuma.exceptions import BadRequest
+        from higuma.mounts import _mounted_path, _server_address, wsgi_view
+        from higuma.multipart import parse_multipart
+
+        # WSGI mount PEP 3333 start_response error recovery before vs after body emission
+        def recover_wsgi(environ, start_response):
+            start_response("200 OK", [("Content-Type", "text/plain")])
+            try:
+                raise RuntimeError("early failure")
+            except RuntimeError:
+                start_response(
+                    "503 Service Unavailable",
+                    [("Content-Type", "text/plain")],
+                    sys.exc_info(),
+                )
+            return [b"recovered"]
+
+        recovered = wsgi_view(recover_wsgi, "/sub")(Request({"path": "/sub/x"}))
+        self.assertEqual(recovered.status_code, 503)
+        self.assertEqual(recovered.body, b"recovered")
+
+        def late_error_wsgi(environ, start_response):
+            write = start_response("200 OK", [("Content-Type", "text/plain")])
+            write(b"partial")
+            try:
+                raise ValueError("late failure")
+            except ValueError:
+                start_response(
+                    "500 Internal Server Error",
+                    [("Content-Type", "text/plain")],
+                    sys.exc_info(),
+                )
+            return []
+
+        with self.assertRaises(ValueError):
+            wsgi_view(late_error_wsgi, "/sub")(Request({"path": "/sub/x"}))
+
+        def double_start_wsgi(environ, start_response):
+            start_response("200 OK", [])
+            start_response("201 Created", [])
+            return [b"x"]
+
+        with self.assertRaises(RuntimeError):
+            wsgi_view(double_start_wsgi, "/sub")(Request({"path": "/sub/x"}))
+
+        self.assertEqual(_mounted_path("/api%2Fsecret", "/api"), "/api%2Fsecret")
+        self.assertEqual(_server_address("example.test:0", "https"), ("example.test", "443"))
+        self.assertEqual(_server_address("example.test:99999", "http"), ("example.test", "80"))
+        self.assertEqual(_server_address("", "http"), ("localhost", "80"))
+
+        # Multipart malformed trailing delimiter after max_form_parts -> 400 (not 413)
+        bad_trailing_body = b'--b1\r\nContent-Disposition: form-data; name="a"\r\n\r\n1\r\n--b1XX'
+        req_trailing = Request(
+            {
+                "body": bad_trailing_body,
+                "headers": {"Content-Type": "multipart/form-data; boundary=b1"},
+            }
+        )
+        req_trailing.max_form_parts = 1
+        with self.assertRaises(BadRequest):
+            parse_multipart(req_trailing)
+
+        # Database: refuse limit/offset on delete, validate Model types & URLs, preserve error
+        class Item(Model):
+            id = Integer(primary_key=True, autoincrement=True)
+            name = String(nullable=False)
+
+        with self.assertRaises(ValueError):
+            Database(None)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            quote_identifier(123)  # type: ignore[arg-type]
+
+        db = Database("sqlite:///:memory:")
+        with self.assertRaises(TypeError):
+            db.create_all(Item(name="not-a-class"))  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            db.drop_all(Model)
+        db.create_all(Item)
+        with db.session() as db_session:
+            with self.assertRaises(TypeError):
+                db_session.add({"name": "bad"})  # type: ignore[arg-type]
+            with self.assertRaises(TypeError):
+                db_session.save({"name": "bad"})  # type: ignore[arg-type]
+            with self.assertRaises(TypeError):
+                db_session.delete({"name": "bad"})  # type: ignore[arg-type]
+            with self.assertRaises(TypeError):
+                db_session.query(Item(name="x"))  # type: ignore[arg-type]
+            db_session.add(Item(name="one"))
+            db_session.add(Item(name="two"))
+            db_session.commit()
+            with self.assertRaises(ValueError):
+                db_session.query(Item).filter_by(name="one").limit(1).delete()
+            with self.assertRaises(ValueError):
+                db_session.query(Item).offset(1).delete_all()
+            self.assertEqual(db_session.query(Item).count(), 2)
+
+        with self.assertRaisesRegex(RuntimeError, "original failure"), db.session():
+            db.close()
+            raise RuntimeError("original failure")
+        db.close()
+
+        # Observability: JSONLogFormatter default=str + exc_info; HealthChecks async callable probe
+        formatter = JSONLogFormatter()
+        try:
+            raise ValueError("structured boom")
+        except ValueError:
+            record = logging.LogRecord(
+                "higuma.test",
+                logging.ERROR,
+                __file__,
+                1,
+                "failed",
+                (),
+                sys.exc_info(),
+            )
+            record.higuma = {"id": UUID("12345678-1234-5678-1234-567812345678")}
+        formatted = json.loads(formatter.format(record))
+        self.assertEqual(formatted["id"], "12345678-1234-5678-1234-567812345678")
+        self.assertIn("ValueError: structured boom", formatted["exception"])
+
+        class AsyncProbe:
+            async def __call__(self) -> bool:
+                await asyncio.sleep(0)
+                return True
+
+        health_app = Higuma(__name__, static_folder=None)
+        checks = HealthChecks()
+        checks.add_check("callable_async", AsyncProbe())
+        checks.install(health_app)
+        self.assertEqual(health_app.test_client().get("/health/ready").status_code, 200)
+
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
+            StaticFiles(tmp, index_file=123)  # type: ignore[arg-type]
+
 
 if __name__ == "__main__":
     unittest.main()

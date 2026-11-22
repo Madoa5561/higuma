@@ -7,6 +7,29 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.15] - 2026-11-23
+
+### Fixed
+
+- Fix PEP 3333 `start_response(status, headers, exc_info)` compliance in `wsgi_view()`
+  (allowing error-recovery status/header replacement before any response bytes are written,
+  re-raising `exc_info` after body emission begins, and rejecting repeated `start_response`
+  calls without `exc_info`); harden `_mounted_path()` against encoded-slash prefix
+  confusion and validate `1..65535` port bounds and empty `Host` fallback in
+  `_server_address()`.
+- Distinguish malformed trailing multipart delimiters (`400 Bad Request`) from excess parts
+  (`413 RequestEntityTooLarge`) after `max_form_parts`.
+- Prevent silent unbounded deletion in the built-in SQLite ORM by refusing `Query.delete()`
+  and `Query.delete_all()` when `.limit()` or `.offset()` is set; validate `Model`
+  instances/subclasses, non-string database URLs, and SQL identifiers cleanly; guard
+  `Database.session()` rollback on closed connections so the original exception is never
+  masked.
+- Improve observability and static file validation: format non-JSON-native extras (`default=str`)
+  and `exc_info` tracebacks in `JSONLogFormatter`, recognize async callable probe objects
+  (`async def __call__`) in `HealthChecks`, normalize `bytes`-like ASGI headers in
+  `Observability.wrap_asgi()`, and reject non-string `index_file` with `ValueError` in
+  `StaticFiles`.
+
 ## [0.11.14] - 2026-11-23
 
 ### Fixed

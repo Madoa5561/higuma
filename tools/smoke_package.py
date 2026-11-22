@@ -332,6 +332,26 @@ def _exercise_developer_apis() -> None:
     assert ipv6_client.get("/ipv6", headers={"host": "[0:0::1]:8000"}).status_code == 200
     assert ipv6_client.get("/ipv6", headers={"host": "[::1]:0"}).status_code == 403
 
+    from higuma import Integer, Model, String
+
+    class SmokeItem(Model):
+        id = Integer(primary_key=True, autoincrement=True)
+        name = String(nullable=False)
+
+    smoke_db = Database("sqlite:///:memory:")
+    smoke_db.create_all(SmokeItem)
+    with smoke_db.session() as smoke_sess:
+        smoke_sess.add(SmokeItem(name="bear"))
+        smoke_sess.commit()
+        try:
+            smoke_sess.query(SmokeItem).filter_by(name="bear").limit(1).delete()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("limit().delete() must raise ValueError")
+        assert smoke_sess.query(SmokeItem).count() == 1
+    smoke_db.close()
+
     try:
         TrustedHostMiddleware("example.com")  # type: ignore[arg-type]
     except TypeError:

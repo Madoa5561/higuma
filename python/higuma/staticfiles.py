@@ -37,6 +37,8 @@ class StaticFiles:
     ) -> None:
         if not isinstance(max_age, int) or isinstance(max_age, bool) or max_age < 0:
             raise ValueError("max_age must be a non-negative integer")
+        if not isinstance(index_file, str):
+            raise ValueError("index_file must be a visible filename")  # noqa: TRY004 - uniform error
         try:
             if len(_relative_parts(index_file)) != 1:
                 raise NotFound()

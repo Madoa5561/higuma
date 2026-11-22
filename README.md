@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.15** — WSGI マウント（`wsgi_view`）の PEP 3333 `start_response(..., exc_info)` 準拠・
+> エンコード済み `/` 越境防止・ポート範囲検証、multipart `max_form_parts` 後の不正終端 `400` 判定、
+> 組み込み ORM の `limit`/`offset` 付き `delete()` 拒否・`Model` 型検証・close 済み接続の例外隠蔽防止、
+> `JSONLogFormatter` の `default=str`/`exc_info` 対応・`HealthChecks` の async callable probe 対応・
+> `StaticFiles` `index_file` 検証を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.14** — `TrustedHostMiddleware` の port `0` 拒否・IPv6 正規化（`::1`/`[::1]`）、
 > `SecurityHeadersMiddleware` の `None` 無効化修正、`ProxyHeadersMiddleware` の IPv4-mapped IPv6 対応、
 > `CSRFProtection` / `TokenSigner` / `PasswordHasher` / `validate_user_id` 入力検証、

@@ -308,6 +308,8 @@ class Query(Generic[ModelT]):
         return self.delete_all()
 
     def delete_all(self) -> int:
+        if self.limit_value is not None or self.offset_value is not None:
+            raise ValueError("delete does not support limit or offset")
         table = quote_identifier(self.model.__tablename__)
         where, params = self._where_sql()
         # All identifiers pass quote_identifier; all values use placeholders.
@@ -364,6 +366,8 @@ class Session:
         return self.connection.execute(sql, params)
 
     def add(self, instance: Model) -> Model:
+        if not isinstance(instance, Model):
+            raise TypeError("expected a Model instance")
         model = type(instance)
         fields = []
         values = []
@@ -397,6 +401,8 @@ class Session:
         return instance
 
     def save(self, instance: Model) -> Model:
+        if not isinstance(instance, Model):
+            raise TypeError("expected a Model instance")
         model = type(instance)
         primary_key = model.__primary_key__
         if primary_key is None:
@@ -428,6 +434,8 @@ class Session:
         return instance
 
     def delete(self, instance: Model) -> None:
+        if not isinstance(instance, Model):
+            raise TypeError("expected a Model instance")
         model = type(instance)
         primary_key = model.__primary_key__
         if primary_key is None:
@@ -438,6 +446,7 @@ class Session:
         self.query(model).filter_by(**{primary_key.name: primary_value}).delete()
 
     def query(self, model: type[ModelT]) -> Query[ModelT]:
+        _require_model_class(model)
         return Query(self, model)
 
     def commit(self) -> None:
@@ -496,7 +505,10 @@ class Database:
             connection.commit()
         except BaseException:
             if connection is not None:
-                connection.rollback()
+                try:
+                    connection.rollback()
+                except sqlite3.ProgrammingError:
+                    pass
             raise
         finally:
             if connection is not None and self.path != ":memory:":
@@ -505,6 +517,8 @@ class Database:
                 self._memory_lock.release()
 
     def create_all(self, *models: type[Model]) -> None:
+        for model in models:
+            _require_model_class(model)
         with self.session() as session:
             for model in models:
                 if not model.__fields__:
@@ -519,13 +533,24 @@ class Database:
                         session.execute(f"CREATE INDEX IF NOT EXISTS {index} ON {table} ({column})")
 
     def drop_all(self, *models: type[Model]) -> None:
+        for model in models:
+            _require_model_class(model)
         with self.session() as session:
             for model in reversed(models):
                 session.execute(f"DROP TABLE IF EXISTS {quote_identifier(model.__tablename__)}")
 
 
+def _require_model_class(model: Any) -> None:
+    if not isinstance(model, type) or not issubclass(model, Model) or model is Model:
+        raise TypeError("expected a Model subclass")
+
+
 def quote_identifier(value: str) -> str:
-    if not value or not all(ch == "_" or ch.isalnum() for ch in value):
+    if (
+        not isinstance(value, str)
+        or not value
+        or not all(ch == "_" or ch.isalnum() for ch in value)
+    ):
         raise ValueError(f"unsafe SQL identifier: {value!r}")
     return f'"{value}"'
 
@@ -544,6 +569,8 @@ def _row_to_model(model: type[ModelT], row: sqlite3.Row) -> ModelT:
 
 
 def _sqlite_path(url: str) -> str:
+    if not isinstance(url, str):
+        raise ValueError("built-in Database currently supports sqlite:/// URLs")  # noqa: TRY004 - uniform URL error
     if url in {"sqlite://", "sqlite:///:memory:", ":memory:"}:
         return ":memory:"
     prefix = "sqlite:///"

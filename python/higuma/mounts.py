@@ -15,6 +15,15 @@ def wsgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
     def mounted(request: Request) -> Response:
         status: str | None = None
         response_headers: list[tuple[str, str]] = []
+        headers_sent = False
+        body_chunks: list[bytes] = []
+
+        def write(chunk: bytes) -> None:
+            nonlocal headers_sent
+            data = bytes(chunk)
+            if data:
+                headers_sent = True
+                body_chunks.append(data)
 
         def start_response(
             status_line: str,
@@ -22,17 +31,23 @@ def wsgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
             exc_info: Any = None,
         ) -> Callable[[bytes], None]:
             nonlocal status, response_headers
-            if exc_info is not None and response_headers:
-                raise exc_info[1].with_traceback(exc_info[2])
-            status = status_line
-            response_headers = headers
-            return body_chunks.append
+            try:
+                if exc_info is not None:
+                    if headers_sent:
+                        raise exc_info[1].with_traceback(exc_info[2])
+                elif status is not None:
+                    raise RuntimeError("start_response already called without exc_info")
+                status = status_line
+                response_headers = list(headers)
+                return write
+            finally:
+                exc_info = None
 
-        body_chunks: list[bytes] = []
         environ = _wsgi_environ(request, prefix)
         result = application(environ, start_response)
         try:
-            body_chunks.extend(bytes(chunk) for chunk in result)
+            for chunk in result:
+                write(chunk)
         finally:
             close = getattr(result, "close", None)
             if close is not None:
@@ -114,7 +129,10 @@ def _mounted_path(path: str, prefix: str) -> str:
             elif decoded == prefix or decoded.startswith(prefix + "/"):
                 count = len(prefix.split("/")) - 1
                 parts = path.split("/")
-                value = "/" + "/".join(parts[count + 1 :])
+                if len(parts) >= count + 1 and unquote("/".join(parts[: count + 1])) == prefix:
+                    value = "/" + "/".join(parts[count + 1 :])
+                else:
+                    value = path
             else:
                 value = path
     else:
@@ -225,6 +243,6 @@ def _server_address(host_header: str, scheme: str) -> tuple[str, str]:
         port = value[closing + 1 :].removeprefix(":")
     else:
         host, port = value.rsplit(":", 1) if value.count(":") == 1 else (value, "")
-    if not port or not port.isascii() or not port.isdigit():
+    if not port or not port.isascii() or not port.isdigit() or not 1 <= int(port) <= 65535:
         port = "443" if scheme == "https" else "80"
-    return host, port
+    return host or "localhost", port
