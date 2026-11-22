@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.13** — `AwaitBridge` (`_AwaitChannel`) の解除済み `ContextVar` リセット、`Signal` の
+> 値型 sender（`str`/`int` 等）一致・async callable 拒否・`connected_to` 同期化、ASGI async fast path の
+> finalizer 例外境界分離、`Response`/`RedirectResponse`/`StreamingResponse` 等の重複ペアヘッダ保持、
+> `Request.close()` 全資源解放・`WebSocket` payload 検証＆構造化 `send_json()`・`asend()` 追加、
+> CLI bool 既定値検証、native `RequestBodyFile.read(None)`／close 後 `ValueError` を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.12** — `ASGITestClient(root_path=...)` での `follow_redirects=True`（相対／同一 mount
 > リダイレクトの二重 prefix 防止・mount 外リダイレクト拒否・`max_redirects` 検証）、`Higuma`/`Blueprint`
 > 登録時の `methods`/`tags`/`allowed_origins` 単一文字列・空 `methods=[]`・`bool` 制限値拒否および

@@ -256,25 +256,34 @@ class Request:
         return bool(getattr(self._body_file, "rolled_to_disk", False))
 
     def iter_body(self, chunk_size: int = 65536):
-        if chunk_size < 1:
-            raise ValueError("chunk_size must be positive")
+        if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size < 1:
+            raise ValueError("chunk_size must be a positive integer")
         source = self.stream
         while chunk := source.read(chunk_size):
             yield chunk
 
     async def aiter_body(self, chunk_size: int = 65536):
-        if chunk_size < 1:
-            raise ValueError("chunk_size must be positive")
+        if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size < 1:
+            raise ValueError("chunk_size must be a positive integer")
         source = self.stream
         while chunk := await asyncio.to_thread(source.read, chunk_size):
             yield chunk
 
     def close(self) -> None:
+        failure: BaseException | None = None
         if self._files_cache is not None:
             for _, upload in self._files_cache.items(multi=True):  # noqa: PERF102 - include duplicate file field names
-                upload.close()
+                try:
+                    upload.close()
+                except BaseException as error:  # noqa: BLE001 - close every upload and body stream
+                    failure = failure or error
         if self._body_file is not None:
-            self._body_file.close()
+            try:
+                self._body_file.close()
+            except BaseException as error:  # noqa: BLE001 - close every upload and body stream
+                failure = failure or error
+        if failure is not None:
+            raise failure
 
     def __getitem__(self, key: str) -> Any:
         if key == "body":

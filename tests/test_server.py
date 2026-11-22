@@ -48,6 +48,7 @@ app = Higuma(
     static_folder=os.environ["HIGUMA_STATIC_DIR"],
     static_url_path="/static",
     max_content_length=16,
+    request_memory_limit=8,
 )
 app.add_middleware(ProxyHeadersMiddleware, trusted_proxies=("127.0.0.1",))
 
@@ -129,6 +130,32 @@ def typed(number, ratio):
 @app.post("/body")
 def body():
     return {"length": len(request.body)}
+
+
+@app.post("/spooled-body")
+def spooled_body():
+    spooled = request.body_spooled
+    first = request.stream.read(None)
+    request.stream.seek(0)
+    second = request.stream.read(4)
+    request.stream.close()
+    closed_read_err = ""
+    closed_seek_err = ""
+    try:
+        request.stream.read()
+    except ValueError as err:
+        closed_read_err = str(err)
+    try:
+        request.stream.seek(0)
+    except ValueError as err:
+        closed_seek_err = str(err)
+    return {
+        "spooled": spooled,
+        "first": first.decode("utf-8"),
+        "second": second.decode("utf-8"),
+        "closed_read_err": closed_read_err,
+        "closed_seek_err": closed_seek_err,
+    }
 
 
 @app.get("/status/<int:code>")
@@ -817,6 +844,16 @@ class RealServerTests(unittest.TestCase):
             connection.sendall(_masked_frame(0x1, b"hi"))
             opcode, payload = _read_frame(connection, bytearray(remainder))
             self.assertEqual((opcode, payload), (0x1, b"echo:hi"))
+
+    def test_spooled_request_body_file_read_none_and_closed_value_error(self) -> None:
+        status, _, body = self.request("POST", "/spooled-body", body=b"abcdefghijkl")
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertTrue(data["spooled"])
+        self.assertEqual(data["first"], "abcdefghijkl")
+        self.assertEqual(data["second"], "abcd")
+        self.assertIn("closed", data["closed_read_err"].lower())
+        self.assertIn("closed", data["closed_seek_err"].lower())
 
 
 if __name__ == "__main__":

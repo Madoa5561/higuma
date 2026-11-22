@@ -358,6 +358,13 @@ supervisor, streaming, and proxy changes.
   `methods`/`tags`/`allowed_origins` and empty `methods=[]` while honoring `MethodView.methods`,
   `mount_wsgi()`/`mount_asgi()` validate atomically, `test_request_context()` applies
   `MAX_FORM_*`/`UPLOAD_MEMORY_LIMIT`, and `TestClient` escapes multipart parameters cleanly.
+  In 0.11.13+, `AwaitBridge` resets cleared worker-thread `ContextVar` entries cleanly,
+  `Signal` matches value-typed senders (`str`/`int`/etc.) by equality and synchronizes
+  `connected_to()`, ASGI async fast path separates `@after_this_request` and finalizer error
+  boundaries, `Response`/`RedirectResponse`/`StreamingResponse` preserve duplicate header pairs,
+  `Request.close()` closes every upload and stream, `WebSocket` adds `asend()` and structured
+  `send_json()`/`asend_json()`, and native `RequestBodyFile` supports `read(None)` and raises
+  `ValueError` when closed.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

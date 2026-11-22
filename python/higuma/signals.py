@@ -17,6 +17,20 @@ def _identity(receiver):
     return (id(receiver),)
 
 
+def _same_sender(stored, target, by_value: bool) -> bool:
+    if stored is target:
+        return True
+    if (
+        by_value
+        and stored is not ANY
+        and stored is not _NONE_SENDER
+        and target is not ANY
+        and target is not _NONE_SENDER
+    ):
+        return type(stored) is type(target) and stored == target
+    return False
+
+
 class Signal:
     def __init__(self, name: str):
         self.name = name
@@ -24,7 +38,11 @@ class Signal:
         self._lock = RLock()
 
     def connect(self, receiver, sender=ANY, weak=True):
-        if not callable(receiver) or inspect.iscoroutinefunction(receiver):
+        if (
+            not callable(receiver)
+            or inspect.iscoroutinefunction(receiver)
+            or inspect.iscoroutinefunction(type(receiver).__call__)
+        ):
             raise TypeError("signal receivers must be synchronous callables")
         identity = _identity(receiver)
         if weak:
@@ -35,6 +53,7 @@ class Signal:
             )
         else:
             reference = lambda: receiver
+        by_value = False
         if sender is None:
             owner = lambda: _NONE_SENDER
         elif sender is ANY:
@@ -44,9 +63,10 @@ class Signal:
                 owner = weakref.ref(sender)
             except TypeError:
                 owner = lambda: sender
+                by_value = True
         with self._lock:
             self._remove(receiver, sender)
-            self._subscriptions.append((identity, reference, owner))
+            self._subscriptions.append((identity, reference, owner, by_value))
         return receiver
 
     def disconnect(self, receiver, sender=ANY):
@@ -60,7 +80,10 @@ class Signal:
             self._subscriptions[:] = [
                 entry
                 for entry in self._subscriptions
-                if not (entry[0] == identity and (all_senders or entry[2]() is sender))
+                if not (
+                    entry[0] == identity
+                    and (all_senders or _same_sender(entry[2](), sender, entry[3]))
+                )
             ]
             return len(self._subscriptions) != previous
 
@@ -75,7 +98,7 @@ class Signal:
             receivers = [
                 entry[1]()
                 for entry in self._subscriptions
-                if entry[2]() is ANY or entry[2]() is sender
+                if entry[2]() is ANY or _same_sender(entry[2](), sender, entry[3])
             ]
         seen = set()
         for receiver in receivers:
@@ -102,11 +125,17 @@ class Signal:
 
     @contextmanager
     def connected_to(self, receiver, sender=ANY):
-        existing = any(
-            _identity(item) == _identity(receiver) for item in self.receivers_for(sender)
-        )
-        if not existing:
-            self.connect(receiver, sender, weak=False)
+        with self._lock:
+            target = _NONE_SENDER if sender is None else sender
+            existing = any(
+                entry[0] == _identity(receiver)
+                and entry[1]() is not None
+                and entry[2]() is not None
+                and (entry[2]() is ANY or _same_sender(entry[2](), target, entry[3]))
+                for entry in self._subscriptions
+            )
+            if not existing:
+                self.connect(receiver, sender, weak=False)
         try:
             yield
         finally:

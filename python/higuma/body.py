@@ -10,8 +10,15 @@ class BodyBuffer:
     """Bounded, rewindable ingress storage. This is not a live network stream."""
 
     def __init__(self, maximum: int, memory_limit: int = 1024 * 1024) -> None:
-        if maximum < 1 or memory_limit < 1:
-            raise ValueError("body limits must be positive")
+        if (
+            isinstance(maximum, bool)
+            or not isinstance(maximum, int)
+            or maximum < 1
+            or isinstance(memory_limit, bool)
+            or not isinstance(memory_limit, int)
+            or memory_limit < 1
+        ):
+            raise ValueError("body limits must be positive integers")
         self.maximum, self.memory_limit, self.size = maximum, memory_limit, 0
         self.file = SpooledTemporaryFile(max_size=memory_limit, mode="w+b")  # noqa: SIM115 - owned until response close
 
@@ -65,6 +72,8 @@ class BodyBuffer:
 
 
 async def store_chunk(buffer: BodyBuffer, chunk: bytes) -> None:
+    if buffer.size + len(chunk) > buffer.maximum:
+        raise RequestEntityTooLarge()
     if buffer.size + len(chunk) <= buffer.memory_limit:
         buffer.write(chunk)
         return
@@ -72,7 +81,7 @@ async def store_chunk(buffer: BodyBuffer, chunk: bytes) -> None:
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:
-        await task
+        await asyncio.gather(task, return_exceptions=True)
         raise
 
 

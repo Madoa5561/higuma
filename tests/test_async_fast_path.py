@@ -154,3 +154,70 @@ def test_async_file_injection_uses_compatibility_path_for_multipart_disk_io():
             assert response.get_json() == {"size": 10}
 
     asyncio.run(exercise())
+
+
+def test_fast_path_finalizers_still_run_when_after_this_request_fails():
+    from higuma import after_this_request
+
+    app = Higuma(__name__, static_folder=None)
+    finalized = []
+
+    @app.get("/boom")
+    async def boom():
+        assert request.state.get("_higuma_async_fast_path")
+
+        @after_this_request
+        def fail_after(response):
+            raise RuntimeError("after failed")
+
+        def finalize(response):
+            finalized.append(response.status_code)
+            response.headers["x-finalized"] = "yes"
+            return response
+
+        request.state.setdefault("_higuma_response_finalizers", []).append(finalize)
+        return "ok"
+
+    async def exercise():
+        async with app.test_async_client() as client:
+            response = await client.get("/boom")
+            assert response.status_code == 500
+            assert response.headers.get("x-finalized") == "yes"
+
+    asyncio.run(exercise())
+    assert finalized == [500]
+
+
+def test_await_bridge_resets_cleared_worker_contextvars_and_keeps_coro_contextvars():
+    from contextvars import ContextVar
+    from threading import Thread
+
+    from higuma.execution import AwaitBridge
+
+    worker_var: ContextVar[str | None] = ContextVar("worker_var", default=None)
+    coro_var: ContextVar[str | None] = ContextVar("coro_var", default=None)
+
+    async def exercise():
+        bridge = AwaitBridge(asyncio.get_running_loop())
+        observed = []
+
+        async def first():
+            coro_var.set("from-coro")
+            return (worker_var.get(), coro_var.get())
+
+        async def second():
+            return (worker_var.get(), coro_var.get())
+
+        def run_in_worker():
+            token = worker_var.set("from-worker")
+            observed.append(bridge.resolve(first()))
+            worker_var.reset(token)
+            observed.append(bridge.resolve(second()))
+
+        thread = Thread(target=run_in_worker)
+        thread.start()
+        await asyncio.to_thread(thread.join)
+        await bridge.close()
+        assert observed == [("from-worker", "from-coro"), (None, "from-coro")]
+
+    asyncio.run(exercise())

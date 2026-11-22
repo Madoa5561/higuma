@@ -6,7 +6,7 @@ import inspect
 import os
 from concurrent.futures import CancelledError, Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from contextvars import ContextVar, copy_context
+from contextvars import Context, ContextVar, Token, copy_context
 from threading import Event, Lock, Thread, get_ident
 from typing import Any
 
@@ -19,7 +19,8 @@ class _AwaitChannel:
         self.active: Future[Any] | None = None
         self.cancelled: set[Future[Any]] = set()
         self.previous: dict[ContextVar[Any], Any] = {}
-        self.completion = asyncio.run_coroutine_threadsafe(self._run(), loop)
+        self.tokens: dict[ContextVar[Any], Token[Any]] = {}
+        self.completion = Context().run(asyncio.run_coroutine_threadsafe, self._run(), loop)
 
     async def _run(self) -> None:
         self.task = asyncio.current_task()
@@ -35,9 +36,15 @@ class _AwaitChannel:
                 if not future.done():
                     future.set_exception(asyncio.CancelledError())
                 continue
+            for variable in list(self.previous):
+                if variable not in context:
+                    token = self.tokens.pop(variable, None)
+                    if token is not None:
+                        variable.reset(token)
             for variable, item in context.items():
                 if variable not in self.previous or self.previous[variable] is not item:
-                    variable.set(item)
+                    token = variable.set(item)
+                    self.tokens.setdefault(variable, token)
             self.previous = context
             self.active = future
             try:

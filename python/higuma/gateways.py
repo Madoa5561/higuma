@@ -614,6 +614,11 @@ class ASGIApplication:
                 self.app.logger.exception("ASGI response failed")
                 fallback = self.app._default_http_error(HTTPException(500))
                 if body is None and response is not None:
+                    if isinstance(response, StreamingResponse):
+                        try:
+                            response._close()
+                        except Exception:
+                            self.app.logger.exception("ASGI stream cleanup failed")
                     fallback.background, response.background = response.background, None
                     body = _Body(fallback, raw["method"])
                 try:

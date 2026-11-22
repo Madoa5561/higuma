@@ -95,8 +95,8 @@ def _arguments(
             raise TypeError("CLI parameter annotations must be str, int, float, or bool")
         required = parameter.default is parameter.empty
         if value_type is bool:
-            if required:
-                raise TypeError("boolean CLI flags must have a default")
+            if required or not isinstance(parameter.default, bool):
+                raise TypeError("boolean CLI flags must have a bool default")
             parser.add_argument(
                 "--" + name.replace("_", "-"),
                 dest=name,
@@ -136,12 +136,12 @@ class CliRunner:
     def invoke(self, args: list[str] | tuple[str, ...] | str = ()) -> CliResult:
         from .cli import build_parser, execute
 
-        parsed_args = shlex.split(args) if isinstance(args, str) else list(args)
         output = io.StringIO()
         error = None
         code = 0
         with redirect_stdout(output), redirect_stderr(output):
             try:
+                parsed_args = shlex.split(args) if isinstance(args, str) else list(args)
                 code = execute(self.app, build_parser(self.app).parse_args(parsed_args))
             except SystemExit as exception:
                 if exception.code is None or isinstance(exception.code, int):

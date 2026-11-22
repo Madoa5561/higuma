@@ -4,6 +4,16 @@ import asyncio
 import json
 from typing import Any
 
+from .parameters import serialize_json_value
+
+
+def _as_bytes(data: Any) -> bytes:
+    if isinstance(data, bytes):
+        return data
+    if isinstance(data, (bytearray, memoryview)):
+        return bytes(data)
+    raise TypeError("WebSocket binary payload must be bytes-like")
+
 
 class WebSocketDisconnect(ConnectionError):
     def __init__(self, code: int = 1000, reason: str = "") -> None:
@@ -16,20 +26,28 @@ class WebSocket:
     def __init__(self, session: Any) -> None:
         self._session = session
 
-    def send(self, data: str | bytes) -> None:
+    def send(self, data: str | bytes | bytearray | memoryview) -> None:
         if isinstance(data, str):
             self.send_text(data)
-        else:
+        elif isinstance(data, (bytes, bytearray, memoryview)):
             self.send_bytes(data)
+        else:
+            raise TypeError("WebSocket payload must be str or bytes-like")
 
     def send_text(self, data: str) -> None:
         self._session.send_text(data)
 
     def send_bytes(self, data: bytes | bytearray | memoryview) -> None:
-        self._session.send_bytes(bytes(data))
+        self._session.send_bytes(_as_bytes(data))
 
     def send_json(self, data: Any) -> None:
-        self.send_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+        self.send_text(
+            json.dumps(
+                serialize_json_value(data),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
 
     def receive(self) -> str | bytes:
         kind, text, data, code, reason = self._session.receive()
@@ -57,6 +75,14 @@ class WebSocket:
     def close(self, code: int = 1000, reason: str = "") -> None:
         self._session.close(code, reason)
 
+    async def asend(self, data: str | bytes | bytearray | memoryview) -> None:
+        if isinstance(data, str):
+            await self.asend_text(data)
+        elif isinstance(data, (bytes, bytearray, memoryview)):
+            await self.asend_bytes(data)
+        else:
+            raise TypeError("WebSocket payload must be str or bytes-like")
+
     async def asend_text(self, data: str) -> None:
         if hasattr(self._session, "asend_text"):
             await self._session.asend_text(data)
@@ -64,13 +90,20 @@ class WebSocket:
             await asyncio.to_thread(self.send_text, data)
 
     async def asend_bytes(self, data: bytes | bytearray | memoryview) -> None:
+        payload = _as_bytes(data)
         if hasattr(self._session, "asend_bytes"):
-            await self._session.asend_bytes(bytes(data))
+            await self._session.asend_bytes(payload)
         else:
-            await asyncio.to_thread(self.send_bytes, data)
+            await asyncio.to_thread(self.send_bytes, payload)
 
     async def asend_json(self, data: Any) -> None:
-        await self.asend_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+        await self.asend_text(
+            json.dumps(
+                serialize_json_value(data),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
 
     async def areceive(self) -> str | bytes:
         if not hasattr(self._session, "areceive"):

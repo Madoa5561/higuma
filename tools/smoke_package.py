@@ -299,10 +299,27 @@ def _exercise_developer_apis() -> None:
     assert proxy_client.get("/tag").get_json() == {"tag": None}
     proxy_app.config["MAX_FORM_PARTS"] = 7
     with proxy_app.test_request_context("/tag", base_url="http://example.test"):
-        from higuma import url_for
+        from higuma import Signal, StreamingResponse, url_for
 
         assert request.max_form_parts == 7
         assert url_for("tag", _external=True, _scheme="HTTPS") == "https://example.test/tag"
+
+        pair_resp = Response("ok", headers=[("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")])
+        assert [v for k, v in pair_resp.header_items if k == "set-cookie"] == ["a=1", "b=2"]
+        pair_stream = StreamingResponse(
+            [b"ok"], headers=[("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")], content_length=2
+        )
+        assert [v for k, v in pair_stream.header_items if k == "set-cookie"] == ["a=1", "b=2"]
+        pair_stream._close()
+        sig = Signal("smoke-value")
+        hits = []
+
+        def on_topic(sender, **kw):
+            hits.append(sender)
+
+        sig.connect(on_topic, sender="topic-x")
+        sig.send(b"topic-x".decode("ascii"))
+        assert hits == ["topic-x"]
 
     try:
         TrustedHostMiddleware("example.com")  # type: ignore[arg-type]

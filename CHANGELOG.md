@@ -7,6 +7,37 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.13] - 2026-11-23
+
+### Fixed
+
+- Reset worker-thread-cleared `ContextVar` entries in `_AwaitChannel` (`AwaitBridge`) across
+  subsequent `resolve()` calls without clobbering coroutine-owned `ContextVar` values.
+- Fix `Signal` matching and disconnection for non-weakrefable value-typed senders (such as
+  non-interned `str`/`int`/`tuple` values, without conflating `1` and `True`), reject
+  callable objects with `async def __call__`, and synchronize `Signal.connected_to()` under
+  the signal lock.
+- Separate `@after_this_request` and `_higuma_response_finalizers` error boundaries in the
+  ASGI async fast path (`async_dispatch.py`, matching `Higuma._dispatch()`), and ensure
+  `StreamingResponse._close()` runs in the ASGI error fallback when `_Body()` fails before
+  streaming starts.
+- Accept iterable `(name, value)` pairs with duplicate headers (such as multiple
+  `Set-Cookie` headers) across `Response`, `HTMLResponse`, `PlainTextResponse`,
+  `JSONResponse`, `RedirectResponse`, `FileResponse`, `TemplateResponse`, and
+  `StreamingResponse`, filtering case-insensitive `Location` / `Content-Length` cleanly.
+- Make `Request.close()` close all uploaded files and the request body stream even if an
+  earlier upload's `close()` raises; reject boolean/non-int `chunk_size` in
+  `Request.iter_body()`/`aiter_body()` and boolean/non-int limits in `BodyBuffer`; fail fast
+  before thread dispatch in `store_chunk()` on oversized bodies without masking cancellation.
+- Reject non-bytes-like payloads in `WebSocket.send()`/`send_bytes()`/`asend()`/`asend_bytes()`
+  (preventing `bytes(int)` from sending NUL bytes), add `WebSocket.asend()`, and serialize
+  structured values (`dataclass`, `UUID`, `datetime`, `Enum`, `Decimal`) in
+  `WebSocket.send_json()`/`asend_json()`.
+- Reject non-bool defaults for boolean CLI flags in `CommandGroup`, catch malformed quote
+  errors inside `CliRunner.invoke()`, and update native Rust `RequestBodyFile` to accept
+  `read(None)` and raise `ValueError` on read/seek after `close()` (matching `BodyBuffer`
+  and Python `io`).
+
 ## [0.11.12] - 2026-11-22
 
 ### Fixed

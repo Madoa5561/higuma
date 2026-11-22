@@ -89,7 +89,7 @@ class Response:
         self,
         body: str | bytes | bytearray | memoryview | None = b"",
         status: int = 200,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
         media_type: str | None = None,
         background: BackgroundTask | BackgroundTasks | Callable[[], Any] | None = None,
     ) -> None:
@@ -103,8 +103,9 @@ class Response:
 
         self.body = body
         self.status_code = _validate_status(status)
-        self.headers = _ResponseHeaders(headers)
+        self.headers = _ResponseHeaders()
         self._extra_headers: list[tuple[str, str]] = []
+        _apply_headers(self, headers)
         self.media_type = media_type
         self.history: tuple[Response, ...] = ()
         self._background: BackgroundTask | BackgroundTasks | None = None
@@ -276,7 +277,7 @@ class HTMLResponse(Response):
         self,
         body: str | bytes,
         status: int = 200,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
         background: BackgroundTask | BackgroundTasks | Callable[[], Any] | None = None,
     ) -> None:
         super().__init__(body, status, headers, "text/html; charset=utf-8", background)
@@ -287,7 +288,7 @@ class PlainTextResponse(Response):
         self,
         body: str | bytes,
         status: int = 200,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
         background: BackgroundTask | BackgroundTasks | Callable[[], Any] | None = None,
     ) -> None:
         super().__init__(body, status, headers, "text/plain; charset=utf-8", background)
@@ -298,7 +299,7 @@ class JSONResponse(Response):
         self,
         data: Any,
         status: int = 200,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
         background: BackgroundTask | BackgroundTasks | Callable[[], Any] | None = None,
     ) -> None:
         body = json.dumps(
@@ -315,11 +316,13 @@ class RedirectResponse(Response):
         self,
         location: str,
         status: int = 302,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
         background: BackgroundTask | BackgroundTasks | Callable[[], Any] | None = None,
     ) -> None:
-        response_headers = dict(headers or {})
-        response_headers["location"] = location
+        response_headers = [
+            (key, value) for key, value in _header_pairs(headers) if str(key).lower() != "location"
+        ]
+        response_headers.append(("location", location))
         super().__init__(b"", status, response_headers, "text/plain; charset=utf-8", background)
 
 
@@ -331,7 +334,7 @@ class FileResponse(Response):
         path: str | Path,
         *,
         status: int = 200,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
         media_type: str | None = None,
         filename: str | None = None,
         as_attachment: bool = False,
@@ -384,7 +387,7 @@ class TemplateResponse(Response):
         template: str,
         context: dict[str, Any] | None = None,
         status: int = 200,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
         background: BackgroundTask | BackgroundTasks | Callable[[], Any] | None = None,
     ) -> None:
         super().__init__(b"", status, headers, "text/html; charset=utf-8", background)
@@ -404,7 +407,7 @@ class StreamingResponse(Response):
         content: Iterable[str | bytes] | AsyncIterable[str | bytes],
         *,
         status: int = 200,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
         media_type: str = "application/octet-stream",
         content_length: int | None = None,
         background: BackgroundTask | BackgroundTasks | Callable[[], Any] | None = None,
@@ -415,13 +418,13 @@ class StreamingResponse(Response):
             or content_length < 0
         ):
             raise ValueError("content_length must be a non-negative integer or None")
-        response_headers = {
-            key: value
-            for key, value in (headers or {}).items()
-            if content_length is not None or str(key).lower() != "content-length"
-        }
+        response_headers = [
+            (key, value)
+            for key, value in _header_pairs(headers)
+            if str(key).lower() != "content-length"
+        ]
         if content_length is not None:
-            response_headers["content-length"] = str(content_length)
+            response_headers.append(("content-length", str(content_length)))
         super().__init__(b"", status, response_headers, media_type, background)
         self.content_length = content_length
         self._content = content

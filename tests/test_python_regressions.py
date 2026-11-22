@@ -753,6 +753,169 @@ class PythonCoreRegressionTests(unittest.TestCase):
                 files={"doc": ("ok.txt", b"x", "text/plain\r\nX-Injected: 1")},
             )
 
+    def test_signals_response_headers_request_close_body_ws_and_cli_hardening(self) -> None:
+        import asyncio
+        from dataclasses import dataclass
+        from uuid import UUID
+
+        from higuma import (
+            Higuma,
+            RedirectResponse,
+            Request,
+            Response,
+            Signal,
+            StreamingResponse,
+            WebSocket,
+        )
+        from higuma.body import BodyBuffer, store_chunk
+        from higuma.exceptions import RequestEntityTooLarge
+        from higuma.request import MultiDict, UploadFile
+
+        # Signal value-typed senders and callable async receiver rejection
+        sig = Signal("orders")
+        seen: list[object] = []
+
+        def on_order(sender, **kw):
+            seen.append((sender, kw.get("n")))
+
+        sig.connect(on_order, sender="order-topic")
+        sig.connect(on_order, sender=100001)
+        sig.send(b"order-topic".decode("ascii"), n=1)
+        sig.send(int("100001"), n=2)
+        sig.send(True, n=3)
+        self.assertEqual(seen, [("order-topic", 1), (100001, 2)])
+        self.assertTrue(sig.disconnect(on_order, sender=b"order-topic".decode("ascii")))
+        self.assertTrue(sig.disconnect(on_order, sender=int("100001")))
+        self.assertFalse(sig.has_receivers_for("order-topic"))
+
+        class AsyncCallable:
+            async def __call__(self, sender, **kw):
+                return None
+
+        with self.assertRaises(TypeError):
+            sig.connect(AsyncCallable())
+
+        # Duplicate tuple-pair headers across Response, RedirectResponse, StreamingResponse
+        pairs = [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]
+        resp = Response("ok", headers=pairs)
+        self.assertEqual([v for k, v in resp.header_items if k == "set-cookie"], ["a=1", "b=2"])
+
+        redir = RedirectResponse("/next", headers=[("Location", "/ignored"), *pairs])
+        self.assertEqual(redir.headers["location"], "/next")
+        self.assertEqual([v for k, v in redir.header_items if k == "set-cookie"], ["a=1", "b=2"])
+        self.assertEqual([v for k, v in redir.header_items if k == "location"], ["/next"])
+
+        stream = StreamingResponse(
+            [b"hi"],
+            headers=[("Content-Length", "999"), *pairs],
+            content_length=2,
+        )
+        self.assertEqual(stream.headers["content-length"], "2")
+        self.assertEqual([v for k, v in stream.header_items if k == "content-length"], ["2"])
+        self.assertEqual([v for k, v in stream.header_items if k == "set-cookie"], ["a=1", "b=2"])
+        stream._close()
+
+        # Request.iter_body/aiter_body bool rejection & resilient Request.close()
+        req = Request({"body": b"abc"})
+        with self.assertRaises(ValueError):
+            list(req.iter_body(True))
+
+        async def bad_aiter():
+            async for _ in req.aiter_body(True):
+                pass
+
+        with self.assertRaises(ValueError):
+            asyncio.run(bad_aiter())
+
+        closed_log: list[str] = []
+
+        class FailingStream:
+            def close(self):
+                closed_log.append("upload1")
+                raise OSError("boom")
+
+        class GoodStream:
+            def __init__(self, name: str):
+                self.name = name
+
+            def close(self):
+                closed_log.append(self.name)
+
+        req_close = Request({"body": b""})
+        req_close._body_file = GoodStream("body")
+        req_close._files_cache = MultiDict(
+            [
+                ("f", UploadFile("a.txt", stream=FailingStream())),
+                ("f", UploadFile("b.txt", stream=GoodStream("upload2"))),
+            ]
+        )
+        with self.assertRaises(OSError):
+            req_close.close()
+        self.assertEqual(closed_log, ["upload1", "upload2", "body"])
+
+        # BodyBuffer bool rejection & store_chunk fast oversize check
+        with self.assertRaises(ValueError):
+            BodyBuffer(True)
+        with self.assertRaises(ValueError):
+            BodyBuffer(10, memory_limit=True)
+        buf = BodyBuffer(4, memory_limit=2)
+        with self.assertRaises(RequestEntityTooLarge):
+            asyncio.run(store_chunk(buf, b"12345"))
+        self.assertFalse(buf.rolled_to_disk)
+        buf.close()
+
+        # WebSocket payload validation, asend, and structured send_json/asend_json
+        sent: list[tuple[str, object]] = []
+
+        class DummySession:
+            def send_text(self, text: str) -> None:
+                sent.append(("text", text))
+
+            def send_bytes(self, data: bytes) -> None:
+                sent.append(("bytes", data))
+
+        ws = WebSocket(DummySession())
+        with self.assertRaises(TypeError):
+            ws.send(5)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            ws.send_bytes(5)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            asyncio.run(ws.asend(5))  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            asyncio.run(ws.asend_bytes(5))  # type: ignore[arg-type]
+
+        @dataclass
+        class Event:
+            id: UUID
+            label: str
+
+        event = Event(UUID("12345678-1234-5678-1234-567812345678"), "bear")
+        ws.send_json(event)
+        asyncio.run(ws.asend("hi"))
+        asyncio.run(ws.asend(b"ok"))
+        asyncio.run(ws.asend_json(event))
+        self.assertEqual(
+            sent,
+            [
+                ("text", '{"id":"12345678-1234-5678-1234-567812345678","label":"bear"}'),
+                ("text", "hi"),
+                ("bytes", b"ok"),
+                ("text", '{"id":"12345678-1234-5678-1234-567812345678","label":"bear"}'),
+            ],
+        )
+
+        # CLI bool default validation & CliRunner malformed quote handling
+        cli_app = Higuma(__name__, static_folder=None)
+        with self.assertRaises(TypeError):
+
+            @cli_app.cli.command()
+            def bad_flag(dry_run: bool = "false"):  # type: ignore[assignment]
+                return dry_run
+
+        result = cli_app.test_cli_runner().invoke("routes 'unterminated")
+        self.assertEqual(result.exit_code, 1)
+        self.assertIsInstance(result.exception, ValueError)
+
 
 if __name__ == "__main__":
     unittest.main()

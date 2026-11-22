@@ -101,6 +101,11 @@ async def run(app, route, raw, send, receive, respond, worker):
                         if updated is not response and isinstance(response, StreamingResponse):
                             await response._aclose()
                         response = updated
+                except Exception as error:  # noqa: BLE001 - after hook exception boundary
+                    if isinstance(response, StreamingResponse):
+                        await response._aclose()
+                    response = make_response(app._handle_exception(error, request))
+                try:
                     for callback in request.state.pop("_higuma_response_finalizers", []):
                         updated = make_response(await call(callback, response))
                         if updated is not response and isinstance(response, StreamingResponse):

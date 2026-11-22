@@ -782,16 +782,17 @@ struct RequestBodyFile {
 
 #[pymethods]
 impl RequestBodyFile {
-    #[pyo3(signature = (size = -1))]
-    fn read<'py>(&self, py: Python<'py>, size: i64) -> PyResult<Bound<'py, PyBytes>> {
+    #[pyo3(signature = (size = None))]
+    fn read<'py>(&self, py: Python<'py>, size: Option<i64>) -> PyResult<Bound<'py, PyBytes>> {
+        let size = size.unwrap_or(-1);
         let shared = self.file.clone();
-        let bytes = py.detach(move || -> io::Result<Vec<u8>> {
+        let bytes = py.detach(move || -> PyResult<Vec<u8>> {
             let mut guard = shared
                 .lock()
-                .map_err(|_| io::Error::other("body file lock failed"))?;
+                .map_err(|_| PyRuntimeError::new_err("body file lock failed"))?;
             let file = guard
                 .as_mut()
-                .ok_or_else(|| io::Error::other("body file is closed"))?;
+                .ok_or_else(|| PyValueError::new_err("I/O operation on closed file"))?;
             let mut bytes = Vec::new();
             if size < 0 {
                 file.read_to_end(&mut bytes)?;
@@ -812,14 +813,15 @@ impl RequestBodyFile {
             _ => return Err(PyValueError::new_err("invalid seek offset or whence")),
         };
         let shared = self.file.clone();
-        Ok(py.detach(move || -> io::Result<u64> {
-            shared
+        py.detach(move || -> PyResult<u64> {
+            let mut guard = shared
                 .lock()
-                .map_err(|_| io::Error::other("body file lock failed"))?
+                .map_err(|_| PyRuntimeError::new_err("body file lock failed"))?;
+            let file = guard
                 .as_mut()
-                .ok_or_else(|| io::Error::other("body file is closed"))?
-                .seek(position)
-        })?)
+                .ok_or_else(|| PyValueError::new_err("I/O operation on closed file"))?;
+            Ok(file.seek(position)?)
+        })
     }
 
     fn tell(&self, py: Python<'_>) -> PyResult<u64> {
