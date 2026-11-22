@@ -1205,6 +1205,146 @@ class PythonCoreRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
             StaticFiles(tmp, index_file=123)  # type: ignore[arg-type]
 
+    def test_app_blueprint_testing_and_websocket_validation(self) -> None:
+        from http import HTTPStatus
+
+        from higuma import Blueprint, Request, Response, StreamingResponse
+        from higuma.websocket import WebSocket
+
+        app = Higuma(__name__, static_folder=None, debug=True)
+
+        # Declared status_code must be preserved for (body, headers) 2-tuples
+        @app.post("/created-headers", status_code=201)
+        def created_headers():
+            return {"ok": True}, {"x-created": "yes"}
+
+        @app.post("/created-header-list", status_code=202)
+        def created_header_list():
+            return "accepted", [("x-tag", "a"), ("x-tag", "b")]
+
+        @app.get("/no-content-head")
+        def no_content_head():
+            return Response(b"", 204)
+
+        @app.get("/not-modified-head")
+        def not_modified_head():
+            return Response(b"", 304)
+
+        client = app.test_client()
+        created = client.post("/created-headers")
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.headers["x-created"], "yes")
+        self.assertEqual(created.json, {"ok": True})
+
+        accepted = client.post("/created-header-list")
+        self.assertEqual(accepted.status_code, 202)
+        self.assertEqual(
+            [value for key, value in accepted.header_items if key == "x-tag"],
+            ["a", "b"],
+        )
+
+        # HEAD on 204 / 304 must not inject Content-Length
+        head_204 = client.head("/no-content-head")
+        self.assertEqual(head_204.status_code, 204)
+        self.assertNotIn("content-length", head_204.headers)
+        head_304 = client.head("/not-modified-head")
+        self.assertEqual(head_304.status_code, 304)
+        self.assertNotIn("content-length", head_304.headers)
+
+        # TestClient / ASGITestClient reject invalid/zero ports in base_url
+        for bad_url in (
+            "http://localhost:0",
+            "http://localhost:99999",
+            "http://localhost:abc",
+            123,
+        ):
+            with self.assertRaises(ValueError):
+                client.get("/", base_url=bad_url)  # type: ignore[arg-type]
+            with self.assertRaises(ValueError):
+                app.test_async_client(base_url=bad_url)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            app.test_async_client(root_path=123)  # type: ignore[arg-type]
+
+        # TestClient._materialize always closes StreamingResponse when chunk iteration fails
+        closed = []
+
+        def failing_stream():
+            try:
+                yield b"first"
+                raise RuntimeError("stream boom")
+            finally:
+                closed.append(True)
+
+        with self.assertRaisesRegex(RuntimeError, "stream boom"):
+            client._materialize(StreamingResponse(failing_stream()))
+        self.assertEqual(closed, [True])
+
+        # Debug _handle_exception formats the provided error's traceback even outside except
+        try:
+            raise RuntimeError("detached failure")
+        except RuntimeError as captured:
+            detached_error = captured
+        debug_response = app._handle_exception(
+            detached_error, Request({"method": "GET", "path": "/"})
+        )
+        self.assertEqual(debug_response.status_code, 500)
+        self.assertIn("RuntimeError: detached failure", debug_response.text)
+
+        # Error handler registration validates status codes, exception types, and callability
+        bp = Blueprint("api", __name__)
+        for invalid_status in (99, 199, 600):
+            with self.assertRaises(ValueError):
+                app.errorhandler(invalid_status)
+            with self.assertRaises(ValueError):
+                bp.errorhandler(invalid_status)
+            with self.assertRaises(ValueError):
+                bp.app_errorhandler(invalid_status)
+        for invalid_key in (True, False, "404", ValueError("instance"), object):
+            with self.assertRaises(TypeError):
+                app.register_error_handler(invalid_key, lambda err: ("err", 500))  # type: ignore[arg-type]
+            with self.assertRaises(TypeError):
+                bp.register_error_handler(invalid_key, lambda err: ("err", 500))  # type: ignore[arg-type]
+            with self.assertRaises(TypeError):
+                bp.app_errorhandler(invalid_key)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            app.register_error_handler(404, "not-callable")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            bp.register_error_handler(404, "not-callable")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            bp.app_errorhandler(404)("not-callable")  # type: ignore[arg-type]
+        # HTTPStatus IntEnum continues to work cleanly
+        app.register_error_handler(HTTPStatus.IM_A_TEAPOT, lambda err: ("teapot", 418))
+        self.assertIn(418, app._error_handlers)
+
+        # Middleware and Blueprint registration validation
+        with self.assertRaises(TypeError):
+            app.middleware("not-callable")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            app.add_middleware("not-callable")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            Blueprint(123, __name__)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            bp.register_blueprint(object())  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            bp.register_blueprint(Blueprint("child", __name__), name=123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            app.register_blueprint(object())  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            app.register_blueprint(bp, name_prefix=123)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            app.register_blueprint(bp, name=123)  # type: ignore[arg-type]
+
+        # WebSocket.send_text / asend_text reject non-str payloads consistently
+        class DummySession:
+            def send_text(self, text: str) -> None:
+                pass
+
+        ws = WebSocket(DummySession())
+        with self.assertRaises(TypeError):
+            ws.send_text(b"bytes")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            asyncio.run(ws.asend_text(123))  # type: ignore[arg-type]
+
 
 if __name__ == "__main__":
     unittest.main()

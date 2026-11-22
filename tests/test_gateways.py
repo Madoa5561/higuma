@@ -973,3 +973,80 @@ def test_asgi_and_test_client_validate_limits():
         app.test_async_client(timeout=float("nan"))
     with pytest.raises(ValueError, match="max_redirects"):
         app.test_client().get("/", max_redirects=True)  # type: ignore[arg-type]
+
+
+def test_asgi_websocket_origin_parity_raw_path_fallback_and_close_validation():
+    from higuma.gateways import _scope_request
+
+    # Empty raw_path falls back to scope["path"]
+    raw_fallback = _scope_request({"type": "http", "path": "/items", "raw_path": b""})
+    assert raw_fallback["path"] == "/items"
+
+    app = Higuma(__name__, static_folder=None)
+
+    @app.websocket("/ws-same")
+    def ws_same(ws):
+        ws.send_text("ok")
+
+    @app.websocket("/ws-explicit", allowed_origins=("https://app.example",))
+    def ws_explicit(ws):
+        ws.send_text("ok")
+
+    @app.websocket("/ws-star", allowed_origins=("*",))
+    def ws_star(ws):
+        ws.send_text("ok")
+
+    @app.post("/async-created-headers", status_code=201)
+    async def async_created_headers():
+        await asyncio.sleep(0)
+        return {"ok": True}, {"x-async": "1"}
+
+    @app.websocket("/ws-bad-close")
+    def ws_bad_close(ws):
+        with pytest.raises(ValueError, match="close code"):
+            ws.close(3000.5)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="string"):
+            ws.close(1000, 123)  # type: ignore[arg-type]
+        ws.send_text("validated")
+
+    async def exercise():
+        # Empty Origin header is rejected on same-origin and explicit allowed_origins routes
+        for path in ("/ws-same", "/ws-explicit"):
+            incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+            await incoming.put({"type": "websocket.connect"})
+            ws_scope = {
+                "type": "websocket",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "scheme": "ws",
+                "path": path,
+                "headers": [(b"host", b"localhost"), (b"origin", b"")],
+            }
+            await app.asgi_app(ws_scope, incoming.get, outgoing.put)
+            assert (await outgoing.get())["type"] == "websocket.close"
+
+        # Duplicate Origin headers are rejected even with allowed_origins=("*",)
+        incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+        await incoming.put({"type": "websocket.connect"})
+        dup_scope = {
+            "type": "websocket",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "scheme": "ws",
+            "path": "/ws-star",
+            "headers": [
+                (b"host", b"localhost"),
+                (b"origin", b"https://a.example"),
+                (b"origin", b"https://b.example"),
+            ],
+        }
+        await app.asgi_app(dup_scope, incoming.get, outgoing.put)
+        assert (await outgoing.get())["type"] == "websocket.close"
+
+        # Close code float and non-str reason validation on ASGI WebSocket + async fast-path status_code
+        async with app.test_async_client() as client:
+            created = await client.post("/async-created-headers")
+            assert created.status_code == 201
+            assert created.headers["x-async"] == "1"
+            async with client.websocket_connect("/ws-bad-close") as ws:
+                assert await ws.receive_text() == "validated"
+
+    asyncio.run(exercise())

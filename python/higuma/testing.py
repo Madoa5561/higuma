@@ -22,6 +22,30 @@ from .response import (
 )
 
 
+def _validate_origin(url: str) -> Any:
+    if not isinstance(url, str):
+        raise ValueError("base_url must be an HTTP(S) origin without a path or credentials")  # noqa: TRY004
+    origin = urlsplit(url)
+    try:
+        port = origin.port
+    except ValueError as exc:
+        raise ValueError(
+            "base_url must be an HTTP(S) origin without a path or credentials"
+        ) from exc
+    if (
+        origin.scheme not in {"http", "https"}
+        or not origin.hostname
+        or port == 0
+        or origin.username is not None
+        or origin.password is not None
+        or origin.path not in {"", "/"}
+        or origin.query
+        or origin.fragment
+    ):
+        raise ValueError("base_url must be an HTTP(S) origin without a path or credentials")
+    return origin
+
+
 class TestClient:
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -67,22 +91,13 @@ class TestClient:
             raise ValueError("json cannot be combined with data or files")
         method = method.upper()
         split = urlsplit(path)
-        origin = urlsplit(
+        origin = _validate_origin(
             base_url
-            or (
+            if base_url is not None
+            else (
                 f"{split.scheme or 'http'}://{split.netloc}" if split.netloc else "http://localhost"
             )
         )
-        if (
-            origin.scheme not in {"http", "https"}
-            or not origin.hostname
-            or origin.username is not None
-            or origin.password is not None
-            or origin.path not in {"", "/"}
-            or origin.query
-            or origin.fragment
-        ):
-            raise ValueError("base_url must be an HTTP(S) origin without a path or credentials")
         encoded_query = split.query
         provided_query = query if query is not None else query_string
         if provided_query is not None:
@@ -196,12 +211,12 @@ class TestClient:
                     background()
             raise
 
-        if method == "HEAD":
+        if response.status_code in {204, 205, 304}:
+            response.headers.pop("content-length", None)
+            response.body = b""
+        elif method == "HEAD":
             if not isinstance(value, StreamingResponse):
                 response.headers.setdefault("content-length", str(len(response.body)))
-            response.body = b""
-        elif response.status_code in {204, 205, 304}:
-            response.headers.pop("content-length", None)
             response.body = b""
         self._update_cookies(response)
         if response.background is not None:
@@ -312,13 +327,15 @@ class TestClient:
         response = make_response(value)
         if isinstance(response, StreamingResponse):
             chunks = []
-            if method != "HEAD" and response.status_code not in {204, 205, 304}:
-                while True:
-                    chunk = response._next_chunk()
-                    if chunk is None:
-                        break
-                    chunks.append(chunk)
-            response._close()
+            try:
+                if method != "HEAD" and response.status_code not in {204, 205, 304}:
+                    while True:
+                        chunk = response._next_chunk()
+                        if chunk is None:
+                            break
+                        chunks.append(chunk)
+            finally:
+                response._close()
             materialized = Response(
                 b"".join(chunks),
                 response.status_code,

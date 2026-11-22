@@ -187,9 +187,20 @@ def _exercise_flask_helpers() -> None:
     def sized_stream():
         return StreamingResponse([b"be", b"ar"], content_length=4)
 
+    @app.post("/created-tuple", status_code=201)
+    def created_tuple():
+        return {"created": True}, {"x-smoke": "1"}
+
+    @app.get("/no-content")
+    def no_content():
+        return Response(b"", 204)
+
     assert client.get("/assigned-background").body == b"bear"
     assert assigned == ["/assigned-background"]
     assert client.head("/sized-stream").headers["content-length"] == "4"
+    created = client.post("/created-tuple")
+    assert created.status_code == 201 and created.headers["x-smoke"] == "1"
+    assert "content-length" not in client.head("/no-content").headers
     multi = app.make_response(("ok", 200, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]))
     assert [v for k, v in multi.header_items if k == "set-cookie"] == ["a=1", "b=2"]
     from higuma import PasswordHasher

@@ -117,9 +117,9 @@ async def socket(ws):
 ```
 
 `asend_text/asend_bytes/asend_json`, `areceive/areceive_text/areceive_bytes/areceive_json`,
-and `aclose(code=1000, reason="")` work in native mode too. Close-code and 123-byte reason
-validation, as well as same-origin (including IPv6) and `allowed_origins` checks, behave
-consistently across native and ASGI modes. Calling synchronous WS
+and `aclose(code=1000, reason="")` work in native mode too. Close-code (strict `int`) and 123-byte string reason validation, string payload checks in
+`send_text`/`asend_text`, as well as empty/duplicate `Origin` rejection and same-origin
+(including IPv6) / `allowed_origins` checks, behave consistently across native and ASGI modes. Calling synchronous WS
 methods on the ASGI event loop raises instead of deadlocking.
 
 Origin and authentication middleware run before accept. HTTP before/after-request

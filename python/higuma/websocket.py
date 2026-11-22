@@ -35,6 +35,8 @@ class WebSocket:
             raise TypeError("WebSocket payload must be str or bytes-like")
 
     def send_text(self, data: str) -> None:
+        if not isinstance(data, str):
+            raise TypeError("WebSocket text payload must be str")
         self._session.send_text(data)
 
     def send_bytes(self, data: bytes | bytearray | memoryview) -> None:
@@ -84,6 +86,8 @@ class WebSocket:
             raise TypeError("WebSocket payload must be str or bytes-like")
 
     async def asend_text(self, data: str) -> None:
+        if not isinstance(data, str):
+            raise TypeError("WebSocket text payload must be str")
         if hasattr(self._session, "asend_text"):
             await self._session.asend_text(data)
         else:

@@ -383,6 +383,12 @@ supervisor, streaming, and proxy changes.
   functions and validate non-empty claim names, `OAuth2Client` validates HTTPS endpoints,
   HTTP(S) `redirect_uri`, and non-empty `code` upfront, and CLI `load_app()` supports dotted
   attribute paths while `build_parser()` catches nested blueprint command/group collisions.
+  In 0.11.18+, route-declared `status_code` applies to `(body, headers)` 2-tuples, debug
+  error pages format the passed exception's own traceback, `errorhandler`/`middleware`/
+  `Blueprint` registration validates inputs upfront, WebSocket/ASGI enforces empty and
+  duplicate `Origin` rejection plus text/close argument checks matching native mode,
+  `TestClient`/`ASGITestClient` validate `base_url` ports and omit `Content-Length` on `HEAD`
+  `204`/`205`/`304`, and native `HigumaCore.run(port=0)` logs the bound ephemeral port.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

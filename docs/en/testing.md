@@ -47,7 +47,7 @@ Use `get/post/put/patch/delete/options/head` or `open(path, method="GET", ...)`.
 | `headers` | Header mapping with case-insensitive names |
 | `query` | Mapping or pairs; list values become repeated query parameters |
 | `query_string` (0.7+) | Str, ASCII bytes, mapping, or pairs; mutually exclusive with `query` |
-| `base_url` (0.7+) | HTTP(S) origin such as `https://example.test:8443`; no path prefix or credentials |
+| `base_url` (0.7+) | HTTP(S) origin such as `https://example.test:8443` (ports `1..65535`, port `0` rejected); no path prefix or credentials |
 | `content_type` (0.7+) | Set Content-Type |
 | `json` | Serialize a value; non-None values cannot be combined with `data/files` |
 | `data` | Str, bytes, or form mapping; list values become repeated form parameters |

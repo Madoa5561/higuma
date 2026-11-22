@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .exceptions import _validate_error_handler_key
 from .parameters import cache_parameter_hints
 
 
@@ -37,7 +38,7 @@ class Blueprint:
         static_url_path: str = "/static",
         root_path: str | Path | None = None,
     ) -> None:
-        if not name or "." in name:
+        if not isinstance(name, str) or not name or "." in name:
             raise ValueError("blueprint names must be nonempty and cannot contain a dot")
         self.name = name
         self.import_name = import_name
@@ -106,8 +107,12 @@ class Blueprint:
         return func
 
     def app_errorhandler(self, code_or_exception: int | type[BaseException]):
+        key = _validate_error_handler_key(code_or_exception)
+
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-            self._app_error_handlers[code_or_exception] = func
+            if not callable(func):
+                raise TypeError("error handler must be callable")
+            self._app_error_handlers[key] = func
             return func
 
         return decorator
@@ -115,9 +120,11 @@ class Blueprint:
     def register_blueprint(
         self, blueprint: Blueprint, *, url_prefix: str | None = None, name: str | None = None
     ) -> None:
+        if not isinstance(blueprint, Blueprint):
+            raise TypeError("register_blueprint requires a Blueprint instance")
         if blueprint is self:
             raise ValueError("a blueprint cannot contain itself")
-        if name is not None and (not name or "." in name):
+        if name is not None and (not isinstance(name, str) or not name or "." in name):
             raise ValueError(
                 "blueprint registration names must be nonempty and cannot contain a dot"
             )
@@ -144,11 +151,16 @@ class Blueprint:
     def register_error_handler(
         self, code_or_exception: int | type[BaseException], handler: Callable[..., Any]
     ) -> None:
-        self._error_handlers[code_or_exception] = handler
+        key = _validate_error_handler_key(code_or_exception)
+        if not callable(handler):
+            raise TypeError("error handler must be callable")
+        self._error_handlers[key] = handler
 
     def errorhandler(self, code_or_exception: int | type[BaseException]):
+        key = _validate_error_handler_key(code_or_exception)
+
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-            self.register_error_handler(code_or_exception, func)
+            self.register_error_handler(key, func)
             return func
 
         return decorator

@@ -292,7 +292,7 @@ class WSGIApplication:
 
 def _scope_request(scope: Mapping[str, Any], body: bytes = b"") -> dict[str, Any]:
     path = scope.get("raw_path")
-    if path is None:
+    if not path:
         path = quote(scope.get("path", "/"), safe="/!$&'()*+,-.:;=@_~").encode("ascii")
     path = bytes(path).decode("ascii")
     root = str(scope.get("root_path", "")).rstrip("/")
@@ -703,11 +703,18 @@ class ASGIApplication:
         raw["path_params"] = route.match(raw["path"])
         from .request import Request
 
-        origin = Request(raw).headers.get("origin")
+        origin_headers = [
+            value.decode("latin-1")
+            for key, value in Request(raw).raw_headers
+            if key.lower() == b"origin"
+        ]
+        if len(origin_headers) > 1:
+            await send({"type": "websocket.close", "code": 1008})
+            return
         allowed = route.openapi.get("allowed_origins")
-        if origin and allowed and "*" not in allowed:
+        if origin_headers and allowed and "*" not in allowed:
             allowed_normalized = {item.rstrip("/") for item in allowed}
-            if origin.rstrip("/") not in allowed_normalized:
+            if origin_headers[0].rstrip("/") not in allowed_normalized:
                 await send({"type": "websocket.close", "code": 1008})
                 return
         queue_size = _positive_int(
@@ -843,10 +850,16 @@ class _ASGIWebSocket:
 
     async def aclose(self, code=1000, reason=""):
         if (
-            code not in {1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014}
-            and not 3000 <= code <= 4999
+            isinstance(code, bool)
+            or not isinstance(code, int)
+            or (
+                code not in {1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014}
+                and not 3000 <= code <= 4999
+            )
         ):
             raise ValueError("invalid WebSocket close code")
+        if not isinstance(reason, str):
+            raise TypeError("WebSocket close reason must be a string")
         if len(reason.encode("utf-8")) > 123:
             raise ValueError("WebSocket close reason exceeds 123 bytes")
         if not self.closed and not self.peer_gone.is_set():

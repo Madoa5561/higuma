@@ -9,7 +9,7 @@ from urllib.parse import quote, unquote, urljoin, urlsplit
 
 from .request import Request
 from .response import Response, _ResponseHeaders
-from .testing import TestClient
+from .testing import TestClient, _validate_origin
 from .websocket import WebSocketDisconnect
 
 
@@ -161,6 +161,9 @@ class ASGITestClient:
     ) -> None:
         if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be a positive finite number")
+        _validate_origin(base_url)
+        if not isinstance(root_path, str):
+            raise TypeError("root_path must be a string")
         normalized_root = root_path.rstrip("/")
         if normalized_root and not normalized_root.startswith("/"):
             normalized_root = f"/{normalized_root}"

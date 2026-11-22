@@ -92,6 +92,20 @@ _STATUS_EXCEPTIONS = {
 }
 
 
+def _validate_error_handler_key(
+    code_or_exception: int | type[BaseException],
+) -> int | type[BaseException]:
+    if isinstance(code_or_exception, bool):
+        raise TypeError("error handler key must be an HTTP status code or exception class")
+    if isinstance(code_or_exception, int):
+        if not 200 <= code_or_exception <= 599:
+            raise ValueError("HTTP error status code must be between 200 and 599")
+        return int(code_or_exception)
+    if isinstance(code_or_exception, type) and issubclass(code_or_exception, BaseException):
+        return code_or_exception
+    raise TypeError("error handler key must be an HTTP status code or exception class")
+
+
 def abort(
     status_code: int,
     detail: str | None = None,

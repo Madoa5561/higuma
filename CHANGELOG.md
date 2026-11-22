@@ -7,6 +7,33 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.18] - 2026-11-23
+
+### Fixed
+
+- Preserve route-declared `status_code` when a view returns a `(body, headers)` 2-tuple in
+  `Higuma._coerce_view_result()` (both sync dispatch and ASGI async fast path), and format
+  the passed exception's own traceback via `traceback.format_exception()` in debug mode
+  instead of relying on ambient `sys.exc_info()`.
+- Validate `Higuma` and `Blueprint` registration inputs upfront: reject invalid error handler
+  keys (such as `bool`, out-of-range HTTP status codes, strings, or exception instances) and
+  non-callable handlers in `errorhandler()`, `register_error_handler()`, and
+  `app_errorhandler()`; reject non-callable middleware in `middleware()`/`add_middleware()`;
+  and validate `Blueprint` instances and string names in `Blueprint.__init__()` and
+  `register_blueprint()`.
+- Align WebSocket `Origin`, text payload, and close validation across native and ASGI modes:
+  reject empty or duplicate `Origin` headers (and duplicate `Host` headers) consistently in
+  ASGI and `_dispatch_websocket_preflight()`, fall back to ASGI `scope["path"]` when
+  `raw_path` is empty `b""`, reject non-`str` payloads in `WebSocket.send_text()` /
+  `asend_text()`, and reject `bool`/non-`int` close codes and non-`str` close reasons in
+  ASGI WebSocket `aclose()`.
+- Fix `TestClient` and `ASGITestClient` edge cases: validate `base_url` ports upfront
+  (rejecting port `0`, out-of-range, and non-numeric ports) and `root_path` type, omit
+  `Content-Length` on `HEAD` responses with status `204`/`205`/`304`, and always close
+  `StreamingResponse` in `TestClient._materialize()` when chunk iteration raises.
+- Log the OS-assigned bound address (`listener.local_addr()`) in native `HigumaCore.run()`
+  when binding with `port=0`.
+
 ## [0.11.17] - 2026-11-23
 
 ### Fixed

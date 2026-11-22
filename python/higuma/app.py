@@ -25,7 +25,13 @@ from .background import BackgroundTask, BackgroundTasks
 from .blueprint import Blueprint
 from .config import Config
 from .context import _app_context_error, _AppGlobals, _g_context
-from .exceptions import Forbidden, HTTPException, MethodNotAllowed, NotFound
+from .exceptions import (
+    Forbidden,
+    HTTPException,
+    MethodNotAllowed,
+    NotFound,
+    _validate_error_handler_key,
+)
 from .execution import (
     AwaitBridge,
     _current_bridge,
@@ -57,7 +63,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.17"
+__version__ = "0.11.18"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -400,7 +406,11 @@ class Higuma:
     ) -> None:
         from .staticfiles import StaticFiles
 
-        if name is not None and (not name or "." in name):
+        if not isinstance(blueprint, Blueprint):
+            raise TypeError("register_blueprint requires a Blueprint instance")
+        if not isinstance(name_prefix, str):
+            raise TypeError("name_prefix must be a string")
+        if name is not None and (not isinstance(name, str) or not name or "." in name):
             raise ValueError(
                 "blueprint registration names must be nonempty and cannot contain a dot"
             )
@@ -545,6 +555,8 @@ class Higuma:
         return func
 
     def middleware(self, func: Middleware) -> Middleware:
+        if not callable(func):
+            raise TypeError("middleware must be callable")
         self._middlewares.append(func)
         return func
 
@@ -555,6 +567,8 @@ class Higuma:
         **kwargs: Any,
     ) -> Any:
         instance = middleware(*args, **kwargs) if isinstance(middleware, type) else middleware
+        if not callable(instance):
+            raise TypeError("middleware must be callable")
         self._middlewares.append(instance)
         return instance
 
@@ -562,8 +576,10 @@ class Higuma:
         self,
         code_or_exception: int | type[BaseException],
     ) -> Callable[[ErrorHandler], ErrorHandler]:
+        key = _validate_error_handler_key(code_or_exception)
+
         def decorator(func: ErrorHandler) -> ErrorHandler:
-            self._error_handlers[code_or_exception] = func
+            self.register_error_handler(key, func)
             return func
 
         return decorator
@@ -577,7 +593,10 @@ class Higuma:
     def register_error_handler(
         self, code_or_exception: int | type[BaseException], func: ErrorHandler
     ) -> None:
-        self._error_handlers[code_or_exception] = func
+        key = _validate_error_handler_key(code_or_exception)
+        if not callable(func):
+            raise TypeError("error handler must be callable")
+        self._error_handlers[key] = func
 
     def teardown_appcontext(self, func: Callable[..., Any]) -> Callable[..., Any]:
         self._teardown_appcontext.append(func)
@@ -1075,45 +1094,66 @@ class Higuma:
         def authorize() -> Response:
             from .auth import _run_auth_checks
 
-            origin = request.headers.get("origin")
-            if origin and not route.openapi.get("allowed_origins"):
-                try:
-                    supplied = urlsplit(origin.strip())
-                    expected = urlsplit(f"{request.scheme}://{request.host.strip()}")
-                    default_port = 443 if request.scheme == "https" else 80
-                    supplied_port = supplied.port
-                    expected_port = expected.port
-                    hosts_match = False
-                    if supplied.hostname and expected.hostname:
-                        try:
-                            hosts_match = ip_address(supplied.hostname) == ip_address(
-                                expected.hostname
-                            )
-                        except ValueError:
-                            hosts_match = supplied.hostname == expected.hostname
-                    same_origin = (
-                        supplied.scheme in {"http", "https"}
-                        and supplied.scheme == expected.scheme
-                        and hosts_match
-                        and supplied_port != 0
-                        and expected_port != 0
-                        and (default_port if supplied_port is None else supplied_port)
-                        == (default_port if expected_port is None else expected_port)
-                        and supplied.username is None
-                        and supplied.password is None
-                        and supplied.path in {"", "/"}
-                        and not supplied.query
-                        and not supplied.fragment
-                        and expected.username is None
-                        and expected.password is None
-                        and expected.path == ""
-                        and not expected.query
-                        and not expected.fragment
-                    )
-                except ValueError:
-                    same_origin = False
-                if not same_origin:
-                    raise Forbidden(detail="WebSocket origin is not allowed")
+            origin_headers = [
+                value.decode("latin-1")
+                for key, value in request.raw_headers
+                if key.lower() == b"origin"
+            ]
+            if len(origin_headers) > 1:
+                raise Forbidden(detail="WebSocket origin is not allowed")
+            allowed_origins = route.openapi.get("allowed_origins")
+            if origin_headers:
+                origin = origin_headers[0]
+                if allowed_origins:
+                    if "*" not in allowed_origins:
+                        allowed_normalized = {item.rstrip("/") for item in allowed_origins}
+                        if origin.rstrip("/") not in allowed_normalized:
+                            raise Forbidden(detail="WebSocket origin is not allowed")
+                else:
+                    host_headers = [
+                        value.decode("latin-1")
+                        for key, value in request.raw_headers
+                        if key.lower() == b"host"
+                    ]
+                    if len(host_headers) > 1:
+                        raise Forbidden(detail="WebSocket origin is not allowed")
+                    try:
+                        supplied = urlsplit(origin.strip())
+                        expected = urlsplit(f"{request.scheme}://{request.host.strip()}")
+                        default_port = 443 if request.scheme == "https" else 80
+                        supplied_port = supplied.port
+                        expected_port = expected.port
+                        hosts_match = False
+                        if supplied.hostname and expected.hostname:
+                            try:
+                                hosts_match = ip_address(supplied.hostname) == ip_address(
+                                    expected.hostname
+                                )
+                            except ValueError:
+                                hosts_match = supplied.hostname == expected.hostname
+                        same_origin = (
+                            supplied.scheme in {"http", "https"}
+                            and supplied.scheme == expected.scheme
+                            and hosts_match
+                            and supplied_port != 0
+                            and expected_port != 0
+                            and (default_port if supplied_port is None else supplied_port)
+                            == (default_port if expected_port is None else expected_port)
+                            and supplied.username is None
+                            and supplied.password is None
+                            and supplied.path in {"", "/"}
+                            and not supplied.query
+                            and not supplied.fragment
+                            and expected.username is None
+                            and expected.password is None
+                            and expected.path == ""
+                            and not expected.query
+                            and not expected.fragment
+                        )
+                    except ValueError:
+                        same_origin = False
+                    if not same_origin:
+                        raise Forbidden(detail="WebSocket origin is not allowed")
             _run_auth_checks(route.view_func)
             return Response(b"", 204)
 
@@ -1397,8 +1437,16 @@ class Higuma:
                     result = (coerce_response_model(body, response_model), *metadata)
             elif not isinstance(result, Response):
                 result = coerce_response_model(result, response_model)
-        if declared_status is not None and not isinstance(result, tuple):
-            if isinstance(result, Response):
+        if declared_status is not None:
+            if isinstance(result, tuple):
+                if len(result) == 2:
+                    body, second = result
+                    if isinstance(second, Mapping) or (
+                        isinstance(second, Iterable)
+                        and not isinstance(second, (str, bytes, bytearray))
+                    ):
+                        result = (body, declared_status, second)
+            elif isinstance(result, Response):
                 result.status_code = declared_status
             else:
                 result = (result, declared_status)
@@ -1423,7 +1471,7 @@ class Higuma:
         _app_context_error.set(error)
         request.state["_higuma_request_error"] = error
         if self.debug:
-            detail = traceback.format_exc()
+            detail = "".join(traceback.format_exception(type(error), error, error.__traceback__))
             return HTMLResponse(
                 f"<h1>500 Internal Server Error</h1><pre>{escape(detail)}</pre>",
                 500,

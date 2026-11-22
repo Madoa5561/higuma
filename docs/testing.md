@@ -44,7 +44,7 @@ responseの`get_data(as_text=True)`は文字列、`.data`/`get_data()`はbytes�
 | `headers` | header mapping。名前は大文字小文字を区別しない |
 | `query` | mappingまたはpair list。list値は繰り返しqueryに展開 |
 | `query_string`（0.7+） | str、ASCII bytes、mapping、pair list。`query`との併用不可 |
-| `base_url`（0.7+） | HTTP(S) originのみ。例: `https://example.test:8443`。path prefixや認証情報は不可 |
+| `base_url`（0.7+） | HTTP(S) originのみ（ポートは1..65535、0不可）。例: `https://example.test:8443`。path prefixや認証情報は不可 |
 | `content_type`（0.7+） | Content-Typeを指定 |
 | `json` | JSON化する値。非Noneの値は`data/files`と併用不可 |
 | `data` | str、bytes、form mapping。mappingのlist値は繰り返しform値 |

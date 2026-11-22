@@ -115,7 +115,8 @@ async def socket(ws):
 
 `asend_text/asend_bytes/asend_json`、`areceive/areceive_text/areceive_bytes/areceive_json`、
 `aclose(code=1000, reason="")`は組み込みモードでも使用できます。
-close codeと123 byte上限のreason検証、およびIPv6を含むsame-origin / `allowed_origins`検査は
+close code（整数のみ）と123 byte上限の文字列reason検証、`send_text`/`asend_text`の文字列検証、
+および空・重複`Origin`拒否とIPv6を含むsame-origin / `allowed_origins`検査は
 組み込みモード・ASGIモードの双方で一貫して適用します。
 ASGI loop上から同期WS methodを呼ぶと、停止やdeadlockの代わりにエラーにします。
 

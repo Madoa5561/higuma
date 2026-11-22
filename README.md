@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.18** — ルート宣言 `status_code` の `(body, headers)` 2-tuple 適用とデバッグ時
+> `traceback.format_exception()` 化、`errorhandler`/`middleware`/`Blueprint` 登録時の厳格検証、
+> ASGI／WebSocket での空・重複 `Origin` 拒否・`raw_path=b""` フォールバック・テキスト/close 引数検証、
+> `TestClient`/`ASGITestClient` の `base_url` ポート検証・`HEAD` `204`/`205`/`304` `Content-Length`
+> 非付与、native `HigumaCore.run(port=0)` 実バインドポート表示を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.17** — `_CurrentUserProxy` の `__eq__`/`__hash__` 実装、`AuthManager` の
 > `SessionMiddleware` 未設定エラー明確化・`session_key` 検証、認証デコレータの `async def` 保持＆
 > claim 検証、`OAuth2Client` の HTTPS/URL/空 `code` 検証、CLI のドット属性パス読み込み

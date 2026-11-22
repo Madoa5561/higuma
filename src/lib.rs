@@ -509,8 +509,9 @@ impl HigumaCore {
                 let listener = TcpListener::bind(addr)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(format!("failed to bind {addr}: {e}")))?;
+                let bound_addr = listener.local_addr().unwrap_or(addr);
 
-                println!("higuma listening on http://{addr}");
+                println!("higuma listening on http://{bound_addr}");
 
                 axum::serve(
                     listener,
