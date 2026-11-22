@@ -23,7 +23,6 @@ use axum::{
         Extensions, HeaderMap, Request, StatusCode, Version,
     },
     response::{IntoResponse, Response},
-    routing::any,
     Router,
 };
 use futures_util::{stream, SinkExt, StreamExt};
@@ -497,19 +496,16 @@ impl HigumaCore {
 
         py.detach(move || {
             runtime.block_on(async move {
-                let app = Router::new()
-                    .fallback(any(dispatch))
-                    .with_state(state)
-                    .layer(
-                        CompressionLayer::new().compress_when(DefaultPredicate::new().and(
-                            |status: StatusCode,
-                             _version: Version,
-                             _headers: &HeaderMap,
-                             _extensions: &Extensions| {
-                                status_allows_body(status) && status != StatusCode::PARTIAL_CONTENT
-                            },
-                        )),
-                    );
+                let app = Router::new().fallback(dispatch).with_state(state).layer(
+                    CompressionLayer::new().compress_when(DefaultPredicate::new().and(
+                        |status: StatusCode,
+                         _version: Version,
+                         _headers: &HeaderMap,
+                         _extensions: &Extensions| {
+                            status_allows_body(status) && status != StatusCode::PARTIAL_CONTENT
+                        },
+                    )),
+                );
                 let listener = TcpListener::bind(addr)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(format!("failed to bind {addr}: {e}")))?;
@@ -686,7 +682,7 @@ async fn handle_websocket(
                     .map(|value| (value.code, value.reason.to_string()))
                     .unwrap_or((1000, String::new()));
                 let _ = incoming_tx.try_send(IncomingMessage::Close(code, reason));
-                let _ = socket.recv().await;
+                let _ = tokio::time::timeout(WEBSOCKET_CLOSE_TIMEOUT, socket.recv()).await;
                 break;
             }
             WebSocketEvent::Incoming(Message::Ping(_))
@@ -981,6 +977,7 @@ async fn dispatch(
             pattern: lookup.pattern,
             client_addr: peer_addr.ip().to_string(),
         };
+        let mut preflight_headers = Vec::new();
         if let Some(preflight) = lookup.preflight {
             let preflight_request = request.clone();
             let template_env = state.template_env.clone();
@@ -1013,6 +1010,7 @@ async fn dispatch(
             if !websocket_preflight_allows_upgrade(&payload) {
                 return finalize_response(payload, &state, false);
             }
+            preflight_headers = std::mem::take(&mut payload.headers);
             run_background_task(payload.background.take()).await;
         }
         let websocket_permit = match state.websocket_slots.clone().try_acquire_owned() {
@@ -1031,9 +1029,11 @@ async fn dispatch(
         let upgrade = upgrade
             .max_message_size(state.max_body_size)
             .max_frame_size(state.max_body_size);
-        return upgrade
+        let mut response = upgrade
             .on_upgrade(move |socket| handle_websocket(socket, callback, request, websocket_permit))
             .into_response();
+        apply_websocket_upgrade_headers(&mut response, preflight_headers);
+        return response;
     }
 
     let stored_body =
@@ -1161,6 +1161,32 @@ async fn dispatch(
     finalize_response(payload, &state, strip_body)
 }
 
+fn apply_websocket_upgrade_headers(response: &mut Response, headers: Vec<(String, String)>) {
+    let connection_options: HashSet<String> = headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("connection"))
+        .flat_map(|(_, value)| value.split(','))
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect();
+    for (name, value) in headers {
+        if let (Ok(header_name), Ok(header_value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            if header_name == CONTENT_LENGTH
+                || header_name == CONTENT_TYPE
+                || is_hop_by_hop_header(&header_name)
+                || connection_options.contains(header_name.as_str())
+                || header_name.as_str().starts_with("sec-websocket-")
+            {
+                continue;
+            }
+            response.headers_mut().append(header_name, header_value);
+        }
+    }
+}
+
 fn finalize_response(
     mut payload: ResponsePayload,
     state: &SharedState,
@@ -1170,18 +1196,36 @@ fn finalize_response(
         .ok()
         .filter(|value| !value.is_informational())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let mut head_unknown_background = None;
     let head_length = if strip_body && status_allows_body(status) {
         let length = payload.body.length();
+        if length.is_none() {
+            head_unknown_background = payload.background.take();
+        }
         payload.body = PayloadBody::Bytes(Vec::new());
-        length
+        Some(length)
     } else {
         None
     };
 
     let mut response = payload.into_response();
     if let Some(length) = head_length {
-        if let Ok(value) = HeaderValue::from_str(&length.to_string()) {
-            response.headers_mut().insert(CONTENT_LENGTH, value);
+        match length {
+            Some(length) => {
+                if let Ok(value) = HeaderValue::from_str(&length.to_string()) {
+                    response.headers_mut().insert(CONTENT_LENGTH, value);
+                }
+            }
+            None => {
+                response.headers_mut().remove(CONTENT_LENGTH);
+                *response.body_mut() =
+                    Body::from_stream(stream::empty::<Result<Bytes, io::Error>>());
+                if let Some(background) = head_unknown_background {
+                    response
+                        .extensions_mut()
+                        .insert(Arc::new(ResponseCompletion::new(Some(background))));
+                }
+            }
         }
     }
     if !state.server_header.is_empty() && !response.headers().contains_key(SERVER) {
@@ -2354,6 +2398,35 @@ mod tests {
             Vec::new(),
             None,
         )));
+
+        let mut upgrade_response = Response::new(Body::empty());
+        *upgrade_response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+        apply_websocket_upgrade_headers(
+            &mut upgrade_response,
+            vec![
+                ("set-cookie".to_string(), "sid=abc; HttpOnly".to_string()),
+                ("x-request-id".to_string(), "req-1".to_string()),
+                ("sec-websocket-accept".to_string(), "spoofed".to_string()),
+                ("content-length".to_string(), "99".to_string()),
+                ("content-type".to_string(), "text/plain".to_string()),
+                ("connection".to_string(), "x-hop".to_string()),
+                ("x-hop".to_string(), "drop".to_string()),
+            ],
+        );
+        assert_eq!(
+            upgrade_response.headers().get("set-cookie").unwrap(),
+            "sid=abc; HttpOnly"
+        );
+        assert_eq!(
+            upgrade_response.headers().get("x-request-id").unwrap(),
+            "req-1"
+        );
+        assert!(!upgrade_response
+            .headers()
+            .contains_key("sec-websocket-accept"));
+        assert!(!upgrade_response.headers().contains_key(CONTENT_LENGTH));
+        assert!(!upgrade_response.headers().contains_key(CONTENT_TYPE));
+        assert!(!upgrade_response.headers().contains_key("x-hop"));
     }
 
     #[test]

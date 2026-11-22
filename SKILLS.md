@@ -349,6 +349,10 @@ supervisor, streaming, and proxy changes.
   `logout_user()` update `current_user` immediately in the same request, `OAuth2Client`
   validates `scopes`/`access_token` and supports preset `scopes` overrides, and
   `SessionMiddleware` / ORM `Boolean` & `Blob` enforce strict upfront validation.
+  In 0.11.11+, native `HEAD` requests to unknown-length `StreamingResponse` routes omit
+  `Content-Length` instead of synthesizing `0`, native WebSocket `101` handshakes forward safe
+  preflight headers and bound post-`Close` teardown with a timeout, and `Observability`
+  middleware attaches `X-Request-ID` to error responses too.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.11** — native サーバーでの不明長 `StreamingResponse` に対する `HEAD` 応答で誤った
+> `Content-Length: 0` が付与されないよう修正、native WebSocket の `Close` 後タイムアウト境界と
+> preflight 安全ヘッダの `101` 引き継ぎ、`Observability` middleware のエラー応答 `X-Request-ID`
+> 付与・小文字 method 正規化・`RedisExtension` URL 検証を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.10** — `LocalProxy` (`request` / `current_app` / `current_user`) の `__setattr__`/`__delattr__` 委譲による
 > リクエスト間状態リーク防止、`AuthManager.login_user()`/`logout_user()` の `current_user` 即時反映、
 > `OAuth2Client` の `scopes` 検証・プリセット上書き・`GET userinfo` ヘッダ修正、`SessionMiddleware`/ORM

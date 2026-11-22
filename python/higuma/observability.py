@@ -47,7 +47,7 @@ class Observability:
     """Bounded local metrics and optional explicitly configured OpenTelemetry spans."""
 
     def __init__(self, *, logger=None, tracing=False, trust_request_id=False, max_series=1024):
-        if not isinstance(max_series, int) or max_series < 2:
+        if isinstance(max_series, bool) or not isinstance(max_series, int) or max_series < 2:
             raise ValueError("max_series must be at least two")
         self.logger = logger
         self.trust_request_id, self.max_series = trust_request_id, max_series
@@ -141,6 +141,13 @@ class Observability:
         method = request.method if request.method in _METHODS else "OTHER"
         identifier = self._identifier(request.headers.get("x-request-id"))
         request.state["request_id"] = identifier
+        if request.state.get("_higuma_dispatching"):
+
+            def attach_request_id(response):
+                response.headers["x-request-id"] = identifier
+                return response
+
+            request.state.setdefault("_higuma_response_finalizers", []).append(attach_request_id)
         started, status, outcome = time.perf_counter(), 500, "failed"
         with self._span(method, route) as span:
             self._started()
@@ -150,6 +157,7 @@ class Observability:
                 status, outcome = response.status_code, "completed"
                 return response
             except HTTPException as error:
+                error.headers.setdefault("x-request-id", identifier)
                 status, outcome = error.status_code, "completed"
                 raise
             except asyncio.CancelledError:
@@ -175,7 +183,7 @@ class Observability:
                     route = rule.rule
             except (ValueError, UnicodeError, HTTPException):
                 pass
-            method = scope.get("method", "OTHER")
+            method = str(scope.get("method", "OTHER")).upper()
             method = method if method in _METHODS else "OTHER"
             supplied = next(
                 (

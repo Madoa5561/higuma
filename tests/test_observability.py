@@ -196,8 +196,12 @@ def test_observability_middleware_records_inner_http_exception_and_cancellation(
         return "ok"
 
     client = app.test_client()
-    assert client.get("/limited").status_code == 200
-    assert client.get("/limited").status_code == 429
+    ok = client.get("/limited")
+    assert ok.status_code == 200
+    assert ok.headers.get("x-request-id")
+    limited_resp = client.get("/limited")
+    assert limited_resp.status_code == 429
+    assert limited_resp.headers.get("x-request-id")
 
     rows = {(row["status"], row["outcome"]): row["count"] for row in observer.snapshot()["series"]}
     assert rows[(200, "completed")] == 1
@@ -234,9 +238,15 @@ def test_observability_wrap_asgi_ignores_malformed_content_length():
 
 
 def test_health_checks_reject_bool_nan_timeout_and_empty_name():
+    from higuma import RedisExtension
+
     for bad_timeout in (True, False, float("nan"), float("inf"), 0, 61):
         with pytest.raises(ValueError):
             HealthChecks(timeout=bad_timeout)
     health = HealthChecks()
     with pytest.raises(ValueError):
         health.add_check("", lambda: True)
+    with pytest.raises(ValueError):
+        Observability(max_series=True)
+    with pytest.raises(ValueError, match="Redis URL"):
+        RedisExtension().init_app(Higuma(__name__, static_folder=None), None)  # type: ignore[arg-type]

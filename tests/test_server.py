@@ -105,7 +105,10 @@ def protect_security_route(current, call_next):
             current,
             lambda req: security_session(req, lambda req: security_csrf(req, call_next)),
         )
-    return call_next(current)
+    response = call_next(current)
+    if current.path == "/ws" and isinstance(response, Response) and response.status_code == 204:
+        response.headers["x-ws-preflight"] = "ok"
+    return response
 
 
 @app.route("/security", methods=("GET", "POST"))
@@ -172,6 +175,11 @@ def stream(background_tasks: BackgroundTasks):
         encoding="utf-8",
     )
     return StreamingResponse(chunks(), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/stream-known")
+def stream_known():
+    return StreamingResponse(iter([b"hello"]), content_length=5, media_type="text/plain")
 
 
 def stream_resource():
@@ -789,6 +797,26 @@ class RealServerTests(unittest.TestCase):
             self.assertEqual(opcode, 0x8)
             self.assertEqual(struct.unpack("!H", payload[:2])[0], 1000)
             self.assertEqual(payload[2:], b"validated")
+
+    def test_head_on_unknown_and_known_length_streams_and_ws_preflight_headers(self) -> None:
+        status, headers, body = self.request("HEAD", "/stream")
+        header_map = {k.lower(): v for k, v in headers}
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"")
+        self.assertNotIn("content-length", header_map)
+
+        status, headers, body = self.request("HEAD", "/stream-known")
+        header_map = {k.lower(): v for k, v in headers}
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"")
+        self.assertEqual(header_map.get("content-length"), "5")
+
+        with self.websocket_handshake("/ws") as (connection, status, ws_headers, remainder):
+            self.assertEqual(status, 101)
+            self.assertEqual(ws_headers.get("x-ws-preflight"), "ok")
+            connection.sendall(_masked_frame(0x1, b"hi"))
+            opcode, payload = _read_frame(connection, bytearray(remainder))
+            self.assertEqual((opcode, payload), (0x1, b"echo:hi"))
 
 
 if __name__ == "__main__":

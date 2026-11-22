@@ -106,6 +106,14 @@ def _exercise_http(port: int) -> None:
     assert response.read() == b'{"path":"/echo-path/"}'
     connection.close()
 
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request("HEAD", "/stream")
+    response = connection.getresponse()
+    assert response.status == 200, response.status
+    assert response.read() == b""
+    assert response.getheader("content-length") is None, response.getheaders()
+    connection.close()
+
 
 def _exercise_flask_helpers() -> None:
     from higuma import (
@@ -364,13 +372,17 @@ def main() -> int:
     application = """
 import asyncio
 import os
-from higuma import Higuma, Response, request
+from higuma import Higuma, Response, StreamingResponse, request
 
 app = Higuma(__name__, static_folder=None)
 
 @app.get('/health')
 def health():
     return {'status': 'ok'}
+
+@app.get('/stream')
+def stream():
+    return StreamingResponse(iter([b'chunk']), media_type='text/plain')
 
 @app.get('/values/<int:value>')
 def value(value: int):

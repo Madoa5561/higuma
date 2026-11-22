@@ -7,6 +7,25 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.11] - 2026-11-22
+
+### Fixed
+
+- Stop the native Rust server from synthesizing a misleading `Content-Length: 0` header on
+  `HEAD` requests to unknown-length `StreamingResponse` routes (replacing nested
+  `Router::fallback(any(dispatch))` with `Router::fallback(dispatch)` and preserving an
+  unknown-length stream body marker until `axum`/`hyper` strips the `HEAD` body while still
+  running background/cleanup tasks).
+- Bound native WebSocket shutdown after receiving a client `Close` frame with
+  `WEBSOCKET_CLOSE_TIMEOUT` so a half-open peer that omits TCP FIN cannot pin a Tokio task
+  indefinitely, and forward safe preflight headers (such as `Set-Cookie`, `X-Request-ID`, and
+  `Vary`, excluding hop-by-hop, framing, and `Sec-WebSocket-*` headers) onto native `101
+  Switching Protocols` WebSocket responses (matching ASGI).
+- Ensure `Observability` middleware attaches `X-Request-ID` even on inner-middleware
+  `HTTPException` / error responses (matching `wrap_asgi()`), normalize lowercase ASGI HTTP
+  methods in `wrap_asgi()`, reject boolean `max_series` in `Observability`, and reject
+  non-string URLs cleanly with `ValueError` in `RedisExtension.init_app()`.
+
 ## [0.11.10] - 2026-11-22
 
 ### Fixed

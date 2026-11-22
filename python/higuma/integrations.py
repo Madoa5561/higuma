@@ -65,7 +65,7 @@ class RedisExtension:
     ) -> None:
         if self.key in app.extensions:
             raise ValueError("Redis integration is already initialized")
-        if not url.startswith(("redis://", "rediss://", "unix://")):
+        if not isinstance(url, str) or not url.startswith(("redis://", "rediss://", "unix://")):
             raise ValueError("Redis URL must use redis, rediss, or unix")
         settings = {"socket_timeout": 5, "socket_connect_timeout": 5, "protocol": 2, **options}
         if async_client:
