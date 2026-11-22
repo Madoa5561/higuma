@@ -8,6 +8,7 @@ from higuma import (
     SessionMiddleware,
     StreamingResponse,
     WebSocketDisconnect,
+    redirect,
     request,
     session,
 )
@@ -214,5 +215,69 @@ def test_asgi_redirect_preserves_target_query_and_client_cookie_deletion():
                 follow_redirects=True,
             )
             assert followed.get_json() == {"to": "2", "from": None, "host": "api.example:8443"}
+
+    asyncio.run(exercise())
+
+
+def test_asgi_test_client_root_path_redirects_and_max_redirects_validation(tmp_path):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "index.html").write_text("<h1>portal docs</h1>", encoding="utf-8")
+
+    app = Higuma(__name__, static_folder=None, docs_url=None)
+    app.mount_static("/docs", docs_dir, html=True)
+
+    @app.get("/")
+    def home():
+        return {"page": "home"}
+
+    @app.get("/go-root")
+    def go_root():
+        return redirect("/portal", 302)
+
+    @app.get("/sub/start")
+    def sub_start():
+        return redirect("finish", 302)
+
+    @app.get("/sub/finish")
+    def sub_finish():
+        return {"page": "finish"}
+
+    @app.get("/escape")
+    def escape():
+        return redirect("/outside", 302)
+
+    @app.get("/encoded-escape")
+    def encoded_escape():
+        return redirect("/portal%2Fdocs", 302)
+
+    async def exercise():
+        async with app.test_async_client(root_path="portal/") as client:
+            assert client.root_path == "/portal"
+
+            docs = await client.get("/docs", follow_redirects=True)
+            assert docs.status_code == 200
+            assert "portal docs" in docs.text
+            assert len(docs.history) == 1
+            assert docs.history[0].status_code == 308
+            assert docs.history[0].headers["location"] == "/portal/docs/"
+
+            at_root = await client.get("/go-root", follow_redirects=True)
+            assert at_root.status_code == 200
+            assert at_root.get_json() == {"page": "home"}
+
+            relative = await client.get("/sub/start", follow_redirects=True)
+            assert relative.status_code == 200
+            assert relative.get_json() == {"page": "finish"}
+
+            with pytest.raises(RuntimeError, match="outside root_path"):
+                await client.get("/escape", follow_redirects=True)
+
+            with pytest.raises(RuntimeError, match="outside root_path"):
+                await client.get("/encoded-escape", follow_redirects=True)
+
+            for bad_limit in (True, 0, -1):
+                with pytest.raises(ValueError, match="max_redirects"):
+                    await client.get("/", follow_redirects=True, max_redirects=bad_limit)
 
     asyncio.run(exercise())

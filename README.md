@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.12** — `ASGITestClient(root_path=...)` での `follow_redirects=True`（相対／同一 mount
+> リダイレクトの二重 prefix 防止・mount 外リダイレクト拒否・`max_redirects` 検証）、`Higuma`/`Blueprint`
+> 登録時の `methods`/`tags`/`allowed_origins` 単一文字列・空 `methods=[]`・`bool` 制限値拒否および
+> `MethodView` 継承、`mount_wsgi()`/`mount_asgi()` の原子性、`test_request_context()` の form 制限反映、
+> `url_for()` の大文字 `_scheme` 正規化、`TestClient` multipart ヘッダのエスケープを改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.11** — native サーバーでの不明長 `StreamingResponse` に対する `HEAD` 応答で誤った
 > `Content-Length: 0` が付与されないよう修正、native WebSocket の `Close` 後タイムアウト境界と
 > preflight 安全ヘッダの `101` 引き継ぎ、`Observability` middleware のエラー応答 `X-Request-ID`

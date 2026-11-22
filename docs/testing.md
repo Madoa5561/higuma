@@ -56,6 +56,8 @@ responseの`get_data(as_text=True)`は文字列、`.data`/`get_data()`はbytes�
 JSON nullを送る場合は`data="null", content_type="application/json"`にします。
 303はGET（HEADはHEAD）へ、301/302のGET/HEAD以外もGETへ変更します。307/308はmethodとbodyを保持します。
 最終responseの`.history`は途中のresponseのtupleです。外部hostへ通信しません。
+`app.test_async_client(root_path=...)`で`follow_redirects=True`を使う場合（0.11.12+）、
+同一`root_path`内の絶対・相対redirectを追跡し、`root_path`外へのredirectは`RuntimeError`で拒否します。
 
 ## request contextだけを作る
 
@@ -76,8 +78,9 @@ with app.test_request_context("/bears/7", query_string={"name": "higuma"}) as cu
 assert not has_request_context()
 ```
 
-このhelperは上表のrequest構築引数（`method`を含む）を受け取り、routing metadataと
-型付きpath値を設定します。`follow_redirects/max_redirects`はdispatch専用なので受け取りません。
+このhelperは上表のrequest構築引数（`method`を含む）を受け取り、routing metadata・
+型付きpath値・`app.config`の`MAX_FORM_*`／`UPLOAD_MEMORY_LIMIT`設定を反映します。
+`follow_redirects/max_redirects`はdispatch専用なので受け取りません。
 `with`が返す値はHigumaの`Request`です。FlaskのRequestContext wrapperやpush/pop APIではありません。
 
 contextを作るだけではview、middleware、before/after hook、CSRF、session読み込みは実行しません。

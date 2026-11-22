@@ -353,6 +353,11 @@ supervisor, streaming, and proxy changes.
   `Content-Length` instead of synthesizing `0`, native WebSocket `101` handshakes forward safe
   preflight headers and bound post-`Close` teardown with a timeout, and `Observability`
   middleware attaches `X-Request-ID` to error responses too.
+  In 0.11.12+, `ASGITestClient(root_path=...)` strips `root_path` on same-mount redirects and
+  rejects redirects outside `root_path`, `Higuma`/`Blueprint` reject bare strings for
+  `methods`/`tags`/`allowed_origins` and empty `methods=[]` while honoring `MethodView.methods`,
+  `mount_wsgi()`/`mount_asgi()` validate atomically, `test_request_context()` applies
+  `MAX_FORM_*`/`UPLOAD_MEMORY_LIMIT`, and `TestClient` escapes multipart parameters cleanly.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

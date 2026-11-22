@@ -253,6 +253,17 @@ def _exercise_gateways() -> None:
         assert events[0]["status"] == 200
         assert b"".join(event.get("body", b"") for event in events) == b'{"status":"ok"}'
 
+        from higuma import redirect
+
+        @app.get("/go")
+        def go():
+            return redirect("/portal/health", 302)
+
+        async with app.test_async_client(root_path="/portal") as async_client:
+            followed = await async_client.get("/go", follow_redirects=True)
+            assert followed.status_code == 200
+            assert followed.get_json() == {"status": "ok"}
+
     asyncio.run(exercise())
 
 
@@ -286,6 +297,12 @@ def _exercise_developer_apis() -> None:
     proxy_client = proxy_app.test_client()
     assert proxy_client.get("/tag?value=bear").get_json() == {"tag": "bear"}
     assert proxy_client.get("/tag").get_json() == {"tag": None}
+    proxy_app.config["MAX_FORM_PARTS"] = 7
+    with proxy_app.test_request_context("/tag", base_url="http://example.test"):
+        from higuma import url_for
+
+        assert request.max_form_parts == 7
+        assert url_for("tag", _external=True, _scheme="HTTPS") == "https://example.test/tag"
 
     try:
         TrustedHostMiddleware("example.com")  # type: ignore[arg-type]

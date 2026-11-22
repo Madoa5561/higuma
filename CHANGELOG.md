@@ -7,6 +7,28 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.12] - 2026-11-22
+
+### Fixed
+
+- Fix `ASGITestClient` redirect following when `root_path` is set: normalize `root_path`
+  with a leading `/`, resolve relative redirects against the full `root_path`-prefixed
+  request URL, strip `root_path` before dispatching same-mount follow-up requests (avoiding
+  doubled `/prefix/prefix/...` 404s on `StaticFiles` `308` or `url_for()` redirects), reject
+  redirects that escape `root_path` or use encoded-slash prefix ambiguity, and reject
+  boolean/non-positive `max_redirects`.
+- Harden `Higuma` and `Blueprint` route/app registration: reject boolean/non-int
+  `max_content_length` and `request_memory_limit` in `Higuma.__init__()`; reject bare
+  `str`/`bytes` for `methods`, `tags`, and `allowed_origins` and reject explicit empty
+  `methods=[]` in `Higuma.route()`/`add_url_rule()`/`websocket()` and
+  `Blueprint.route()`/`websocket()`; inherit `MethodView.methods` in `Higuma.route()` and
+  `Blueprint.route()` when `methods=None`; make `mount_wsgi()` and `mount_asgi()` atomic on
+  endpoint, route, or syntax conflicts.
+- Copy `MAX_FORM_MEMORY_SIZE`, `MAX_FORM_PARTS`, and `UPLOAD_MEMORY_LIMIT` from `app.config`
+  onto `Request` in `Higuma.test_request_context()`, normalize `_scheme` case-insensitively
+  in `url_for(..., _external=True)`, and escape quotes/backslashes (while rejecting
+  CR/LF/NUL) in `TestClient` multipart field names, filenames, and `content_type`.
+
 ## [0.11.11] - 2026-11-22
 
 ### Fixed

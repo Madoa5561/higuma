@@ -400,6 +400,12 @@ def _cookie_expired(max_age: str, expires: str) -> bool:
     return False
 
 
+def _escape_multipart_param(value: str, label: str) -> str:
+    if any(ch in value for ch in "\r\n\x00"):
+        raise ValueError(f"multipart {label} must not contain line breaks or NUL")
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _encode_multipart(
     data: str | bytes | Mapping[str, Any] | None,
     files: Mapping[str, Any],
@@ -409,26 +415,32 @@ def _encode_multipart(
 
     if isinstance(data, Mapping):
         for name, value in data.items():
+            safe_name = _escape_multipart_param(str(name), "field name")
             values = value if isinstance(value, (list, tuple)) else (value,)
             for item in values:
                 chunks.extend(
                     [
                         f"--{boundary}\r\n".encode(),
-                        (f'Content-Disposition: form-data; name="{name}"\r\n\r\n').encode(),
+                        (f'Content-Disposition: form-data; name="{safe_name}"\r\n\r\n').encode(),
                         str(item).encode("utf-8"),
                         b"\r\n",
                     ]
                 )
 
     for name, value in files.items():
+        safe_name = _escape_multipart_param(str(name), "field name")
         values = value if isinstance(value, list) else [value]
         for item in values:
             filename, content, content_type = _normalize_test_file(item)
+            safe_filename = _escape_multipart_param(filename, "filename")
+            if any(ch in content_type for ch in "\r\n\x00"):
+                raise ValueError("multipart content_type must not contain line breaks or NUL")
             chunks.extend(
                 [
                     f"--{boundary}\r\n".encode(),
                     (
-                        f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                        f'Content-Disposition: form-data; name="{safe_name}"; '
+                        f'filename="{safe_filename}"\r\n'
                     ).encode(),
                     f"Content-Type: {content_type}\r\n\r\n".encode(),
                     content,

@@ -5,7 +5,7 @@ The 0.10 development features in this chapter are included in 0.11.0.
 Run files in `examples/` from a repository checkout, not from the installed wheel.
 
 ```bash
-python -m pip install "higuma[asgi,async-db,integrations,observability]==0.11.11"
+python -m pip install "higuma[asgi,async-db,integrations,observability]==0.11.12"
 ```
 
 ## Conservative ASGI async fast path

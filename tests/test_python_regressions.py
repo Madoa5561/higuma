@@ -627,6 +627,132 @@ class PythonCoreRegressionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Config().from_prefixed_env("")
 
+    def test_app_blueprint_limits_validation_atomic_mounts_and_multipart_escaping(self) -> None:
+        from higuma import Blueprint, Higuma, HTTPException, MethodView, request, url_for
+
+        with self.assertRaises(ValueError):
+            Higuma(__name__, max_content_length=True)
+        with self.assertRaises(ValueError):
+            Higuma(__name__, request_memory_limit=True)
+
+        app = Higuma(__name__, static_folder=None)
+
+        with self.assertRaises(TypeError):
+            app.route("/bad-method", methods="POST")(lambda: "x")
+        with self.assertRaises(TypeError):
+            app.get("/bad-tag", tags="users")(lambda: "x")
+        with self.assertRaises(ValueError):
+            app.route("/empty-methods", methods=[])(lambda: "x")
+        with self.assertRaises(TypeError):
+            app.websocket("/bad-ws", allowed_origins="https://example.com")(lambda ws: None)
+
+        bp = Blueprint("api", __name__, url_prefix="/api")
+        with self.assertRaises(TypeError):
+            bp.route("/bad-method", methods="POST")(lambda: "x")
+        with self.assertRaises(TypeError):
+            bp.get("/bad-tag", tags="items")(lambda: "x")
+        with self.assertRaises(ValueError):
+            bp.route("/empty-methods", methods=())(lambda: "x")
+        with self.assertRaises(TypeError):
+            bp.websocket("/bad-ws", allowed_origins="https://example.com")(lambda ws: None)
+
+        class ItemMethodView(MethodView):
+            def post(self):
+                return {"created": True}
+
+        bp.route("/items")(ItemMethodView.as_view("items"))
+        app.register_blueprint(bp)
+
+        @app.get("/home")
+        def home():
+            return "ok"
+
+        app.config["MAX_FORM_PARTS"] = 1
+        app.config["MAX_FORM_MEMORY_SIZE"] = 32
+        app.config["UPLOAD_MEMORY_LIMIT"] = 16
+        with app.test_request_context(
+            "/upload",
+            method="POST",
+            data={"a": "1", "b": "2"},
+            files={"doc": ("hello.txt", b"hi", "text/plain")},
+        ):
+            self.assertEqual(request.max_form_parts, 1)
+            self.assertEqual(request.max_form_memory_size, 32)
+            self.assertEqual(request.upload_memory_limit, 16)
+            with self.assertRaises(HTTPException) as exc:
+                _ = request.form
+            self.assertEqual(exc.exception.status_code, 413)
+
+        app.config["MAX_FORM_PARTS"] = 100
+        app.config["MAX_FORM_MEMORY_SIZE"] = 1024 * 1024
+        app.config["UPLOAD_MEMORY_LIMIT"] = 1024 * 1024
+        with app.test_request_context("/home", base_url="http://example.com"):
+            self.assertEqual(
+                url_for("home", _external=True, _scheme="HTTPS"),
+                "https://example.com/home",
+            )
+
+        @app.get("/conflict-path", endpoint="legacy_path")
+        def conflict_path():
+            return "taken"
+
+        def dummy_wsgi(environ, start_response):
+            start_response("200 OK", [("Content-Type", "text/plain")])
+            return [b"wsgi"]
+
+        with self.assertRaises(ValueError):
+            app.mount_wsgi("/legacy", dummy_wsgi, name="legacy")
+        self.assertNotIn("legacy_root", app._endpoint_rules)
+
+        async def dummy_asgi(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"asgi"})
+
+        with self.assertRaises(ValueError):
+            app.mount_asgi("/<path:bad>", dummy_asgi, name="bad_asgi")
+        self.assertNotIn("bad_asgi_root", app._endpoint_rules)
+
+        @app.post("/echo-upload")
+        def echo_upload():
+            uploaded = request.files['file"1']
+            return {
+                "field": request.form['note"1\\x'],
+                "filename": uploaded.filename,
+                "body": uploaded.read().decode("utf-8"),
+            }
+
+        client = app.test_client()
+        self.assertEqual(client.post("/api/items").json, {"created": True})
+        self.assertEqual(client.get("/api/items").status_code, 405)
+
+        upload_resp = client.post(
+            "/echo-upload",
+            data={'note"1\\x': "hello"},
+            files={'file"1': ('quote"name.txt', b"payload", "text/plain")},
+        )
+        self.assertEqual(upload_resp.status_code, 200)
+        self.assertEqual(
+            upload_resp.json,
+            {"field": "hello", "filename": "quote_name.txt", "body": "payload"},
+        )
+
+        with self.assertRaises(ValueError):
+            client.post(
+                "/echo-upload",
+                data={"bad\r\nname": "v"},
+                files={"doc": ("ok.txt", b"x", "text/plain")},
+            )
+        with self.assertRaises(ValueError):
+            client.post(
+                "/echo-upload",
+                files={"doc": ("bad\r\n.txt", b"x", "text/plain")},
+            )
+        with self.assertRaises(ValueError):
+            client.post(
+                "/echo-upload",
+                files={"doc": ("ok.txt", b"x", "text/plain\r\nX-Injected: 1")},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

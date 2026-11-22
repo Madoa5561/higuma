@@ -57,7 +57,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.11"
+__version__ = "0.11.12"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -91,8 +91,15 @@ class Higuma:
         docs_url: str | None = "/docs",
         lifespan: Callable[[Higuma], Any] | None = None,
     ) -> None:
-        if max_content_length <= 0 or request_memory_limit <= 0:
-            raise ValueError("request body limits must be positive")
+        if (
+            isinstance(max_content_length, bool)
+            or not isinstance(max_content_length, int)
+            or max_content_length <= 0
+            or isinstance(request_memory_limit, bool)
+            or not isinstance(request_memory_limit, int)
+            or request_memory_limit <= 0
+        ):
+            raise ValueError("request body limits must be positive integers")
         self.import_name = import_name
         self.root_path = _find_root_path(import_name)
         self.template_folder = _resolve_folder(self.root_path, template_folder)
@@ -225,7 +232,7 @@ class Higuma:
                 rule,
                 endpoint=endpoint or view_func.__name__,
                 view_func=view_func,
-                methods=methods or ("GET",),
+                methods=methods,
                 summary=summary,
                 description=description,
                 tags=tags,
@@ -274,7 +281,19 @@ class Higuma:
         include_in_schema: bool = True,
         openapi_extra: Mapping[str, Any] | None = None,
     ) -> None:
-        declared_methods = methods or getattr(view_func, "methods", None) or ("GET",)
+        if isinstance(methods, (str, bytes, bytearray)):
+            raise TypeError(
+                "methods must be an iterable of HTTP method strings, not a single string"
+            )
+        if isinstance(tags, (str, bytes, bytearray)):
+            raise TypeError("tags must be an iterable of tag strings, not a single string")
+        declared_methods = (
+            (getattr(view_func, "methods", None) or ("GET",)) if methods is None else methods
+        )
+        if isinstance(declared_methods, (str, bytes, bytearray)):
+            raise TypeError(
+                "methods must be an iterable of HTTP method strings, not a single string"
+            )
         method_tuple = tuple(dict.fromkeys(method.upper() for method in declared_methods))
         if not method_tuple:
             raise ValueError("methods must not be empty")
@@ -329,6 +348,11 @@ class Higuma:
         endpoint: str | None = None,
         allowed_origins: Iterable[str] | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        if isinstance(allowed_origins, (str, bytes, bytearray)):
+            raise TypeError(
+                "allowed_origins must be an iterable of origin strings, not a single string"
+            )
+
         def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
             origins = tuple(allowed_origins or ())
             route_endpoint = endpoint or handler.__name__
@@ -605,6 +629,9 @@ class Higuma:
 
         raw, route = TestClient(self)._build_request(path, **kwargs)
         current = Request(raw)
+        current.max_form_memory_size = int(self.config["MAX_FORM_MEMORY_SIZE"])
+        current.max_form_parts = int(self.config["MAX_FORM_PARTS"])
+        current.upload_memory_limit = int(self.config["UPLOAD_MEMORY_LIMIT"])
         if route is not None:
             current.path_params = route.convert_params(current.path_params)
             current.view_args = current.path_params
@@ -757,9 +784,10 @@ class Higuma:
             host = self.config.get("SERVER_NAME") or (current.host if current else None)
             if not host:
                 raise RuntimeError("external URLs require a request or SERVER_NAME")
-            scheme = scheme or (
-                current.scheme if current else self.config.get("PREFERRED_URL_SCHEME", "http")
-            )
+            scheme = str(
+                scheme
+                or (current.scheme if current else self.config.get("PREFERRED_URL_SCHEME", "http"))
+            ).lower()
             if scheme not in {"http", "https"}:
                 raise ValueError("URL scheme must be http or https")
             result = f"{scheme}://{host}{result}"
@@ -925,20 +953,29 @@ class Higuma:
     ) -> None:
         normalized = normalize_rule(prefix)
         methods = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-        self.add_url_rule(
-            normalized,
-            endpoint=f"{name}_root",
-            view_func=view_func,
-            methods=methods,
-            include_in_schema=False,
-        )
-        self.add_url_rule(
-            f"{normalized.rstrip('/')}/<path:mounted_path>",
-            endpoint=f"{name}_path",
-            view_func=view_func,
-            methods=methods,
-            include_in_schema=False,
-        )
+        endpoints = (f"{name}_root", f"{name}_path")
+        rules = (normalized, f"{normalized.rstrip('/')}/<path:mounted_path>")
+        for rule in rules:
+            Rule(rule=rule, methods=methods, endpoint="check", view_func=view_func)
+        for endpoint in endpoints:
+            if endpoint in self._endpoint_rules:
+                raise ValueError(f"endpoint {endpoint!r} is already registered")
+        for existing in self._routes:
+            if existing.rule in rules:
+                duplicate_methods = set(existing.methods) & set(methods)
+                if duplicate_methods:
+                    methods_text = ", ".join(sorted(duplicate_methods))
+                    raise ValueError(
+                        f"duplicate route registration: {methods_text} {existing.rule}"
+                    )
+        for rule, endpoint in zip(rules, endpoints):
+            self.add_url_rule(
+                rule,
+                endpoint=endpoint,
+                view_func=view_func,
+                methods=methods,
+                include_in_schema=False,
+            )
 
     def run(
         self,

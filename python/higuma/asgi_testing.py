@@ -161,10 +161,13 @@ class ASGITestClient:
     ) -> None:
         if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be a positive finite number")
+        normalized_root = root_path.rstrip("/")
+        if normalized_root and not normalized_root.startswith("/"):
+            normalized_root = f"/{normalized_root}"
         self.app, self.base_url, self.root_path, self.timeout = (
             app,
             base_url,
-            root_path.rstrip("/"),
+            normalized_root,
             timeout,
         )
         self._helper = TestClient(app)
@@ -276,9 +279,13 @@ class ASGITestClient:
         max_redirects: int = 20,
         **kwargs,
     ) -> Response:
-        if max_redirects < 1:
-            raise ValueError("max_redirects must be positive")
-        raw, _ = self._scope(path, method=method, **kwargs)
+        if (
+            isinstance(max_redirects, bool)
+            or not isinstance(max_redirects, int)
+            or max_redirects < 1
+        ):
+            raise ValueError("max_redirects must be a positive integer")
+        raw, scope = self._scope(path, method=method, **kwargs)
         async with self.stream(path, method=method, **kwargs) as streamed:
             chunks = [chunk async for chunk in streamed.aiter_bytes()]
             response = Response(
@@ -294,9 +301,12 @@ class ASGITestClient:
                     response.headers[name] = text
         if not follow_redirects:
             return response
+        request_path = scope["raw_path"].decode("ascii")
+        request_query = f"?{raw['query_string']}" if raw["query_string"] else ""
+        request_url = f"{raw['scheme']}://{Request(raw).host}{request_path}{request_query}"
         return await self._follow_redirects(
             response,
-            request_url=Request(raw).url,
+            request_url=request_url,
             method=raw["method"],
             max_redirects=max_redirects,
             **kwargs,
@@ -349,6 +359,28 @@ class ASGITestClient:
                 current_headers.pop("content-type", None)
                 current_headers.pop("content-length", None)
 
+            next_target = target
+            if self.root_path:
+                decoded_path = unquote(split.path)
+                count = len(self.root_path.split("/")) - 1
+                parts = split.path.split("/")
+                if (
+                    decoded_path == self.root_path
+                    and len(parts) == count + 1
+                    and unquote("/".join(parts[: count + 1])) == self.root_path
+                ):
+                    stripped_path = "/"
+                elif (
+                    decoded_path.startswith(self.root_path + "/")
+                    and len(parts) > count + 1
+                    and unquote("/".join(parts[: count + 1])) == self.root_path
+                ):
+                    stripped_path = "/" + "/".join(parts[count + 1 :])
+                else:
+                    raise RuntimeError("test client does not follow redirects outside root_path")
+                query = f"?{split.query}" if split.query else ""
+                next_target = f"{split.scheme}://{split.netloc}{stripped_path}{query}"
+
             key = (current_method, target)
             if key in visited:
                 raise RuntimeError(f"redirect loop detected at {location!r}")
@@ -356,7 +388,7 @@ class ASGITestClient:
             history.append(current)
             current_kwargs["headers"] = current_headers
             current = await self.open(
-                target,
+                next_target,
                 method=current_method,
                 follow_redirects=False,
                 **current_kwargs,

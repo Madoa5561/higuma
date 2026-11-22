@@ -60,6 +60,9 @@ body. Send JSON null with `data="null", content_type="application/json"`.
 303 changes to GET (HEAD stays HEAD); 301/302 change non-GET/HEAD methods to GET.
 307/308 preserve the method and body. Final response `.history` is a tuple of
 intermediate responses. External hosts are rejected, never contacted.
+With `app.test_async_client(root_path=...)` and `follow_redirects=True` (0.11.12+),
+absolute and relative redirects inside the same `root_path` are followed cleanly while
+redirects outside `root_path` raise `RuntimeError`.
 
 ## Activate a context without dispatch
 
@@ -81,7 +84,8 @@ assert not has_request_context()
 ```
 
 The helper accepts request-building arguments above, including `method`, and
-sets routing metadata and converted path arguments. Dispatch-only arguments
+sets routing metadata, converted path arguments, and the app's configured
+`MAX_FORM_*`/`UPLOAD_MEMORY_LIMIT` bounds. Dispatch-only arguments
 `follow_redirects/max_redirects` are not accepted. The `with` value is a Higuma
 `Request`, not Flask's RequestContext wrapper; push/pop methods are not provided.
 

@@ -161,13 +161,34 @@ class Blueprint:
         endpoint: str | None = None,
         **options: Any,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-        method_tuple = tuple(method.upper() for method in (methods or ("GET",)))
+        if isinstance(methods, (str, bytes, bytearray)):
+            raise TypeError(
+                "methods must be an iterable of HTTP method strings, not a single string"
+            )
+        if isinstance(options.get("tags"), (str, bytes, bytearray)):
+            raise TypeError("tags must be an iterable of tag strings, not a single string")
+        explicit_methods = (
+            tuple(dict.fromkeys(method.upper() for method in methods))
+            if methods is not None
+            else None
+        )
+        if explicit_methods is not None and not explicit_methods:
+            raise ValueError("methods must not be empty")
 
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
             import inspect
 
             if "." in (endpoint or view_func.__name__):
                 raise ValueError("blueprint endpoints cannot contain a dot")
+            if explicit_methods is None:
+                view_methods = getattr(view_func, "methods", None) or ("GET",)
+                if isinstance(view_methods, (str, bytes, bytearray)):
+                    raise TypeError(
+                        "methods must be an iterable of HTTP method strings, not a single string"
+                    )
+                method_tuple = tuple(dict.fromkeys(method.upper() for method in view_methods))
+            else:
+                method_tuple = explicit_methods
             frame = inspect.currentframe()
             try:
                 cache_parameter_hints(
@@ -212,6 +233,11 @@ class Blueprint:
         endpoint: str | None = None,
         **options: Any,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        if isinstance(options.get("allowed_origins"), (str, bytes, bytearray)):
+            raise TypeError(
+                "allowed_origins must be an iterable of origin strings, not a single string"
+            )
+
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
             if "." in (endpoint or view_func.__name__):
                 raise ValueError("blueprint endpoints cannot contain a dot")
