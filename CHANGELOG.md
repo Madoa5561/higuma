@@ -25,8 +25,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   reject empty or duplicate `Origin` headers (and duplicate `Host` headers) consistently in
   ASGI and `_dispatch_websocket_preflight()`, fall back to ASGI `scope["path"]` when
   `raw_path` is empty `b""`, reject non-`str` payloads in `WebSocket.send_text()` /
-  `asend_text()`, and reject `bool`/non-`int` close codes and non-`str` close reasons in
-  ASGI WebSocket `aclose()`.
+  `asend_text()`, reject `bool`/non-`int` close codes and non-`str` close reasons in
+  ASGI WebSocket `aclose()`, and handle concurrent peer disconnect `OSError` cleanly during
+  ASGI WebSocket `asend_*` / `aclose()` teardown (converting send disconnects to
+  `WebSocketDisconnect(1006)` and ignoring redundant close-frame write failures).
 - Fix `TestClient` and `ASGITestClient` edge cases: validate `base_url` ports upfront
   (rejecting port `0`, out-of-range, and non-numeric ports) and `root_path` type, omit
   `Content-Length` on `HEAD` responses with status `204`/`205`/`304`, and always close

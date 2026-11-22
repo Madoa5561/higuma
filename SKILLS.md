@@ -386,9 +386,10 @@ supervisor, streaming, and proxy changes.
   In 0.11.18+, route-declared `status_code` applies to `(body, headers)` 2-tuples, debug
   error pages format the passed exception's own traceback, `errorhandler`/`middleware`/
   `Blueprint` registration validates inputs upfront, WebSocket/ASGI enforces empty and
-  duplicate `Origin` rejection plus text/close argument checks matching native mode,
-  `TestClient`/`ASGITestClient` validate `base_url` ports and omit `Content-Length` on `HEAD`
-  `204`/`205`/`304`, and native `HigumaCore.run(port=0)` logs the bound ephemeral port.
+  duplicate `Origin` rejection plus text/close argument checks and safe concurrent disconnect
+  teardown matching native mode, `TestClient`/`ASGITestClient` validate `base_url` ports and
+  omit `Content-Length` on `HEAD` `204`/`205`/`304`, and native `HigumaCore.run(port=0)` logs
+  the bound ephemeral port.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

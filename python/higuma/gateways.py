@@ -835,7 +835,11 @@ class _ASGIWebSocket:
     async def asend_text(self, text):
         if self.closed or self.peer_gone.is_set():
             raise WebSocketDisconnect(1006)
-        await self.send_event({"type": "websocket.send", "text": text})
+        try:
+            await self.send_event({"type": "websocket.send", "text": text})
+        except OSError as error:
+            self.closed = True
+            raise WebSocketDisconnect(1006) from error
 
     def send_text(self, text):
         self.bridge.resolve(self.asend_text(text))
@@ -843,7 +847,11 @@ class _ASGIWebSocket:
     async def asend_bytes(self, data):
         if self.closed or self.peer_gone.is_set():
             raise WebSocketDisconnect(1006)
-        await self.send_event({"type": "websocket.send", "bytes": data})
+        try:
+            await self.send_event({"type": "websocket.send", "bytes": data})
+        except OSError as error:
+            self.closed = True
+            raise WebSocketDisconnect(1006) from error
 
     def send_bytes(self, data):
         self.bridge.resolve(self.asend_bytes(data))
@@ -867,7 +875,10 @@ class _ASGIWebSocket:
             event = {"type": "websocket.close", "code": code}
             if self.spec_version >= (2, 3):
                 event["reason"] = reason
-            await self.send_event(event)
+            try:
+                await self.send_event(event)
+            except OSError:
+                return
 
     def close(self, code=1000, reason=""):
         self.bridge.resolve(self.aclose(code, reason))

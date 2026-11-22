@@ -36,9 +36,9 @@ Python側の必須runtime dependencyなしで構築できます。
 
 > **0.11.18** — ルート宣言 `status_code` の `(body, headers)` 2-tuple 適用とデバッグ時
 > `traceback.format_exception()` 化、`errorhandler`/`middleware`/`Blueprint` 登録時の厳格検証、
-> ASGI／WebSocket での空・重複 `Origin` 拒否・`raw_path=b""` フォールバック・テキスト/close 引数検証、
-> `TestClient`/`ASGITestClient` の `base_url` ポート検証・`HEAD` `204`/`205`/`304` `Content-Length`
-> 非付与、native `HigumaCore.run(port=0)` 実バインドポート表示を改善。必須 Python 依存は 0 のままです。
+> ASGI／WebSocket での空・重複 `Origin` 拒否・`raw_path=b""` フォールバック・テキスト/close 引数検証・
+> 切断競合時の安全な終了処理、`TestClient`/`ASGITestClient` の `base_url` ポート検証・
+> `HEAD` `204`/`205`/`304` `Content-Length` 非付与、native `HigumaCore.run(port=0)` 実バインドポート表示を改善。必須 Python 依存は 0 のままです。
 >
 > **0.11.17** — `_CurrentUserProxy` の `__eq__`/`__hash__` 実装、`AuthManager` の
 > `SessionMiddleware` 未設定エラー明確化・`session_key` 検証、認証デコレータの `async def` 保持＆

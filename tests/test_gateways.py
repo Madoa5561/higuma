@@ -1049,4 +1049,23 @@ def test_asgi_websocket_origin_parity_raw_path_fallback_and_close_validation():
             async with client.websocket_connect("/ws-bad-close") as ws:
                 assert await ws.receive_text() == "validated"
 
+        # Peer disconnecting concurrently during ASGI send/close must not crash teardown
+        from threading import Event
+
+        from higuma import WebSocketDisconnect
+        from higuma.gateways import _ASGIWebSocket
+
+        async def broken_send(event):
+            raise OSError("peer already disconnected")
+
+        ws_session = _ASGIWebSocket(None, asyncio.Queue(), broken_send, Event(), {})  # type: ignore[arg-type]
+        await ws_session.aclose(1000, "")
+        assert ws_session.closed
+
+        ws_send = _ASGIWebSocket(None, asyncio.Queue(), broken_send, Event(), {})  # type: ignore[arg-type]
+        with pytest.raises(WebSocketDisconnect) as caught:
+            await ws_send.asend_text("late")
+        assert caught.value.code == 1006
+        assert ws_send.closed
+
     asyncio.run(exercise())
