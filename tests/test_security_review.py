@@ -324,3 +324,33 @@ def test_middleware_rejects_bare_string_iterables_and_security_parameter_bounds(
     ):
         with pytest.raises(ValueError):
             bad_call()
+
+
+def test_websocket_preflight_rejects_empty_host_and_port_zero_and_matches_ipv6():
+    from higuma import Higuma
+
+    app = Higuma(__name__, static_folder=None)
+
+    @app.websocket("/ws")
+    def ws_handler(ws):
+        return None
+
+    route = app._websocket_rules["ws_handler"]
+
+    def preflight(host: str, origin: str) -> int:
+        raw = {
+            "method": "GET",
+            "path": "/ws",
+            "scheme": "http",
+            "raw_headers": [
+                (b"host", host.encode("latin-1")),
+                (b"origin", origin.encode("latin-1")),
+            ],
+        }
+        return app._dispatch_websocket_preflight(route, raw).status_code
+
+    assert preflight("", "http://") == 403
+    assert preflight("example.com", "http://example.com:0") == 403
+    assert preflight("example.com:0", "http://example.com:0") == 403
+    assert preflight("good.com/evil", "http://good.com") == 403
+    assert preflight("[0:0:0:0:0:0:0:1]:8000", "http://[::1]:8000") == 204

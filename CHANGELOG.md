@@ -7,6 +7,31 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.8] - 2026-11-22
+
+### Fixed
+
+- Emit `Content-Type`/`Content-Length` headers and suppress body bytes for `HEAD` in the ASGI
+  fallback `500` error path, close malformed ASGI WebSocket scopes with code `1002` instead of
+  crashing, parse non-standard ASGI `spec_version` strings safely, and validate ASGI concurrency
+  and WebSocket limits as positive non-bool integers.
+- Harden WebSocket same-origin checks in both Python preflight and the Rust core to reject
+  empty `Host` headers, port `0`, and malformed `Host` authority components, while canonicalizing
+  equivalent IPv6 address literals (such as `[0:0:0:0:0:0:0:1]` vs `[::1]`).
+- Support `datetime.timedelta` for `Response.set_cookie(max_age=...)` (matching Flask), reject
+  boolean/non-integer `max_age` and attribute-injecting characters (`;`, CR/LF, NUL) in cookie
+  `path`/`domain`/`expires`, ensure `StreamingResponse._close()`/`_aclose()` attempts every
+  stream resource even if the first fails, and preserve duplicate/case-insensitive headers in
+  `EventSourceResponse`.
+- Restore `SIGINT`/`SIGTERM` handlers in `Supervisor._serve()` if socket binding fails, allocate
+  distinct ephemeral worker ports simultaneously, validate `Supervisor` and `Higuma.run()`
+  parameters before starting lifespan hooks, and strip whitespace around `If-Range` headers.
+- Reject empty or malformed `module:object` references in `cli.load_app()`, raise on blueprint
+  CLI group collisions with built-in or app commands in `cli.build_parser()`, require
+  `start_response()` and exact prefix boundaries in mounted WSGI apps, and validate finite
+  non-bool `timeout`/`max_redirects` in test clients while closing every active ASGI stream on
+  exit.
+
 ## [0.11.7] - 2026-11-22
 
 ### Fixed

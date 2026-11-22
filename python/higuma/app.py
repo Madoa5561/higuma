@@ -13,6 +13,7 @@ from datetime import timezone
 from email.utils import formatdate, parsedate_to_datetime
 from functools import wraps
 from html import escape
+from ipaddress import ip_address
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -56,7 +57,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.7"
+__version__ = "0.11.8"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -952,7 +953,16 @@ class Higuma:
         max_restarts: int = 5,
         restart_window: float = 60.0,
     ) -> None:
-        if workers < 0 or processes < 1:
+        if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+            raise ValueError("port must be an integer between 0 and 65535")
+        if (
+            isinstance(workers, bool)
+            or not isinstance(workers, int)
+            or workers < 0
+            or isinstance(processes, bool)
+            or not isinstance(processes, int)
+            or processes < 1
+        ):
             raise ValueError("workers must be non-negative and processes must be positive")
         if debug is not None:
             self.debug = debug
@@ -1031,18 +1041,37 @@ class Higuma:
             origin = request.headers.get("origin")
             if origin and not route.openapi.get("allowed_origins"):
                 try:
-                    supplied = urlsplit(origin)
-                    expected = urlsplit(f"{request.scheme}://{request.host}")
+                    supplied = urlsplit(origin.strip())
+                    expected = urlsplit(f"{request.scheme}://{request.host.strip()}")
                     default_port = 443 if request.scheme == "https" else 80
+                    supplied_port = supplied.port
+                    expected_port = expected.port
+                    hosts_match = False
+                    if supplied.hostname and expected.hostname:
+                        try:
+                            hosts_match = ip_address(supplied.hostname) == ip_address(
+                                expected.hostname
+                            )
+                        except ValueError:
+                            hosts_match = supplied.hostname == expected.hostname
                     same_origin = (
-                        supplied.scheme == expected.scheme
-                        and supplied.hostname == expected.hostname
-                        and (supplied.port or default_port) == (expected.port or default_port)
+                        supplied.scheme in {"http", "https"}
+                        and supplied.scheme == expected.scheme
+                        and hosts_match
+                        and supplied_port != 0
+                        and expected_port != 0
+                        and (default_port if supplied_port is None else supplied_port)
+                        == (default_port if expected_port is None else expected_port)
                         and supplied.username is None
                         and supplied.password is None
                         and supplied.path in {"", "/"}
                         and not supplied.query
                         and not supplied.fragment
+                        and expected.username is None
+                        and expected.password is None
+                        and expected.path == ""
+                        and not expected.query
+                        and not expected.fragment
                     )
                 except ValueError:
                     same_origin = False
@@ -1464,6 +1493,7 @@ class Higuma:
             return response
         if_range = request.headers.get("if-range")
         if if_range is not None:
+            if_range = if_range.strip()
             if if_range.startswith('"'):
                 matches = if_range == response.headers["etag"]
             else:

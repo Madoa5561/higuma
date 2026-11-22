@@ -879,3 +879,97 @@ def test_root_mount_wsgi_and_asgi_route_root_and_subpaths():
     asgi_client = asgi_host.test_client()
     assert asgi_client.get("/").text == "/"
     assert asgi_client.get("/nested/page").text == "/nested/page"
+
+
+def test_asgi_fallback_500_emits_headers_and_suppresses_head_body(tmp_path):
+    from higuma import FileResponse
+
+    app = Higuma(__name__, static_folder=None)
+    missing = tmp_path / "gone.txt"
+    missing.write_text("bye", encoding="utf-8")
+
+    @app.get("/missing")
+    def missing_file():
+        response = FileResponse(missing)
+        missing.unlink()
+        return response
+
+    async def exercise():
+        incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+        await incoming.put({"type": "http.request"})
+        await app.asgi_app(scope("/missing", method="HEAD"), incoming.get, outgoing.put)
+        start = await outgoing.get()
+        body = await outgoing.get()
+        headers = {k.lower(): v for k, v in start["headers"]}
+        assert start["status"] == 500
+        assert b"content-type" in headers
+        assert b"content-length" in headers
+        assert body["body"] == b""
+
+    asyncio.run(exercise())
+
+
+def test_asgi_websocket_rejects_malformed_scope_and_tolerates_bad_spec_version():
+    app = Higuma(__name__, static_folder=None)
+
+    @app.websocket("/ws")
+    def echo(ws):
+        ws.send_text("ok")
+
+    async def exercise():
+        # Malformed non-ASCII raw_path closes cleanly with 1002 instead of crashing.
+        incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+        await incoming.put({"type": "websocket.connect"})
+        bad_scope = scope("/ws", type="websocket")
+        bad_scope["raw_path"] = b"/ws/\xff"
+        await app.asgi_app(bad_scope, incoming.get, outgoing.put)
+        assert await outgoing.get() == {"type": "websocket.close", "code": 1002}
+
+        # Malformed ASGI spec_version falls back to (2, 0) instead of crashing.
+        incoming2, outgoing2 = asyncio.Queue(), asyncio.Queue()
+        await incoming2.put({"type": "websocket.connect"})
+        weird_scope = scope("/ws", type="websocket")
+        weird_scope["asgi"] = {"version": "3.0", "spec_version": "2.3-beta"}
+        task = asyncio.create_task(app.asgi_app(weird_scope, incoming2.get, outgoing2.put))
+        assert (await asyncio.wait_for(outgoing2.get(), 2))["type"] == "websocket.accept"
+        assert (await asyncio.wait_for(outgoing2.get(), 2))["text"] == "ok"
+        assert (await asyncio.wait_for(outgoing2.get(), 2))["type"] == "websocket.close"
+        await asyncio.wait_for(task, 2)
+
+    asyncio.run(exercise())
+
+
+def test_wsgi_mount_missing_start_response_and_prefix_boundary():
+    from higuma.mounts import _mounted_path
+
+    assert _mounted_path("/api", "/api") == "/"
+    assert _mounted_path("/api/items", "/api") == "/items"
+    assert _mounted_path("/api-v2", "/api") == "/api-v2"
+
+    app = Higuma(__name__, static_folder=None)
+
+    def broken_wsgi(environ, start_response):
+        return [b"missing start_response"]
+
+    app.mount_wsgi("/broken", broken_wsgi)
+    response = app.test_client().get("/broken/")
+    assert response.status_code == 500
+
+
+def test_asgi_and_test_client_validate_limits():
+    app = Higuma(__name__, static_folder=None)
+    app.config["ASGI_MAX_CONCURRENCY"] = True
+
+    async def exercise():
+        incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+        with pytest.raises(ValueError, match="ASGI_MAX_CONCURRENCY"):
+            await app.asgi_app(scope("/"), incoming.get, outgoing.put)
+
+    asyncio.run(exercise())
+
+    with pytest.raises(ValueError, match="timeout"):
+        app.test_async_client(timeout=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="timeout"):
+        app.test_async_client(timeout=float("nan"))
+    with pytest.raises(ValueError, match="max_redirects"):
+        app.test_client().get("/", max_redirects=True)  # type: ignore[arg-type]

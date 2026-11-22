@@ -158,8 +158,12 @@ class TestClient:
         follow_redirects: bool = False,
         max_redirects: int = 20,
     ) -> Response:
-        if max_redirects < 1:
-            raise ValueError("max_redirects must be positive")
+        if (
+            isinstance(max_redirects, bool)
+            or not isinstance(max_redirects, int)
+            or max_redirects < 1
+        ):
+            raise ValueError("max_redirects must be a positive integer")
         raw, route = self._build_request(
             path,
             method=method,

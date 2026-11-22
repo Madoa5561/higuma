@@ -1292,6 +1292,9 @@ fn websocket_origin_allowed(
     {
         return false;
     }
+    if origin_url.port() == Some(0) {
+        return false;
+    }
     let Some(origin_host) = origin_url.host_str() else {
         return false;
     };
@@ -1302,7 +1305,14 @@ fn websocket_origin_allowed(
     let Some((host, port)) = split_host_port(host_header) else {
         return false;
     };
-    normalized_origin_host.eq_ignore_ascii_case(&host)
+    let hosts_match = match (
+        normalized_origin_host.parse::<std::net::IpAddr>(),
+        host.parse::<std::net::IpAddr>(),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => normalized_origin_host.eq_ignore_ascii_case(&host),
+    };
+    hosts_match
         && match port {
             Some(expected) => origin_url.port_or_known_default() == Some(expected),
             None => origin_url.port().is_none(),
@@ -1323,6 +1333,9 @@ fn split_host_port(value: &str) -> Option<(String, Option<u16>)> {
             return Some((host.to_string(), None));
         }
         let port = suffix.strip_prefix(':')?.parse::<u16>().ok()?;
+        if port == 0 {
+            return None;
+        }
         return Some((host.to_string(), Some(port)));
     }
     match value.matches(':').count() {
@@ -1333,6 +1346,9 @@ fn split_host_port(value: &str) -> Option<(String, Option<u16>)> {
                 return None;
             }
             let port = port_text.parse::<u16>().ok()?;
+            if port == 0 {
+                return None;
+            }
             Some((host.to_string(), Some(port)))
         }
         _ => None,
@@ -2441,6 +2457,14 @@ mod tests {
                 "expected {invalid_origin:?} to be rejected"
             );
         }
+
+        headers.insert("host", HeaderValue::from_static("[0:0:0:0:0:0:0:1]:8000"));
+        headers.insert("origin", HeaderValue::from_static("http://[::1]:8000"));
+        assert!(websocket_origin_allowed(&headers, &[]));
+
+        headers.insert("host", HeaderValue::from_static("example.com:0"));
+        headers.insert("origin", HeaderValue::from_static("http://example.com:0"));
+        assert!(!websocket_origin_allowed(&headers, &[]));
 
         headers.insert("host", HeaderValue::from_static("example.com:bogus"));
         headers.insert("origin", HeaderValue::from_static("http://example.com"));

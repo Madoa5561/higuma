@@ -323,6 +323,23 @@ def _scope_request(scope: Mapping[str, Any], body: bytes = b"") -> dict[str, Any
     )
 
 
+def _positive_int(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _asgi_spec_version(scope: Mapping[str, Any]) -> tuple[int, ...]:
+    raw = scope.get("asgi", {}).get("spec_version", "2.0")
+    if not isinstance(raw, str) or not raw:
+        return (2, 0)
+    try:
+        parts = tuple(int(part) for part in raw.split("."))
+    except ValueError:
+        return (2, 0)
+    return parts or (2, 0)
+
+
 class ASGIApplication:
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -344,9 +361,9 @@ class ASGIApplication:
         if self._lifespan_loop is not None and self._lifespan_loop is not loop:
             raise RuntimeError("use one Higuma application instance per ASGI event loop")
         if loop not in self._slots:
-            count = int(self.app.config.get("ASGI_MAX_CONCURRENCY", 64))
-            if count < 1:
-                raise ValueError("ASGI_MAX_CONCURRENCY must be positive")
+            count = _positive_int(
+                self.app.config.get("ASGI_MAX_CONCURRENCY", 64), "ASGI_MAX_CONCURRENCY"
+            )
             self._slots[loop] = asyncio.Semaphore(count)
         async with self._slots[loop]:
             if kind == "http":
@@ -600,11 +617,26 @@ class ASGIApplication:
                     fallback.background, response.background = response.background, None
                     body = _Body(fallback, raw["method"])
                 try:
+                    fallback_headers = [
+                        (k.encode(), v.encode("latin-1"))
+                        for k, v in _headers(fallback, len(fallback.body))
+                    ]
                     bridge.resolve(
-                        send_response({"type": "http.response.start", "status": 500, "headers": []})
+                        send_response(
+                            {
+                                "type": "http.response.start",
+                                "status": fallback.status_code,
+                                "headers": fallback_headers,
+                            }
+                        )
                     )
                     bridge.resolve(
-                        send_response({"type": "http.response.body", "body": fallback.body})
+                        send_response(
+                            {
+                                "type": "http.response.body",
+                                "body": b"" if raw["method"] == "HEAD" else fallback.body,
+                            }
+                        )
                     )
                 except OSError:
                     return
@@ -643,7 +675,11 @@ class ASGIApplication:
     async def _websocket(self, scope: Any, receive: Any, send: Any) -> None:
         if (await receive())["type"] != "websocket.connect":
             raise RuntimeError("expected websocket.connect")
-        raw = _scope_request(scope)
+        try:
+            raw = _scope_request(scope)
+        except (UnicodeError, HTTPException):
+            await send({"type": "websocket.close", "code": 1002})
+            return
         route = next(
             (
                 rule
@@ -669,10 +705,13 @@ class ASGIApplication:
             if origin.rstrip("/") not in allowed_normalized:
                 await send({"type": "websocket.close", "code": 1008})
                 return
-        queue_size = int(self.app.config.get("ASGI_WEBSOCKET_QUEUE_SIZE", 4))
-        message_limit = int(self.app.config.get("ASGI_WEBSOCKET_MAX_MESSAGE_SIZE", 1024 * 1024))
-        if queue_size < 1 or message_limit < 1:
-            raise ValueError("ASGI WebSocket limits must be positive")
+        queue_size = _positive_int(
+            self.app.config.get("ASGI_WEBSOCKET_QUEUE_SIZE", 4), "ASGI_WEBSOCKET_QUEUE_SIZE"
+        )
+        message_limit = _positive_int(
+            self.app.config.get("ASGI_WEBSOCKET_MAX_MESSAGE_SIZE", 1024 * 1024),
+            "ASGI_WEBSOCKET_MAX_MESSAGE_SIZE",
+        )
         incoming: asyncio.Queue[Any] = asyncio.Queue(maxsize=queue_size)
         peer_gone = Event()
 
@@ -728,9 +767,7 @@ class ASGIApplication:
                 if not k.startswith("sec-websocket-")
             ]
             accept = {"type": "websocket.accept"}
-            version = tuple(
-                int(part) for part in scope.get("asgi", {}).get("spec_version", "2.0").split(".")
-            )
+            version = _asgi_spec_version(scope)
             if headers and version >= (2, 1):
                 accept["headers"] = headers
             elif any(key == b"set-cookie" for key, _ in headers):
@@ -765,9 +802,7 @@ class _ASGIWebSocket:
     ) -> None:
         self.bridge, self.incoming, self.send_event = bridge, incoming, send
         self.peer_gone = peer_gone
-        self.spec_version = tuple(
-            int(part) for part in scope.get("asgi", {}).get("spec_version", "2.0").split(".")
-        )
+        self.spec_version = _asgi_spec_version(scope)
         self.closed = False
 
     async def areceive(self):

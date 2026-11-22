@@ -446,6 +446,95 @@ class PythonCoreRegressionTests(unittest.TestCase):
         # GET must not have been partially registered when POST failed.
         core.add_route("/atomic", ["GET"], lambda req: "get")
 
+    def test_cookie_streaming_sse_run_and_supervisor_validation(self) -> None:
+        import signal
+        from datetime import timedelta
+
+        from higuma import EventSourceResponse, Higuma, Response, StreamingResponse, Supervisor
+        from higuma.supervisor import _free_ports
+
+        response = Response("ok")
+        response.set_cookie("session", "abc", max_age=timedelta(minutes=5))
+        self.assertIn("Max-Age=300", response.header_items[-1][1])
+        with self.assertRaises(ValueError):
+            response.set_cookie("bad", "1", max_age=True)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            response.set_cookie("bad", "1", path="/; HttpOnly")
+        with self.assertRaises(ValueError):
+            response.set_cookie("bad", "1", domain="example.com; Secure")
+
+        closed_flags: list[str] = []
+
+        class FailingIterator:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                raise StopIteration
+
+            def close(self) -> None:
+                closed_flags.append("iter")
+                raise RuntimeError("iter close boom")
+
+        class ClosingIterable:
+            def __iter__(self):
+                return FailingIterator()
+
+            def close(self) -> None:
+                closed_flags.append("content")
+
+        stream = StreamingResponse(ClosingIterable())
+        with self.assertRaises(RuntimeError):
+            stream._close()
+        self.assertEqual(closed_flags, ["iter", "content"])
+
+        sse = EventSourceResponse(
+            iter(["hello"]),
+            headers=[
+                ("Cache-Control", "private"),
+                ("Content-Length", "99"),
+                ("X-Tag", "a"),
+                ("X-Tag", "b"),
+            ],
+        )
+        self.assertEqual(sse.headers["cache-control"], "private")
+        self.assertNotIn("content-length", sse.headers)
+        self.assertEqual(
+            [v for k, v in sse.header_items if k == "x-tag"],
+            ["a", "b"],
+        )
+
+        started: list[bool] = []
+        app = Higuma(__name__, static_folder=None)
+        app.on_startup(lambda: started.append(True))
+        for bad_port in (-1, 70000, True):
+            with self.assertRaises(ValueError):
+                app.run(port=bad_port)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            app.run(workers=True)  # type: ignore[arg-type]
+        self.assertEqual(started, [])
+
+        for bad_kwargs in (
+            {"app": ""},
+            {"app": "--evil"},
+            {"app": "mod:app", "port": 70000},
+            {"app": "mod:app", "processes": True},
+            {"app": "mod:app", "startup_timeout": float("nan")},
+            {"app": "mod:app", "restart_window": float("inf")},
+        ):
+            with self.assertRaises(ValueError):
+                Supervisor(**bad_kwargs)  # type: ignore[arg-type]
+
+        ports = _free_ports(3)
+        self.assertEqual(len(set(ports)), 3)
+
+        # Signal handlers must be restored if socket.create_server fails in Supervisor._serve.
+        before_sigint = signal.getsignal(signal.SIGINT)
+        sup = Supervisor("mod:app", host="256.256.256.256", port=8000, processes=2)
+        with self.assertRaises(OSError):
+            sup._serve([1, 2])
+        self.assertIs(signal.getsignal(signal.SIGINT), before_sigint)
+
 
 if __name__ == "__main__":
     unittest.main()

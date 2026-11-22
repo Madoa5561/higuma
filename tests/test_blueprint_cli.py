@@ -173,3 +173,38 @@ def test_cli_command_works_with_postponed_annotations_and_local_return_type(tmp_
     app = module.create_app()
     result = app.test_cli_runner().invoke("count --times 4")
     assert result.exit_code == 0 and result.output.strip() == "xxxx"
+
+
+def test_cli_load_app_and_blueprint_group_collisions():
+    from higuma.cli import build_parser, load_app
+
+    for bad_ref in ("", "   ", ":app", "higuma:"):
+        with pytest.raises(ValueError, match="application reference"):
+            load_app(bad_ref)
+
+    app = Higuma(__name__, static_folder=None)
+    reserved = Blueprint("run", __name__)
+
+    @reserved.cli.command()
+    def ping():
+        return "pong"
+
+    app.register_blueprint(reserved)
+    with pytest.raises(ValueError, match="conflicts"):
+        build_parser(app)
+
+    app2 = Higuma(__name__, static_folder=None)
+
+    @app2.cli.command()
+    def tools():
+        return "top"
+
+    bp = Blueprint("tools", __name__)
+
+    @bp.cli.command()
+    def sub():
+        return "sub"
+
+    app2.register_blueprint(bp)
+    with pytest.raises(ValueError, match="conflicts"):
+        build_parser(app2)

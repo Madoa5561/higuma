@@ -11,10 +11,17 @@ from .commands import invoke_command
 
 
 def load_app(reference: str) -> Higuma:
-    module_name, separator, object_name = reference.partition(":")
+    cleaned = reference.strip() if isinstance(reference, str) else ""
+    if not cleaned:
+        raise ValueError("application reference must be a non-empty 'module:object' string")
+    module_name, separator, object_name = cleaned.partition(":")
+    if not module_name:
+        raise ValueError(f"invalid application reference {reference!r}: missing module name")
     if not separator:
         object_name = "app"
     object_name = object_name.removesuffix("()")
+    if not object_name:
+        raise ValueError(f"invalid application reference {reference!r}: missing object name")
     module = importlib.import_module(module_name)
     app_object: Any = getattr(module, object_name)
     if callable(app_object) and not isinstance(app_object, Higuma):
@@ -58,6 +65,7 @@ def build_parser(app: Higuma | None = None) -> argparse.ArgumentParser:
     shell_parser.add_argument("app", nargs="?", default=os.getenv("HIGUMA_APP", "app:app"))
     if app is not None:
         app.cli.add_to(subcommands)
+        reserved_top = {"run", "routes", "shell", *app.cli.commands}
         groups = {}
         for name, blueprint in app._blueprints.items():
             if not blueprint.cli.commands:
@@ -67,6 +75,10 @@ def build_parser(app: Higuma | None = None) -> argparse.ArgumentParser:
             for part in name.split("."):
                 prefix = (prefix + "." + part).lstrip(".")
                 if prefix not in groups:
+                    if current is subcommands and part in reserved_top:
+                        raise ValueError(
+                            f"blueprint CLI group {part!r} conflicts with an existing command"
+                        )
                     group_parser = current.add_parser(part, help=f"{prefix} blueprint commands")
                     groups[prefix] = group_parser.add_subparsers(
                         dest="_group_" + prefix, required=True

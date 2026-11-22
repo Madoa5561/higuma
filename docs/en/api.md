@@ -223,7 +223,7 @@ Since 0.7.0, buffered body helpers include writable `.data`, `get_data(as_text=F
 `get_json()`/`.json` returns `None` for non-JSON MIME and raises on malformed JSON.
 `force=True` ignores MIME; `silent=True` suppresses parse errors. These helpers
 do not read deferred stream/file/template content directly.
-`set_cookie(..., partitioned=True)` requires Python 3.14 or newer and `secure=True`.
+`set_cookie(..., max_age=...)` accepts integer seconds or a `datetime.timedelta`, and `partitioned=True` requires Python 3.14 or newer with `secure=True`.
 
 Helpers are `jsonify()`, `make_response()`, `redirect()`, `render_template()`, and `send_file()`.
 A handler may also return strings, bytes-like objects, JSON-compatible values, `None`, or

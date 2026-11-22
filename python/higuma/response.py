@@ -8,7 +8,7 @@ import sys
 from collections.abc import AsyncIterable, Callable, Iterable, Mapping
 from contextvars import copy_context
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -197,7 +197,7 @@ class Response:
         key: str,
         value: str = "",
         *,
-        max_age: int | None = None,
+        max_age: int | timedelta | None = None,
         expires: datetime | str | None = None,
         path: str = "/",
         domain: str | None = None,
@@ -212,11 +212,21 @@ class Response:
             raise ValueError("partitioned cookies require Python 3.14 or newer")
         if partitioned and not secure:
             raise ValueError("partitioned cookies must also set secure=True")
+        for attr_name, attr_value in (("path", path), ("domain", domain)):
+            if attr_value is not None and any(ch in attr_value for ch in ";\r\n\x00"):
+                raise ValueError(f"cookie {attr_name} contains invalid characters")
+        if isinstance(expires, str) and any(ch in expires for ch in ";\r\n\x00"):
+            raise ValueError("cookie expires contains invalid characters")
         cookie = SimpleCookie()
         cookie[key] = value
         morsel = cookie[key]
         if max_age is not None:
-            morsel["max-age"] = str(max_age)
+            if isinstance(max_age, timedelta):
+                morsel["max-age"] = str(int(max_age.total_seconds()))
+            elif isinstance(max_age, bool) or not isinstance(max_age, int):
+                raise ValueError("max_age must be an int or timedelta")
+            else:
+                morsel["max-age"] = str(max_age)
         if isinstance(expires, datetime):
             if expires.tzinfo is None:
                 expires = expires.replace(tzinfo=timezone.utc)
@@ -434,10 +444,16 @@ class StreamingResponse(Response):
         targets = [self._iterator]
         if self._content is not self._iterator:
             targets.append(self._content)
+        failure: BaseException | None = None
         for target in targets:
             close = getattr(target, "aclose", None) or getattr(target, "close", None)
             if close is not None:
-                self._context.run(lambda close=close: _resolve_stream_awaitable(close()))
+                try:
+                    self._context.run(lambda close=close: _resolve_stream_awaitable(close()))
+                except BaseException as error:  # noqa: BLE001 - close every stream handle
+                    failure = failure or error
+        if failure is not None:
+            raise failure
 
     async def _aclose(self) -> None:
         if self._closed:
@@ -446,12 +462,18 @@ class StreamingResponse(Response):
         targets = [self._iterator]
         if self._content is not self._iterator:
             targets.append(self._content)
+        failure: BaseException | None = None
         for target in targets:
             close = getattr(target, "aclose", None) or getattr(target, "close", None)
             if close is not None:
-                result = self._context.run(close)
-                if inspect.isawaitable(result):
-                    await result
+                try:
+                    result = self._context.run(close)
+                    if inspect.isawaitable(result):
+                        await result
+                except BaseException as error:  # noqa: BLE001 - close every stream handle
+                    failure = failure or error
+        if failure is not None:
+            raise failure
 
     def _finish(self, background: Callable[[], Any] | None) -> None:
         self.background = None
@@ -529,21 +551,25 @@ class EventSourceResponse(StreamingResponse):
         content: Iterable[Any] | AsyncIterable[Any],
         *,
         status: int = 200,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
         background: BackgroundTask | BackgroundTasks | Callable[[], Any] | None = None,
     ) -> None:
-        response_headers = {
-            "cache-control": "no-cache",
-            "x-accel-buffering": "no",
-            **dict(headers or {}),
-        }
         super().__init__(
             content,
             status=status,
-            headers=response_headers,
+            headers={
+                "cache-control": "no-cache",
+                "x-accel-buffering": "no",
+            },
             media_type="text/event-stream; charset=utf-8",
             background=background,
         )
+        filtered = [
+            (key, value)
+            for key, value in _header_pairs(headers)
+            if str(key).lower() != "content-length"
+        ]
+        _apply_headers(self, filtered)
 
     def _encode_chunk(self, chunk: Any) -> bytes:
         event = chunk if isinstance(chunk, ServerSentEvent) else ServerSentEvent(data=chunk)

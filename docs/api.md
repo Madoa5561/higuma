@@ -217,7 +217,7 @@ full-fileの`FileResponse`と`send_file()`はGET/HEADのETag、`If-None-Match`�
 `get_json()`/`.json`はJSON以外のMIMEで`None`、解析失敗で例外を返します。
 `force=True`でMIMEを無視、`silent=True`で解析失敗を`None`にします。
 stream/file/templateの遅延内容を直接body helperで読み出すAPIではありません。
-`set_cookie(..., partitioned=True)`はPython 3.14以降かつ`secure=True`で利用できます。
+`set_cookie(..., max_age=...)`は整数秒または`datetime.timedelta`を受け付け、`partitioned=True`はPython 3.14以降かつ`secure=True`で利用できます。
 
 helperは`jsonify()`、`make_response()`、`redirect()`、`render_template()`、`send_file()`です。
 handlerはresponseに加え、文字列、bytes-like、JSON化可能値、`None`、

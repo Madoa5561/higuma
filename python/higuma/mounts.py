@@ -13,7 +13,7 @@ from .response import Response
 
 def wsgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request], Response]:
     def mounted(request: Request) -> Response:
-        status = "500 Internal Server Error"
+        status: str | None = None
         response_headers: list[tuple[str, str]] = []
 
         def start_response(
@@ -37,6 +37,8 @@ def wsgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
             close = getattr(result, "close", None)
             if close is not None:
                 close()
+        if status is None:
+            raise RuntimeError("mounted WSGI app did not call start_response")
         return _mounted_response(
             b"".join(body_chunks),
             int(status.split(" ", 1)[0]),
@@ -102,12 +104,12 @@ def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
 
 def _mounted_path(path: str, prefix: str) -> str:
     if prefix != "/":
-        if path.startswith(prefix):
+        if path == prefix or path.startswith(prefix + "/"):
             value = path[len(prefix) :]
         else:
             encoded_prefix = quote(prefix, safe="/!$&'()*+,-.:;=@_~")
             decoded = unquote(path)
-            if path.startswith(encoded_prefix):
+            if path == encoded_prefix or path.startswith(encoded_prefix + "/"):
                 value = path[len(encoded_prefix) :]
             elif decoded == prefix or decoded.startswith(prefix + "/"):
                 count = len(prefix.split("/")) - 1

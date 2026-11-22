@@ -334,6 +334,11 @@ supervisor, streaming, and proxy changes.
   `HealthChecks` enforce finite non-bool bounds, `Database.close()` closes `:memory:` connections
   safely, native `add_route()` is atomic across methods, and `@app.cli.command()` handles
   postponed annotations in factory scopes.
+  In 0.11.8+, `Response.set_cookie()` accepts `timedelta` for `max_age` and rejects `;`/CR/LF
+  in cookie attributes, `EventSourceResponse` preserves duplicate headers, ASGI fallback 500
+  responses preserve headers and suppress `HEAD` bodies, WebSocket same-origin checks canonicalize
+  IPv6 literals and reject port `0`/empty `Host`, and `Supervisor`/`Higuma.run()` validate options
+  and restore signal handlers cleanly on bind failure.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

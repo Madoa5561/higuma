@@ -242,16 +242,23 @@ def _exercise_gateways() -> None:
 
 
 def _exercise_developer_apis() -> None:
+    from datetime import timedelta
+
     from higuma import (
         Blueprint,
         Database,
         HealthChecks,
         Higuma,
         Observability,
+        Response,
         TrustedHostMiddleware,
         request,
         request_finished,
     )
+
+    cookie_response = Response("ok")
+    cookie_response.set_cookie("sid", "1", max_age=timedelta(seconds=90))
+    assert any("Max-Age=90" in value for _, value in cookie_response.header_items)
 
     try:
         TrustedHostMiddleware("example.com")  # type: ignore[arg-type]

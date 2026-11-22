@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlsplit
@@ -158,8 +159,8 @@ class ASGITestClient:
         root_path: str = "",
         timeout: float = 5,
     ) -> None:
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be a positive finite number")
         self.app, self.base_url, self.root_path, self.timeout = (
             app,
             base_url,
@@ -194,10 +195,15 @@ class ASGITestClient:
         return self
 
     async def __aexit__(self, *exc):
+        close_error: BaseException | None = None
         try:
-            for exchange in list(self._active):
-                await exchange.close({"type": exchange.kind + ".disconnect", "code": 1000})
+            active = list(self._active)
             self._active.clear()
+            for exchange in active:
+                try:
+                    await exchange.close({"type": exchange.kind + ".disconnect", "code": 1000})
+                except BaseException as error:  # noqa: BLE001 - close every active exchange
+                    close_error = close_error or error
         finally:
             exchange, self._lifespan = self._lifespan, None
             if exchange is not None:
@@ -211,6 +217,8 @@ class ASGITestClient:
                     if not exchange.task.done():
                         exchange.task.cancel()
                         await asyncio.gather(exchange.task, return_exceptions=True)
+        if close_error is not None:
+            raise close_error
 
     def _scope(self, path: str, *, method: str = "GET", **kwargs):
         explicit_base_url = kwargs.pop("base_url", None)

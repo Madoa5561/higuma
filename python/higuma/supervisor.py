@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import signal
 import socket
 
@@ -28,17 +29,38 @@ class Supervisor:
         restart_window: float = 60.0,
         max_connections: int = 1024,
     ) -> None:
-        if processes < 2:
+        if not isinstance(app, str) or not app.strip() or app.strip().startswith("-"):
+            raise ValueError("app must be a non-empty module:object reference")
+        if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+            raise ValueError("port must be an integer between 0 and 65535")
+        if isinstance(processes, bool) or not isinstance(processes, int) or processes < 2:
             raise ValueError("Supervisor requires at least two processes")
-        if threads < 0 or startup_timeout <= 0:
+        if (
+            isinstance(threads, bool)
+            or not isinstance(threads, int)
+            or threads < 0
+            or isinstance(startup_timeout, bool)
+            or not math.isfinite(startup_timeout)
+            or startup_timeout <= 0
+        ):
             raise ValueError("threads must be non-negative and startup_timeout must be positive")
-        self.app = app
+        self.app = app.strip()
         self.host = host
         self.port = port
         self.processes = processes
         self.threads = threads
         self.startup_timeout = startup_timeout
-        if max_restarts < 0 or restart_window <= 0 or max_connections <= 0:
+        if (
+            isinstance(max_restarts, bool)
+            or not isinstance(max_restarts, int)
+            or max_restarts < 0
+            or isinstance(restart_window, bool)
+            or not math.isfinite(restart_window)
+            or restart_window <= 0
+            or isinstance(max_connections, bool)
+            or not isinstance(max_connections, int)
+            or max_connections <= 0
+        ):
             raise ValueError(
                 "max_restarts must be non-negative; restart_window and max_connections "
                 "must be positive"
@@ -51,7 +73,7 @@ class Supervisor:
         self._stopped = Event()
 
     def run(self) -> None:
-        internal_ports = [_free_port() for _ in range(self.processes)]
+        internal_ports = _free_ports(self.processes)
         self._children = [self._start_worker(port) for port in internal_ports]
         try:
             for child, port in zip(self._children, internal_ports):
@@ -96,17 +118,18 @@ class Supervisor:
 
     def _serve(self, internal_ports: list[int]) -> None:
         previous_handlers = _install_signal_handlers(self.stop)
-        targets = cycle(internal_ports)
-        connection_slots = BoundedSemaphore(self.max_connections)
-        bind_host, family = _bind_target(self.host)
-        listener = socket.create_server((bind_host, self.port), family=family, reuse_port=False)
-        listener.settimeout(0.5)
-        display_host = f"[{bind_host}]" if ":" in bind_host else bind_host
-        print(
-            f"higuma supervisor listening on http://{display_host}:{self.port} "
-            f"with {self.processes} processes"
-        )
+        listener: socket.socket | None = None
         try:
+            targets = cycle(internal_ports)
+            connection_slots = BoundedSemaphore(self.max_connections)
+            bind_host, family = _bind_target(self.host)
+            listener = socket.create_server((bind_host, self.port), family=family, reuse_port=False)
+            listener.settimeout(0.5)
+            display_host = f"[{bind_host}]" if ":" in bind_host else bind_host
+            print(
+                f"higuma supervisor listening on http://{display_host}:{self.port} "
+                f"with {self.processes} processes"
+            )
             while not self._stopped.is_set():
                 failed = next(
                     (
@@ -138,7 +161,8 @@ class Supervisor:
                     connection_slots.release()
                     raise
         finally:
-            listener.close()
+            if listener is not None:
+                listener.close()
             _restore_signal_handlers(previous_handlers)
 
     def _restart_worker(self, index: int, port: int, returncode: int | None) -> None:
@@ -208,6 +232,21 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _free_ports(count: int) -> list[int]:
+    sockets: list[socket.socket] = []
+    ports: list[int] = []
+    try:
+        for _ in range(count):
+            sock = socket.socket()
+            sockets.append(sock)
+            sock.bind(("127.0.0.1", 0))
+            ports.append(int(sock.getsockname()[1]))
+        return ports
+    finally:
+        for sock in sockets:
+            sock.close()
 
 
 def _wait_for_port(
