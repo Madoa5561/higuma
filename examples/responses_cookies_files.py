@@ -60,5 +60,17 @@ def download():
     )
 
 
+@app.get("/multi-headers")
+def multi_headers():
+    return (
+        {"ok": True},
+        200,
+        [
+            ("Set-Cookie", "pref=compact; Path=/; SameSite=Lax"),
+            ("Set-Cookie", "region=jp; Path=/; SameSite=Lax"),
+        ],
+    )
+
+
 if __name__ == "__main__":
     app.run()

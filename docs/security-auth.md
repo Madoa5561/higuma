@@ -65,7 +65,7 @@ def me():
 重ねないでください。user loaderはrequestごとに文字列IDを受け、userまたは`None`を返します。
 user objectは`id`と`is_authenticated`を持たせます。
 
-- `login_user(user, remember=False)`: sessionをrotateしてfresh loginにする
+- `login_user(user, remember=False)`: sessionをrotateし、有効な`CSRFProtection`のCSRF token（独自`field_name`含む）も更新してfresh loginにする
 - `confirm_login()`: 既存loginをfreshに戻す。未loginなら`Unauthorized`
 - `logout_user()`: sessionをclearする
 - `login_required`: 未loginを401にする

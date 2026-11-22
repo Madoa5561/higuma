@@ -139,6 +139,17 @@ struct WebSocketSession {
     outgoing: tokio_mpsc::Sender<OutgoingMessage>,
 }
 
+fn validate_websocket_close(code: u16, reason: &str) -> Result<(), &'static str> {
+    let valid_code = matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999);
+    if !valid_code {
+        return Err("invalid WebSocket close code");
+    }
+    if reason.len() > 123 {
+        return Err("WebSocket close reason exceeds 123 bytes");
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl WebSocketSession {
     fn receive(&self, py: Python<'_>) -> PyResult<WebSocketReceive> {
@@ -146,20 +157,26 @@ impl WebSocketSession {
         let message = py.detach(move || {
             incoming
                 .lock()
-                .map_err(|_| "failed to lock WebSocket receiver".to_string())?
-                .blocking_recv()
-                .ok_or_else(|| "WebSocket connection closed".to_string())
+                .map_err(|_| "failed to lock WebSocket receiver".to_string())
+                .map(|mut guard| guard.blocking_recv())
         });
         match message {
-            Ok(IncomingMessage::Text(value)) => {
+            Ok(Some(IncomingMessage::Text(value))) => {
                 Ok(("text".to_string(), Some(value), None, None, None))
             }
-            Ok(IncomingMessage::Binary(value)) => {
+            Ok(Some(IncomingMessage::Binary(value))) => {
                 Ok(("bytes".to_string(), None, Some(value), None, None))
             }
-            Ok(IncomingMessage::Close(code, reason)) => {
+            Ok(Some(IncomingMessage::Close(code, reason))) => {
                 Ok(("close".to_string(), None, None, Some(code), Some(reason)))
             }
+            Ok(None) => Ok((
+                "close".to_string(),
+                None,
+                None,
+                Some(1006),
+                Some("connection closed".to_string()),
+            )),
             Err(error) => Err(PyRuntimeError::new_err(error)),
         }
     }
@@ -178,9 +195,10 @@ impl WebSocketSession {
 
     #[pyo3(signature = (code = 1000, reason = "".to_string()))]
     fn close(&self, py: Python<'_>, code: u16, reason: String) -> PyResult<()> {
+        validate_websocket_close(code, &reason).map_err(PyValueError::new_err)?;
         let outgoing = self.outgoing.clone();
-        py.detach(move || outgoing.blocking_send(OutgoingMessage::Close(code, reason)))
-            .map_err(|_| PyRuntimeError::new_err("WebSocket connection closed"))
+        let _ = py.detach(move || outgoing.blocking_send(OutgoingMessage::Close(code, reason)));
+        Ok(())
     }
 }
 
@@ -432,8 +450,7 @@ impl HigumaCore {
             workers
         };
 
-        let addr: SocketAddr = format!("{host}:{port}")
-            .parse()
+        let addr = parse_bind_addr(&host, port)
             .map_err(|e| PyValueError::new_err(format!("invalid host/port: {e}")))?;
 
         let state = SharedState {
@@ -879,7 +896,14 @@ async fn dispatch(
         .await
         .ok();
     let method = parts.method.as_str().to_ascii_uppercase();
-    let path = normalize_path(parts.uri.path());
+    let raw_path = parts.uri.path();
+    let path = if raw_path.is_empty() {
+        "/".to_string()
+    } else if raw_path.starts_with('/') {
+        raw_path.to_string()
+    } else {
+        format!("/{raw_path}")
+    };
     let query = parts.uri.query().unwrap_or_default().to_string();
     let headers = parts.headers;
 
@@ -1187,13 +1211,31 @@ fn websocket_request_to_dict<'py>(
     Ok(raw)
 }
 
+fn parse_bind_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
+    let trimmed = host.trim();
+    let unbracketed = trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    if let Ok(ip) = unbracketed.parse::<std::net::IpAddr>() {
+        return Ok(SocketAddr::new(ip, port));
+    }
+    format!("{trimmed}:{port}")
+        .parse()
+        .map_err(|error: std::net::AddrParseError| error.to_string())
+}
+
 fn websocket_origin_allowed(
     headers: &axum::http::HeaderMap<HeaderValue>,
     allowed_origins: &[String],
 ) -> bool {
-    let Some(origin) = headers.get("origin") else {
+    let mut origins = headers.get_all("origin").iter();
+    let Some(origin) = origins.next() else {
         return true;
     };
+    if origins.next().is_some() {
+        return false;
+    }
     let Ok(origin) = origin.to_str() else {
         return false;
     };
@@ -1206,39 +1248,70 @@ fn websocket_origin_allowed(
             .any(|value| value.trim_end_matches('/') == origin.trim_end_matches('/'));
     }
 
-    let Some(host_header) = headers.get("host").and_then(|value| value.to_str().ok()) else {
+    let mut hosts = headers.get_all("host").iter();
+    let Some(host_header) = hosts.next().and_then(|value| value.to_str().ok()) else {
         return false;
     };
+    if hosts.next().is_some() {
+        return false;
+    }
     let Ok(origin_url) = url::Url::parse(origin) else {
         return false;
     };
+    if !matches!(origin_url.scheme(), "http" | "https")
+        || !origin_url.username().is_empty()
+        || origin_url.password().is_some()
+        || origin_url.path() != "/"
+        || origin_url.query().is_some()
+        || origin_url.fragment().is_some()
+    {
+        return false;
+    }
     let Some(origin_host) = origin_url.host_str() else {
         return false;
     };
-    let (host, port) = split_host_port(host_header);
-    origin_host.eq_ignore_ascii_case(&host)
+    let normalized_origin_host = origin_host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(origin_host);
+    let Some((host, port)) = split_host_port(host_header) else {
+        return false;
+    };
+    normalized_origin_host.eq_ignore_ascii_case(&host)
         && match port {
             Some(expected) => origin_url.port_or_known_default() == Some(expected),
             None => origin_url.port().is_none(),
         }
 }
 
-fn split_host_port(value: &str) -> (String, Option<u16>) {
+fn split_host_port(value: &str) -> Option<(String, Option<u16>)> {
     let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
     if let Some(rest) = value.strip_prefix('[') {
-        if let Some((host, suffix)) = rest.split_once(']') {
-            let port = suffix
-                .strip_prefix(':')
-                .and_then(|item| item.parse::<u16>().ok());
-            return (host.to_string(), port);
+        let (host, suffix) = rest.split_once(']')?;
+        if host.is_empty() {
+            return None;
         }
-    }
-    if value.matches(':').count() == 1 {
-        if let Some((host, port)) = value.rsplit_once(':') {
-            return (host.to_string(), port.parse::<u16>().ok());
+        if suffix.is_empty() {
+            return Some((host.to_string(), None));
         }
+        let port = suffix.strip_prefix(':')?.parse::<u16>().ok()?;
+        return Some((host.to_string(), Some(port)));
     }
-    (value.to_string(), None)
+    match value.matches(':').count() {
+        0 => Some((value.to_string(), None)),
+        1 => {
+            let (host, port_text) = value.rsplit_once(':')?;
+            if host.is_empty() {
+                return None;
+            }
+            let port = port_text.parse::<u16>().ok()?;
+            Some((host.to_string(), Some(port)))
+        }
+        _ => None,
+    }
 }
 
 fn headers_to_dict<'py>(
@@ -2297,5 +2370,74 @@ mod tests {
         assert!(!response.headers().contains_key("connection"));
         assert!(!response.headers().contains_key("x-private"));
         assert_eq!(response.headers().get("x-safe").unwrap(), "visible");
+    }
+
+    #[test]
+    fn websocket_origin_handles_ipv6_and_rejects_malformed_headers() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("host", HeaderValue::from_static("[::1]:8000"));
+        headers.insert("origin", HeaderValue::from_static("http://[::1]:8000"));
+        assert!(websocket_origin_allowed(&headers, &[]));
+
+        headers.insert("origin", HeaderValue::from_static("http://[::1]:9000"));
+        assert!(!websocket_origin_allowed(&headers, &[]));
+
+        headers.insert("host", HeaderValue::from_static("[::1]"));
+        headers.insert("origin", HeaderValue::from_static("https://[::1]"));
+        assert!(websocket_origin_allowed(&headers, &[]));
+
+        for invalid_origin in [
+            "ftp://[::1]",
+            "http://user@[::1]",
+            "http://[::1]/path",
+            "http://[::1]?q=1",
+        ] {
+            headers.insert("origin", HeaderValue::from_str(invalid_origin).unwrap());
+            assert!(
+                !websocket_origin_allowed(&headers, &[]),
+                "expected {invalid_origin:?} to be rejected"
+            );
+        }
+
+        headers.insert("host", HeaderValue::from_static("example.com:bogus"));
+        headers.insert("origin", HeaderValue::from_static("http://example.com"));
+        assert!(!websocket_origin_allowed(&headers, &[]));
+
+        headers.insert("host", HeaderValue::from_static("example.com"));
+        headers.insert("origin", HeaderValue::from_static("https://example.com"));
+        headers.append("origin", HeaderValue::from_static("https://evil.example"));
+        assert!(!websocket_origin_allowed(&headers, &[]));
+    }
+
+    #[test]
+    fn parse_bind_addr_supports_ipv4_and_ipv6() {
+        assert_eq!(
+            parse_bind_addr("127.0.0.1", 8000).unwrap().to_string(),
+            "127.0.0.1:8000"
+        );
+        assert_eq!(
+            parse_bind_addr("::1", 8000).unwrap().to_string(),
+            "[::1]:8000"
+        );
+        assert_eq!(
+            parse_bind_addr("[::1]", 8000).unwrap().to_string(),
+            "[::1]:8000"
+        );
+        assert_eq!(
+            parse_bind_addr("::", 8080).unwrap().to_string(),
+            "[::]:8080"
+        );
+        assert!(parse_bind_addr("not-an-ip", 8000).is_err());
+    }
+
+    #[test]
+    fn validate_websocket_close_enforces_rfc6455_bounds() {
+        assert!(validate_websocket_close(1000, "done").is_ok());
+        assert!(validate_websocket_close(4000, &"a".repeat(123)).is_ok());
+        assert!(validate_websocket_close(1005, "").is_err());
+        assert!(validate_websocket_close(1006, "").is_err());
+        assert!(validate_websocket_close(2999, "").is_err());
+        assert!(validate_websocket_close(5000, "").is_err());
+        assert!(validate_websocket_close(1000, &"a".repeat(124)).is_err());
     }
 }

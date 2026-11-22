@@ -7,6 +7,47 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-11-22
+
+### Fixed
+
+- Preserve trailing slashes in native server `request.path` and WebSocket paths
+  (while continuing to normalize paths for route matching), preventing an infinite
+  `308` redirect loop on `mount_static(..., html=True)` directory indexes and keeping
+  native behavior consistent with ASGI, WSGI, and `TestClient`.
+- Support bare IPv6 bind hosts (e.g. `host="::1"`, `host="::"`) in `app.run()`, fix
+  native IPv6 WebSocket same-origin validation (stripping brackets from `url::Url`
+  hosts and rejecting malformed ports, non-`http(s)` schemes, userinfo, and duplicate
+  `Origin`/`Host` headers), normalize trailing slashes in ASGI WebSocket
+  `allowed_origins`, validate RFC 6455 close codes/reason length in native
+  `WebSocketSession.close()`, and return a clean disconnect event when the receive
+  channel closes.
+- Merge duplicate request headers from `raw_headers` per RFC 9110 (`"; "` for
+  `Cookie`, `", "` for all other headers) instead of overwriting earlier values,
+  preserving multi-hop `X-Forwarded-For`, multi-header `Accept`, and rejecting
+  bypass attempts via duplicate `Access-Control-Request-Headers`, `Origin`, or `Host`
+  headers.
+- Record inner middleware `HTTPException` responses (e.g. `429` from
+  `RateLimitMiddleware` or `403` from `CSRFProtection`/`TrustedHostMiddleware`) with
+  their actual status and `completed` outcome — and `asyncio.CancelledError` as
+  `cancelled` — in `Observability.__call__`, and guard ASGI/mounted `Content-Length`
+  and port parsing against malformed values.
+- Support `(name, value)` header sequences in `make_response()` while preserving
+  repeated headers such as multiple `Set-Cookie` entries, and split
+  `ServerSentEvent.encode()` lines strictly on `\r\n`, `\r`, or `\n` per the WHATWG
+  SSE specification.
+- Rotate custom `CSRFProtection(field_name=...)` tokens on `AuthManager.login_user()`,
+  avoid splitting single-string `roles`/`permissions` claims into individual
+  characters in `roles_required`/`permissions_required` and WebSocket preflight auth
+  checks, preserve existing query parameters in `OAuth2Client.authorization_url()`,
+  and compare UTF-8 bytes in `OAuth2Client.validate_state()`.
+- Close `FileResponse` handles if `seek()` fails in WSGI `_Body`, guard WSGI request
+  storage cleanup and single-execution background handling on `OSError`, return
+  standard headers and empty `HEAD` bodies on ASGI `400` path-encoding failures, and
+  enforce `nullable=False` validation in `Database` `Session.save()` matching
+  `Session.add()`.
+- Upgrade the Rust `url` crate dependency to `>=2.5.9` to address `RUSTSEC-2026-0592`.
+
 ## [0.11.3] - 2026-11-22
 
 ### Fixed

@@ -5,7 +5,7 @@
 `examples/`の実行はrepositoryを取得し、そのroot directoryで行ってください。
 
 ```bash
-python -m pip install "higuma[asgi,async-db,integrations,observability]==0.11.3"
+python -m pip install "higuma[asgi,async-db,integrations,observability]==0.11.4"
 ```
 
 ## ASGIの非同期高速経路
@@ -132,6 +132,8 @@ print(observer.snapshot())  # 保護された管理経路から利用する
 
 ASGI wrapperはstream完了・切断までの時間を測り、高速経路を保ちます。native/WSGIでは
 `app.add_middleware(observer)`を使えますが、middleware呼出部分の時間であり、lazy stream完了時間ではありません。
+内側のmiddlewareが`HTTPException`（例: `RateLimitMiddleware`の429や`CSRFProtection`の403）を送出した場合も、
+実際のstatus codeと`completed`（キャンセル時は`cancelled`）として記録します。
 両方を同時登録すると二重計測になるので避けます。
 
 request IDは既定でサーバー生成し、応答の`X-Request-ID`へ載せます。ASGIではscope.state、nativeではrequest.stateにも格納します。

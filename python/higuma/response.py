@@ -486,6 +486,9 @@ class StreamingResponse(Response):
         raise TypeError("stream chunks must be str or bytes-like")
 
 
+_SSE_LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")
+
+
 @dataclass(frozen=True, slots=True)
 class ServerSentEvent:
     data: Any = ""
@@ -497,7 +500,7 @@ class ServerSentEvent:
     def encode(self) -> bytes:
         lines: list[str] = []
         if self.comment is not None:
-            lines.extend(f": {line}" for line in str(self.comment).splitlines() or [""])
+            lines.extend(f": {line}" for line in _SSE_LINE_BREAK_RE.split(str(self.comment)))
         if self.event is not None:
             lines.append(f"event: {_sse_single_line(self.event, 'event')}")
         if self.id is not None:
@@ -515,7 +518,7 @@ class ServerSentEvent:
                 separators=(",", ":"),
             )
         )
-        lines.extend(f"data: {line}" for line in data.splitlines() or [""])
+        lines.extend(f"data: {line}" for line in _SSE_LINE_BREAK_RE.split(data))
         return ("\n".join(lines) + "\n\n").encode("utf-8")
 
 
@@ -572,16 +575,52 @@ ResponseValue = (
 )
 
 
+ResponseHeaders = Mapping[str, str] | Iterable[tuple[str, str]]
+
+
+def _header_pairs(headers: ResponseHeaders | None) -> list[tuple[str, str]]:
+    if headers is None:
+        return []
+    if isinstance(headers, Mapping):
+        return [(str(key), str(value)) for key, value in headers.items()]
+    if isinstance(headers, (str, bytes, bytearray)):
+        raise TypeError("response headers must be a mapping or iterable of (name, value) pairs")
+    pairs: list[tuple[str, str]] = []
+    for item in headers:
+        try:
+            key, value = item
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                "response headers must be a mapping or iterable of (name, value) pairs"
+            ) from exc
+        pairs.append((str(key), str(value)))
+    return pairs
+
+
+def _apply_headers(response: Response, headers: ResponseHeaders | None) -> None:
+    seen: set[str] = set()
+    for name, value in _header_pairs(headers):
+        normalized, text = _validate_header(name, value)
+        if normalized in seen:
+            response.append_header(normalized, text)
+        else:
+            response.headers[normalized] = text
+            seen.add(normalized)
+
+
 def make_response(
     value: ResponseValue = b"",
     status: int | None = None,
-    headers: Mapping[str, str] | None = None,
+    headers: ResponseHeaders | None = None,
 ) -> Response | FileResponse | TemplateResponse:
-    tuple_headers: Mapping[str, str] | None = None
+    tuple_headers: ResponseHeaders | None = None
     if isinstance(value, tuple):
         if len(value) == 2:
             value, tuple_status = value
-            if isinstance(tuple_status, Mapping):
+            if isinstance(tuple_status, Mapping) or (
+                isinstance(tuple_status, Iterable)
+                and not isinstance(tuple_status, (str, bytes, bytearray))
+            ):
                 tuple_headers = tuple_status
             else:
                 status = int(tuple_status)
@@ -594,26 +633,27 @@ def make_response(
             )
 
     if isinstance(value, (Response, FileResponse, TemplateResponse)):
-        response = value
+        response: Response = value
         if status is not None:
             response.status = status
-        merged_headers = {**dict(tuple_headers or {}), **dict(headers or {})}
-        response.headers.update(
-            {str(key).lower(): str(header_value) for key, header_value in merged_headers.items()}
-        )
+        _apply_headers(response, tuple_headers)
+        _apply_headers(response, headers)
         return response
 
     final_status = 200 if status is None else status
-    final_headers = {**dict(tuple_headers or {}), **dict(headers or {})}
     if isinstance(value, (dict, list)) or (
         hasattr(value, "__dataclass_fields__") and not isinstance(value, type)
     ):
-        return JSONResponse(value, final_status, final_headers)
-    if value is None:
-        return Response(b"", final_status, final_headers)
-    if isinstance(value, str):
-        return HTMLResponse(value, final_status, final_headers)
-    return Response(value, final_status, final_headers)
+        response = JSONResponse(value, final_status)
+    elif value is None:
+        response = Response(b"", final_status)
+    elif isinstance(value, str):
+        response = HTMLResponse(value, final_status)
+    else:
+        response = Response(value, final_status)
+    _apply_headers(response, tuple_headers)
+    _apply_headers(response, headers)
+    return response
 
 
 def _jsonify_data(args: tuple[Any, ...], fields: Mapping[str, Any]) -> Any:

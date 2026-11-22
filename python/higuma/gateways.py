@@ -37,6 +37,17 @@ _HOP_HEADERS = {
 }
 
 
+def _parse_content_length(headers: Any) -> int | None:
+    for key, value in headers:
+        if bytes(key).lower() == b"content-length":
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed >= 0 else None
+    return None
+
+
 def _limit(app: Any) -> int:
     return int(app.config["MAX_CONTENT_LENGTH"])
 
@@ -128,7 +139,11 @@ class _Body:
         self.remaining = None
         if isinstance(response, FileResponse):
             self.file = open(response.path, "rb")  # noqa: SIM115 - ownership ends in close()
-            self.file.seek(response.offset)
+            try:
+                self.file.seek(response.offset)
+            except BaseException:
+                self.file.close()
+                raise
             self.remaining = response.length
             self.length = response.length
         elif isinstance(response, StreamingResponse):
@@ -198,19 +213,28 @@ class WSGIApplication:
         self.app = app
 
     def __call__(self, environ: Mapping[str, Any], start_response: Callable[..., Any]):
+        storage = None
         try:
             raw = self._request(environ)
+            storage = raw.get("body_file")
             response = _dispatch(self.app, raw)
         except HTTPException as error:
+            if storage is not None:
+                storage.close()
             response = self.app._default_http_error(error)
         except Exception:
+            if storage is not None:
+                storage.close()
             self.app.logger.exception("WSGI dispatch failed")
             response = self.app._default_http_error(HTTPException(500))
         try:
             body = _Body(response, str(environ.get("REQUEST_METHOD", "GET")).upper())
         except OSError:
-            if response.background is not None:
-                response.background()
+            background, response.background = response.background, None
+            if background is not None:
+                background()
+            elif storage is not None:
+                storage.close()
             response = self.app._default_http_error(HTTPException(500))
             body = _Body(response, str(environ.get("REQUEST_METHOD", "GET")).upper())
         status = response.status_code
@@ -479,8 +503,22 @@ class ASGIApplication:
         except (UnicodeError, HTTPException):
             storage.close()
             response = self.app._default_http_error(BadRequest())
-            await send({"type": "http.response.start", "status": 400, "headers": []})
-            await send({"type": "http.response.body", "body": response.body})
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 400,
+                    "headers": [
+                        (k.encode(), v.encode("latin-1"))
+                        for k, v in _headers(response, len(response.body))
+                    ],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b"" if scope.get("method") == "HEAD" else response.body,
+                }
+            )
             return
 
         response_complete = False
@@ -492,14 +530,7 @@ class ASGIApplication:
                 if raw["method"] == "HEAD" or event["status"] in {204, 205, 304}:
                     response_remaining = 0
                 else:
-                    response_remaining = next(
-                        (
-                            int(value)
-                            for key, value in event["headers"]
-                            if key.lower() == b"content-length"
-                        ),
-                        None,
-                    )
+                    response_remaining = _parse_content_length(event["headers"])
             elif event["type"] == "http.response.body":
                 if response_remaining is not None:
                     response_remaining -= len(event.get("body", b""))
@@ -633,9 +664,11 @@ class ASGIApplication:
 
         origin = Request(raw).headers.get("origin")
         allowed = route.openapi.get("allowed_origins")
-        if origin and allowed and "*" not in allowed and origin not in allowed:
-            await send({"type": "websocket.close", "code": 1008})
-            return
+        if origin and allowed and "*" not in allowed:
+            allowed_normalized = {item.rstrip("/") for item in allowed}
+            if origin.rstrip("/") not in allowed_normalized:
+                await send({"type": "websocket.close", "code": 1008})
+                return
         queue_size = int(self.app.config.get("ASGI_WEBSOCKET_QUEUE_SIZE", 4))
         message_limit = int(self.app.config.get("ASGI_WEBSOCKET_MAX_MESSAGE_SIZE", 1024 * 1024))
         if queue_size < 1 or message_limit < 1:

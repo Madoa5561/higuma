@@ -203,17 +203,14 @@ class Request:
             )
             for key, value in raw_headers
         )
+        grouped_headers: dict[str, list[str]] = {}
+        for key, value in self.raw_headers:
+            name = key.decode("latin-1").lower()
+            grouped_headers.setdefault(name, []).append(value.decode("latin-1"))
         parsed_headers = {
-            key.decode("latin-1"): value.decode("latin-1") for key, value in self.raw_headers
+            name: ("; " if name == "cookie" else ", ").join(values)
+            for name, values in grouped_headers.items()
         }
-        cookie_values = [
-            value.decode("latin-1") for key, value in self.raw_headers if key.lower() == b"cookie"
-        ]
-        if len(cookie_values) > 1:
-            parsed_headers = {
-                key: value for key, value in parsed_headers.items() if key.lower() != "cookie"
-            }
-            parsed_headers["cookie"] = "; ".join(cookie_values)
         self.headers = Headers(parsed_headers)
         self._body_file = raw.get("body_file")
         self._body = None if self._body_file is not None else bytes(raw.get("body", b""))

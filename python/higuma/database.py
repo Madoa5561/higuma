@@ -398,8 +398,13 @@ class Session:
         ]
         if not fields:
             return instance
+        values = []
+        for name, field in fields:
+            value = getattr(instance, name)
+            if value is None and not field.nullable:
+                raise ValueError(f"{model.__name__}.{name} cannot be null")
+            values.append(field.to_database(value))
         assignments = ", ".join(f"{quote_identifier(name)} = ?" for name, _ in fields)
-        values = [field.to_database(getattr(instance, name)) for name, field in fields]
         values.append(primary_key.to_database(primary_value))
         table = quote_identifier(model.__tablename__)
         # All identifiers pass quote_identifier; all values use placeholders.

@@ -72,14 +72,7 @@ def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
                 if request.method == "HEAD" or int(event.get("status", 200)) in {204, 205, 304}:
                     response_remaining = 0
                 else:
-                    response_remaining = next(
-                        (
-                            int(value)
-                            for key, value in event.get("headers", [])
-                            if bytes(key).lower() == b"content-length"
-                        ),
-                        None,
-                    )
+                    response_remaining = _parse_content_length(event.get("headers", []))
             elif event.get("type") == "http.response.body":
                 if response_remaining is not None:
                     response_remaining -= len(event.get("body", b""))
@@ -211,6 +204,17 @@ def _mounted_response(
     return response
 
 
+def _parse_content_length(headers: Any) -> int | None:
+    for key, value in headers:
+        if bytes(key).lower() == b"content-length":
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed >= 0 else None
+    return None
+
+
 def _server_address(host_header: str, scheme: str) -> tuple[str, str]:
     value = host_header.strip()
     if value.startswith("[") and "]" in value:
@@ -219,4 +223,6 @@ def _server_address(host_header: str, scheme: str) -> tuple[str, str]:
         port = value[closing + 1 :].removeprefix(":")
     else:
         host, port = value.rsplit(":", 1) if value.count(":") == 1 else (value, "")
-    return host, port or ("443" if scheme == "https" else "80")
+    if not port or not port.isascii() or not port.isdigit():
+        port = "443" if scheme == "https" else "80"
+    return host, port

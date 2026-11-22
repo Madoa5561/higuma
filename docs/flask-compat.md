@@ -165,7 +165,7 @@ JSON MIMEは`application/json`または`application/*+json`です。requestのJS
 
 ## 0.11: URL hooks・再利用部品・設定読込
 
-この節は0.11系列の仕様です。`python -m pip install "higuma==0.11.3"`で利用します。
+この節は0.11系列の仕様です。`python -m pip install "higuma==0.11.4"`で利用します。
 repository rootの開発用には`python -m pip install -e .`も使えます。必須Python依存は0のままです。
 
 ### 言語やtenantなどのURL値をまとめて扱う
@@ -254,8 +254,9 @@ loader・import対象・filenameは開発者が管理し、requestの入力を�
   複数位置引数はarray、keywordだけならobjectです。位置引数とkeywordの混在は`TypeError`です。
 - `app.jsonify(*values, status=..., headers=...)`にも反映します。`status`／`headers`は従来どおり
   response指定用のHiguma拡張です。同名のJSON fieldにはdictまたはmoduleの`jsonify`を使います。
-- `make_response()`は空の200 responseを返し、`(body, {header: value})`も受け取ります。
-  Werkzeugのresponse classやstatus文字列、重複headerの全操作を互換化するものではありません。
+- `make_response()`は空の200 responseを返し、`(body, {header: value})`や
+  `(body, status, [(name, value), ...])`の重複header組も受け取ります。
+  Werkzeugのresponse classやstatus文字列の全操作を互換化するものではありません。
 - `request.get_json(cache=False)`は解析済みJSONを再利用・更新せず、受信済みbodyを再解析します。
   bodyそのものを破棄・再受信する指定ではありません。Flaskの未cache stream消費とは異なります。
 

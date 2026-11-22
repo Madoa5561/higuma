@@ -92,6 +92,13 @@ def _exercise_http(port: int) -> None:
     assert response.read() == b'{"value":42,"typed":true}'
     connection.close()
 
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request("GET", "/echo-path/")
+    response = connection.getresponse()
+    assert response.status == 200, response.status
+    assert response.read() == b'{"path":"/echo-path/"}'
+    connection.close()
+
 
 def _exercise_flask_helpers() -> None:
     from higuma import (
@@ -168,6 +175,8 @@ def _exercise_flask_helpers() -> None:
     assert client.get("/assigned-background").body == b"bear"
     assert assigned == ["/assigned-background"]
     assert client.head("/sized-stream").headers["content-length"] == "4"
+    multi = app.make_response(("ok", 200, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]))
+    assert [v for k, v in multi.header_items if k == "set-cookie"] == ["a=1", "b=2"]
     with app.test_request_context(
         "/smoke/read",
         headers={"cookie": "filter[page]=1; path=/admin; higuma_session=token"},
@@ -315,6 +324,10 @@ def health():
 @app.get('/values/<int:value>')
 def value(value: int):
     return {'value': value, 'typed': isinstance(value, int)}
+
+@app.get('/echo-path')
+def echo_path():
+    return {'path': request.path}
 
 async def completed():
     await asyncio.sleep(0)

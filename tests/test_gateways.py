@@ -725,3 +725,121 @@ def test_asgi_websocket_handshake_cookies_require_supported_spec(spec_version):
         assert events[0]["type"] == "websocket.accept"
         assert any(key == b"set-cookie" for key, _ in events[0]["headers"])
         assert called == [True]
+
+
+def test_asgi_websocket_allowed_origins_normalizes_trailing_slash():
+    app = Higuma(__name__, static_folder=None)
+    connected = []
+
+    @app.websocket("/ws", allowed_origins=("https://app.example/",))
+    def ws_handler(ws):
+        connected.append(True)
+
+    async def exercise():
+        incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+        await incoming.put({"type": "websocket.connect"})
+        await incoming.put({"type": "websocket.disconnect", "code": 1000})
+        await asyncio.wait_for(
+            app.asgi_app(
+                scope(
+                    "/ws",
+                    type="websocket",
+                    headers=[
+                        (b"host", b"example.test"),
+                        (b"origin", b"https://app.example"),
+                    ],
+                ),
+                incoming.get,
+                outgoing.put,
+            ),
+            3,
+        )
+        return await outgoing.get()
+
+    assert asyncio.run(exercise())["type"] == "websocket.accept"
+    assert connected == [True]
+
+
+def test_asgi_bad_request_head_and_mounted_asgi_malformed_content_length():
+    app = Higuma(__name__, static_folder=None)
+
+    async def sub_asgi(asgi_scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-length", b"bogus"), (b"content-type", b"text/plain")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"ok", "more_body": False})
+
+    app.mount_asgi("/sub", sub_asgi)
+
+    events = asyncio.run(
+        asgi_request(
+            app,
+            "/sub/hello",
+            headers=[(b"host", b"example.test:notaport")],
+        )
+    )
+    assert events[0]["status"] == 200
+    assert content(events) == b"ok"
+
+    bad_events = asyncio.run(
+        asgi_request(
+            app,
+            "/bad",
+            method="HEAD",
+            raw_path=b"/\xff",
+        )
+    )
+    assert bad_events[0]["status"] == 400
+    assert any(key == b"content-type" for key, _ in bad_events[0]["headers"])
+    assert content(bad_events) == b""
+
+
+def test_wsgi_body_seek_failure_closes_file_and_background_runs_once(tmp_path):
+    from unittest.mock import patch
+
+    from higuma import BackgroundTask, FileResponse
+    from higuma.gateways import _Body
+
+    sample = tmp_path / "sample.bin"
+    sample.write_bytes(b"hello")
+    closed_handles = []
+    real_open = open
+
+    class FailingSeekFile:
+        def __init__(self, wrapped):
+            self._wrapped = wrapped
+
+        def seek(self, offset):
+            raise OSError("seek failed")
+
+        def close(self):
+            closed_handles.append(True)
+            self._wrapped.close()
+
+    def fake_open(path, mode="r", *args, **kwargs):
+        return FailingSeekFile(real_open(path, mode, *args, **kwargs))
+
+    with (
+        patch("builtins.open", side_effect=fake_open),
+        pytest.raises(OSError, match="seek failed"),
+    ):
+        _Body(FileResponse(sample), "GET")
+    assert closed_handles == [True]
+
+    app = Higuma(__name__, static_folder=None)
+    ran = []
+
+    @app.get("/missing")
+    def missing():
+        response = FileResponse(sample)
+        response.background = BackgroundTask(ran.append, "bg")
+        sample.unlink()
+        return response
+
+    result = wsgi_request(app, "/missing")
+    assert result["status"] == 500
+    assert ran == ["bg"]

@@ -314,6 +314,70 @@ class PythonCoreRegressionTests(unittest.TestCase):
             ["birthday", "created_at", "identifier", "metadata", "score", "tags"],
         )
 
+    def test_make_response_preserves_duplicate_sequence_headers(self) -> None:
+        from higuma import Response, make_response
+
+        response = make_response(
+            ("ok", 201, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2"), ("X-Tag", "one")])
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            [value for name, value in response.header_items if name == "set-cookie"],
+            ["a=1", "b=2"],
+        )
+        self.assertEqual(response.headers["x-tag"], "one")
+
+        two_tuple = make_response(("ok", [("X-Dup", "1"), ("X-Dup", "2")]))
+        self.assertEqual(two_tuple.status_code, 200)
+        self.assertEqual(
+            [value for name, value in two_tuple.header_items if name == "x-dup"],
+            ["1", "2"],
+        )
+
+        overridden = make_response(
+            (Response("ok", headers={"x-a": "0"}), {"x-a": "1"}),
+            headers={"x-a": "2"},
+        )
+        self.assertEqual(overridden.headers["x-a"], "2")
+
+    def test_sse_encode_follows_whatwg_line_breaks(self) -> None:
+        from higuma import ServerSentEvent
+
+        self.assertEqual(
+            ServerSentEvent(data="hello\n").encode(),
+            b"data: hello\ndata: \n\n",
+        )
+        self.assertEqual(
+            ServerSentEvent(data="a\r\nb\rc\nd").encode(),
+            b"data: a\ndata: b\ndata: c\ndata: d\n\n",
+        )
+        unicode_sep = "line1\u2028line2"
+        self.assertEqual(
+            ServerSentEvent(data=unicode_sep).encode(),
+            f"data: {unicode_sep}\n\n".encode(),
+        )
+        self.assertEqual(
+            ServerSentEvent(data="", comment="c1\n").encode(),
+            b": c1\n: \ndata: \n\n",
+        )
+
+    def test_database_session_save_enforces_not_null_fields(self) -> None:
+        from higuma import Database, Integer, Model, String
+
+        class Item(Model):
+            __tablename__ = "items_null_check"
+            id = Integer(primary_key=True)
+            name = String(nullable=False)
+
+        db = Database("sqlite:///:memory:")
+        db.create_all(Item)
+        with db.session() as db_session:
+            item = db_session.add(Item(name="bear"))
+            db_session.commit()
+            item.name = None
+            with self.assertRaises(ValueError):
+                db_session.save(item)
+
 
 if __name__ == "__main__":
     unittest.main()

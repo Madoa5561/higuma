@@ -19,6 +19,17 @@ _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE"}
 
 
+def _parse_content_length(headers) -> int | None:
+    for key, value in headers:
+        if bytes(key).lower() == b"content-length":
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed >= 0 else None
+    return None
+
+
 class JSONLogFormatter(logging.Formatter):
     def format(self, record):
         return json.dumps(
@@ -137,6 +148,12 @@ class Observability:
                 response.headers["x-request-id"] = identifier
                 status, outcome = response.status_code, "completed"
                 return response
+            except HTTPException as error:
+                status, outcome = error.status_code, "completed"
+                raise
+            except asyncio.CancelledError:
+                status, outcome = 0, "cancelled"
+                raise
             finally:
                 self._finished(method, route, status, outcome, started, identifier, span)
 
@@ -186,14 +203,7 @@ class Observability:
                     if scope.get("method", "GET").upper() == "HEAD" or status in {204, 205, 304}:
                         response_remaining = 0
                     else:
-                        response_remaining = next(
-                            (
-                                int(value)
-                                for key, value in headers
-                                if key.lower() == b"content-length"
-                            ),
-                            None,
-                        )
+                        response_remaining = _parse_content_length(headers)
                 elif event["type"] == "http.response.body":
                     if response_remaining is not None:
                         response_remaining -= len(event.get("body", b""))

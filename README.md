@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.4** — nativeサーバーの末尾`/`維持（`mount_static(..., html=True)`の無限リダイレクト解消）、
+> IPv6 bind・IPv6 WebSocket same-origin・close検証、RFC 9110重複header統合、
+> `Observability` middlewareの4xx/cancel記録、`make_response`重複header組・SSE改行仕様準拠、
+> 認証・CSRF・OAuth2・ORM `save()`境界を改善。必須Python依存は0のままです。
+>
 > **0.11.3** — `mount_asgi`の非同期sub-app切断制御、堅牢な`Request.cookies`解析、
 > `MethodView`/`View`の型付き引数・DI・OpenAPI対応、lifespanの同一イベントループ維持、
 > `ASGITestClient`の`follow_redirects`対応を改善。必須Python依存は0のままです。

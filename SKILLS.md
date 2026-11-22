@@ -317,6 +317,11 @@ supervisor, streaming, and proxy changes.
   streams close before background/DI cleanup and when replaced by after-request hooks.
   In 0.11.3+, `View`/`MethodView` also resolve typed parameters/DI and emit per-method
   OpenAPI schemas, and `Request.cookies` isolates malformed/reserved cookie pairs.
+  In 0.11.4+, native `request.path` preserves trailing slashes (matching ASGI/WSGI/TestClient
+  and fixing `mount_static(..., html=True)` directory indexes), duplicate request headers
+  merge per RFC 9110, `make_response()` accepts `(name, value)` header sequences, native
+  `app.run()` and WebSocket same-origin support IPv6, and `Observability` middleware
+  records inner `HTTPException` statuses accurately.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

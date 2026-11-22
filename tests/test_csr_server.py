@@ -10,13 +10,17 @@ import pytest
 
 APPLICATION = r"""
 import sys
-from higuma import FileResponse, Higuma
+from higuma import FileResponse, Higuma, request
 
 app = Higuma(__name__, static_folder=None)
 
 @app.get("/api/hello")
 def hello():
     return {"message": "hello"}
+
+@app.get("/echo-path")
+def echo_path():
+    return {"path": request.path}
 
 @app.post("/submit")
 def submit():
@@ -30,6 +34,7 @@ def download():
 def websocket(ws):
     ws.close()
 
+app.mount_static("/site", sys.argv[1] + "/site", html=True)
 app.mount_spa("/", sys.argv[1])
 app.run(port=int(sys.argv[2]))
 """
@@ -55,6 +60,9 @@ def csr_server(tmp_path_factory):
     (root / "index.html").write_text("<html>CSR shell</html>", encoding="utf-8")
     (root / "assets").mkdir()
     (root / "assets/app.js").write_text("console.log('ready')", encoding="utf-8")
+    (root / "site/guide").mkdir(parents=True)
+    (root / "site/index.html").write_text("<html>Site root</html>", encoding="utf-8")
+    (root / "site/guide/index.html").write_text("<html>Guide page</html>", encoding="utf-8")
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -152,3 +160,20 @@ def test_real_file_etag_with_commas(csr_server):
     assert server.request("GET", "/download", {"If-None-Match": '"part,revision"'})[0] == 304
     assert server.request("GET", "/download", {"If-Match": '"old", "part,revision"'})[0] == 200
     assert server.request("GET", "/download", {"If-Match": 'W/"part,revision"'})[0] == 412
+
+
+def test_real_native_server_preserves_trailing_slashes_and_static_html_indexes(csr_server):
+    server = csr_server
+    status, _, body = server.request("GET", "/echo-path/")
+    assert status == 200
+    assert json.loads(body) == {"path": "/echo-path/"}
+
+    status, headers, _ = server.request("GET", "/site")
+    assert status == 308 and headers["location"] == "/site/"
+    status, _, body = server.request("GET", "/site/")
+    assert status == 200 and body == b"<html>Site root</html>"
+
+    status, headers, _ = server.request("GET", "/site/guide")
+    assert status == 308 and headers["location"] == "/site/guide/"
+    status, _, body = server.request("GET", "/site/guide/")
+    assert status == 200 and body == b"<html>Guide page</html>"

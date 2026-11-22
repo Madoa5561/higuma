@@ -244,6 +244,19 @@ def error_websocket(ws):
     raise RuntimeError("websocket failed")
 
 
+@app.websocket("/ws-validate-close")
+def validate_close_websocket(ws):
+    results = []
+    for code, reason in ((1005, ""), (1000, "x" * 124)):
+        try:
+            ws.close(code, reason)
+        except ValueError:
+            results.append("rejected")
+    ws.send_text(",".join(results))
+    ws.close(1000, "validated")
+    ws.close(1000, "repeated")
+
+
 app.run(host="127.0.0.1", port=int(os.environ["HIGUMA_TEST_PORT"]), workers=1)
 """
 
@@ -760,6 +773,22 @@ class RealServerTests(unittest.TestCase):
         while time.monotonic() < deadline and not self.cleanup_file.exists():
             time.sleep(0.01)
         self.assertEqual(self.cleanup_file.read_text(encoding="utf-8"), "/ws-error")
+
+    def test_websocket_close_validation_and_idempotent_close(self) -> None:
+        with self.websocket_handshake("/ws-validate-close") as (
+            connection,
+            status,
+            _,
+            remainder,
+        ):
+            self.assertEqual(status, 101)
+            frame_buffer = bytearray(remainder)
+            opcode, payload = _read_frame(connection, frame_buffer)
+            self.assertEqual((opcode, payload), (0x1, b"rejected,rejected"))
+            opcode, payload = _read_frame(connection, frame_buffer)
+            self.assertEqual(opcode, 0x8)
+            self.assertEqual(struct.unpack("!H", payload[:2])[0], 1000)
+            self.assertEqual(payload[2:], b"validated")
 
 
 if __name__ == "__main__":

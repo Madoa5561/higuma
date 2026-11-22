@@ -170,7 +170,7 @@ results are not cached.
 
 ## 0.11: URL hooks, reusable components, and configuration
 
-This section describes the 0.11 series. Install with `python -m pip install "higuma==0.11.3"`,
+This section describes the 0.11 series. Install with `python -m pip install "higuma==0.11.4"`,
 or `python -m pip install -e .` for development from a repository checkout.
 Mandatory Python dependencies remain empty.
 
@@ -268,9 +268,10 @@ request input. `Config` is also available through `from higuma import Config`.
   keyword fields produce objects. Mixing both raises `TypeError`.
 - `app.jsonify(*values, status=..., headers=...)` retains Higuma's response options;
   use a dict or module-level `jsonify` for JSON fields called `status` / `headers`.
-- `make_response()` returns an empty 200 response, and `(body, {header: value})`
-  is accepted. This does not add all Werkzeug response, status-string, or duplicate
-  header operations.
+- `make_response()` returns an empty 200 response and accepts `(body, {header: value})`
+  as well as `(body, status, [(name, value), ...])` header sequences (preserving duplicate
+  headers such as multiple `Set-Cookie` entries). This does not add all Werkzeug response
+  or status-string operations.
 - `request.get_json(cache=False)` bypasses and does not update parsed JSON cache.
   It reparses the already-received body; it does not discard or receive it again.
   Flask's uncached input-stream consumption is intentionally different.

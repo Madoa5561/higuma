@@ -181,3 +181,53 @@ def test_asgi_post_response_disconnect_is_not_a_failed_request(async_handler, di
 
     asyncio.run(exercise())
     assert observer.snapshot()["series"][0]["outcome"] == "completed"
+
+
+def test_observability_middleware_records_inner_http_exception_and_cancellation():
+    from higuma import RateLimitMiddleware
+
+    app = Higuma(__name__, static_folder=None)
+    observer = Observability()
+    app.add_middleware(observer)
+    app.add_middleware(RateLimitMiddleware(limit=1, window=60))
+
+    @app.get("/limited")
+    def limited():
+        return "ok"
+
+    client = app.test_client()
+    assert client.get("/limited").status_code == 200
+    assert client.get("/limited").status_code == 429
+
+    rows = {(row["status"], row["outcome"]): row["count"] for row in observer.snapshot()["series"]}
+    assert rows[(200, "completed")] == 1
+    assert rows[(429, "completed")] == 1
+    assert (500, "failed") not in rows
+
+    cancel_app = Higuma(__name__, static_folder=None)
+    cancel_observer = Observability()
+    cancel_app.add_middleware(cancel_observer)
+
+    @cancel_app.middleware
+    def cancel_middleware(req, call_next):
+        raise asyncio.CancelledError
+
+    @cancel_app.get("/cancel")
+    def cancel_view():
+        return "unreachable"
+
+    with pytest.raises(asyncio.CancelledError):
+        cancel_app.test_client().get("/cancel")
+    cancel_rows = {
+        (row["status"], row["outcome"]): row["count"]
+        for row in cancel_observer.snapshot()["series"]
+    }
+    assert cancel_rows[(0, "cancelled")] == 1
+
+
+def test_observability_wrap_asgi_ignores_malformed_content_length():
+    from higuma.observability import _parse_content_length
+
+    assert _parse_content_length([(b"content-length", b"not-a-number")]) is None
+    assert _parse_content_length([(b"content-length", b"-5")]) is None
+    assert _parse_content_length([(b"content-length", b"12")]) == 12

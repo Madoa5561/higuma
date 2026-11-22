@@ -110,11 +110,12 @@ class AuthManager:
         user_id = getattr(user, "id", None)
         if user_id is None:
             raise TypeError("authenticated user must expose an id attribute")
+        csrf_field_name = request.state.get("_higuma_csrf_field_name", "_csrf_token")
         request.session.clear()
         request.session[self.session_key] = str(user_id)
         request.session["_remember"] = bool(remember)
         request.session["_fresh"] = True
-        request.session["_csrf_token"] = secrets.token_urlsafe(32)
+        request.session[csrf_field_name] = secrets.token_urlsafe(32)
         request.session.permanent = bool(remember)
 
     def confirm_login(self) -> None:
@@ -171,6 +172,14 @@ def permissions_required(*permissions: str, match_all: bool = True):
     return _claims_required("permissions", permissions, match_all=match_all)
 
 
+def _claim_values(raw_claims: Any) -> set[str]:
+    if raw_claims is None:
+        return set()
+    if isinstance(raw_claims, str):
+        return {raw_claims}
+    return {str(value) for value in raw_claims}
+
+
 def _claims_required(attribute: str, required: tuple[str, ...], *, match_all: bool):
     if not required:
         raise ValueError(f"at least one required {attribute[:-1]} must be provided")
@@ -179,7 +188,7 @@ def _claims_required(attribute: str, required: tuple[str, ...], *, match_all: bo
         @wraps(func)
         @login_required
         def decorated(*args: Any, **kwargs: Any) -> ResponseValue:
-            claims = {str(value) for value in (getattr(current_user, attribute, None) or ())}
+            claims = _claim_values(getattr(current_user, attribute, None))
             allowed = all(value in claims for value in required)
             if not match_all:
                 allowed = any(value in claims for value in required)
@@ -243,7 +252,8 @@ class OAuth2Client:
         challenge = hashlib.sha256(verifier.encode("ascii")).digest()
         query["code_challenge"] = _urlsafe_b64(challenge)
         query["code_challenge_method"] = "S256"
-        return f"{self.authorize_url}?{urlencode(query)}"
+        separator = "&" if "?" in self.authorize_url else "?"
+        return f"{self.authorize_url}{separator}{urlencode(query)}"
 
     def validate_state(self, state: str, *, max_age: int = 600) -> None:
         value = self.signer.loads(state, max_age=max_age)
@@ -256,11 +266,13 @@ class OAuth2Client:
                 "OAuth state does not match this session"
             )
         nonce = value["nonce"]
+        nonce_bytes = nonce.encode("utf-8")
         matched_nonce = next(
             (
                 candidate
                 for candidate in pending
-                if isinstance(candidate, str) and secrets.compare_digest(nonce, candidate)
+                if isinstance(candidate, str)
+                and secrets.compare_digest(nonce_bytes, candidate.encode("utf-8"))
             ),
             None,
         )
@@ -416,7 +428,7 @@ def _run_auth_checks(func: Any) -> None:
                 raise Unauthorized(detail="fresh authentication required")
         elif kind == "claims":
             _, attribute, required, match_all = check
-            claims = {str(value) for value in (getattr(current_user, attribute, None) or ())}
+            claims = _claim_values(getattr(current_user, attribute, None))
             allowed = all(value in claims for value in required)
             if not match_all:
                 allowed = any(value in claims for value in required)
