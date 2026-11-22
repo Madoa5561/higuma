@@ -5,7 +5,7 @@
 `examples/`の実行はrepositoryを取得し、そのroot directoryで行ってください。
 
 ```bash
-python -m pip install "higuma[asgi,async-db,integrations,observability]==0.11.6"
+python -m pip install "higuma[asgi,async-db,integrations,observability]==0.11.7"
 ```
 
 ## ASGIの非同期高速経路

@@ -78,6 +78,8 @@ class RedisExtension:
 
             @app.on_startup
             async def start():
+                if state["client"] is not None:
+                    raise RuntimeError("Redis client is already started")
                 client = Redis.from_url(url, **settings)
                 try:
                     if ping_on_startup:
@@ -96,6 +98,8 @@ class RedisExtension:
 
             @app.on_startup
             def start():
+                if state["client"] is not None:
+                    raise RuntimeError("Redis client is already started")
                 client = Redis.from_url(url, **settings)
                 try:
                     if ping_on_startup:

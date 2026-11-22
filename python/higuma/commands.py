@@ -29,7 +29,21 @@ class CommandGroup:
                 raise ValueError("command names must contain letters, digits, or hyphens")
             if command_name in {"run", "routes", "shell"} or command_name in self.commands:
                 raise ValueError(f"reserved or duplicate command: {command_name}")
-            _arguments(argparse.ArgumentParser(add_help=False), function)
+            frame = inspect.currentframe()
+            try:
+                localns = (
+                    dict(frame.f_back.f_locals)
+                    if frame is not None and frame.f_back is not None
+                    else {}
+                )
+            finally:
+                del frame
+            hints = _command_hints(function, localns)
+            try:
+                function.__higuma_cli_hints__ = hints
+            except (AttributeError, TypeError):
+                pass
+            _arguments(argparse.ArgumentParser(add_help=False), function, hints)
             self.commands[command_name] = (function, help or inspect.getdoc(function) or "")
             return function
 
@@ -38,12 +52,39 @@ class CommandGroup:
     def add_to(self, subcommands: Any) -> None:
         for name, (function, description) in self.commands.items():
             parser = subcommands.add_parser(name, help=description, description=description)
-            _arguments(parser, function)
+            _arguments(parser, function, getattr(function, "__higuma_cli_hints__", None))
             parser.set_defaults(_higuma_command=function)
 
 
-def _arguments(parser: argparse.ArgumentParser, function: Callable[..., Any]) -> None:
-    hints = get_type_hints(function)
+def _command_hints(function: Callable[..., Any], localns: dict[str, Any] | None) -> dict[str, Any]:
+    globalns = getattr(function, "__globals__", None)
+    try:
+        return get_type_hints(function, globalns=globalns, localns=localns)
+    except (NameError, TypeError):
+        resolved: dict[str, Any] = {}
+        namespace = {**dict(globalns or {}), **dict(localns or {})}
+        for name, parameter in inspect.signature(function).parameters.items():
+            annotation = parameter.annotation
+            if isinstance(annotation, str):
+                candidate = {
+                    "str": str,
+                    "int": int,
+                    "float": float,
+                    "bool": bool,
+                }.get(annotation.strip()) or namespace.get(annotation.strip())
+                if candidate is not None:
+                    resolved[name] = candidate
+            elif annotation is not inspect.Parameter.empty:
+                resolved[name] = annotation
+        return resolved
+
+
+def _arguments(
+    parser: argparse.ArgumentParser,
+    function: Callable[..., Any],
+    hints: dict[str, Any] | None = None,
+) -> None:
+    hints = _command_hints(function, None) if hints is None else hints
     for name, parameter in inspect.signature(function).parameters.items():
         if name.startswith("_") or name in {"command", "app_reference"}:
             raise ValueError("CLI parameter name conflicts with command parser internals")

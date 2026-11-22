@@ -329,6 +329,11 @@ supervisor, streaming, and proxy changes.
   In 0.11.6+, root mounts (`mount_wsgi("/")`, `mount_asgi("/")`, `static_url_path="/"`),
   empty body-allowed native `Content-Length: 0`, URL-encoded `MAX_FORM_PARTS`, case-insensitive
   `Range` / `StreamingResponse` header stripping, and lazy ORM `Field(default=...)` are fixed.
+  In 0.11.7+, `CORSMiddleware`/`TrustedHostMiddleware`/`ProxyHeadersMiddleware` reject bare
+  `str`/`bytes` sequence arguments, `TokenSigner`/`RateLimitMiddleware`/`generate_user_id()`/
+  `HealthChecks` enforce finite non-bool bounds, `Database.close()` closes `:memory:` connections
+  safely, native `add_route()` is atomic across methods, and `@app.cli.command()` handles
+  postponed annotations in factory scopes.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

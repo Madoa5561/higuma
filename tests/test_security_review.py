@@ -276,3 +276,51 @@ def test_supervisor_bind_target_supports_ipv4_and_ipv6():
     assert _bind_target("::1") == ("::1", socket.AF_INET6)
     assert _bind_target("[::1]") == ("::1", socket.AF_INET6)
     assert _bind_target("::") == ("::", socket.AF_INET6)
+
+
+def test_middleware_rejects_bare_string_iterables_and_security_parameter_bounds():
+    from higuma import (
+        CORSMiddleware,
+        ProxyHeadersMiddleware,
+        RateLimitMiddleware,
+        generate_user_id,
+        validate_user_id,
+    )
+
+    with pytest.raises(TypeError, match="iterable of strings"):
+        CORSMiddleware(allow_origins="https://example.com")
+    with pytest.raises(ValueError, match="max_age"):
+        CORSMiddleware(max_age=-1)
+    with pytest.raises(ValueError, match="max_age"):
+        CORSMiddleware(max_age=True)
+    with pytest.raises(TypeError, match="iterable of strings"):
+        TrustedHostMiddleware("example.com")
+    with pytest.raises(TypeError, match="iterable of strings"):
+        ProxyHeadersMiddleware("127.0.0.1")
+
+    for bad_kwargs in (
+        {"limit": True},
+        {"window": True},
+        {"window": float("nan")},
+        {"window": float("inf")},
+        {"max_keys": True},
+    ):
+        with pytest.raises(ValueError):
+            RateLimitMiddleware(**bad_kwargs)
+
+    signer = TokenSigner(SECRET)
+    token = signer.dumps({"ok": True})
+    for bad_age in (True, -1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="max_age"):
+            signer.loads(token, max_age=bad_age)
+
+    assert validate_user_id(generate_user_id("usr_1", entropy_bytes=12))
+    for bad_call in (
+        lambda: generate_user_id("_bad"),
+        lambda: generate_user_id("熊"),
+        lambda: generate_user_id("usr", entropy_bytes=2),
+        lambda: generate_user_id("usr", entropy_bytes=True),
+        lambda: generate_user_id("usr", entropy_bytes=120),
+    ):
+        with pytest.raises(ValueError):
+            bad_call()

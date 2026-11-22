@@ -352,7 +352,7 @@ impl HigumaCore {
             websocket_routes: Arc::new(RwLock::new(RouteTable::default())),
             fallback: Arc::new(RwLock::new(None)),
             template_env: Arc::new(RwLock::new(create_template_env(&template_dir))),
-            max_body_size,
+            max_body_size: max_body_size.max(1),
             body_memory_limit: body_memory_limit.max(1),
             server_header,
         }
@@ -383,13 +383,38 @@ impl HigumaCore {
             return Err(PyValueError::new_err("methods must not be empty"));
         }
 
+        let pattern = normalize_path(&path);
+        parse_route_pattern(&pattern).map_err(PyValueError::new_err)?;
+        let mut normalized_methods = Vec::with_capacity(methods.len());
+        let mut seen = HashSet::with_capacity(methods.len());
+        for method in methods {
+            let method_upper = method.to_ascii_uppercase();
+            if !seen.insert(method_upper.clone()) {
+                return Err(PyValueError::new_err(format!(
+                    "duplicate route registration: {method_upper} {pattern}"
+                )));
+            }
+            normalized_methods.push(method_upper);
+        }
+
         let mut routes = self
             .routes
             .write()
             .map_err(|_| PyRuntimeError::new_err("failed to lock route table"))?;
-        let handler = Arc::new(handler);
+        for method_upper in &normalized_methods {
+            if routes
+                .entries
+                .iter()
+                .any(|entry| entry.method == *method_upper && entry.pattern == pattern)
+            {
+                return Err(PyValueError::new_err(format!(
+                    "duplicate route registration: {method_upper} {pattern}"
+                )));
+            }
+        }
 
-        for method in methods {
+        let handler = Arc::new(handler);
+        for method in normalized_methods {
             routes
                 .add_route(path.clone(), method, handler.clone(), None, Vec::new())
                 .map_err(PyValueError::new_err)?;

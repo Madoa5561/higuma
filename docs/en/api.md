@@ -287,7 +287,7 @@ WS methods directly on the ASGI loop.
 
 ## SQLite ORM
 
-- `Database(url="sqlite:///higuma.db")`: `connect()`, `create_all()`, `drop_all()`, and `session()`
+- `Database(url="sqlite:///higuma.db")`: `connect()`, `close()`, `create_all()`, `drop_all()`, and `session()`
 - `Model(**values)`: `to_dict()`
 - `DatabaseSession`: `add()`, `save()`, `delete()`, `query()`, `execute()`, `commit()`, `rollback()`
 - `Query`: `get()`, `filter_by()`, `order_by()`, `offset()`, `limit()`, `first()`, `all()`, `count()`,

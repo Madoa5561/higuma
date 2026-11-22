@@ -425,6 +425,26 @@ class PythonCoreRegressionTests(unittest.TestCase):
             self.assertIsNone(db_session.query(Entry).limit(0).first())
             with self.assertRaises(ValueError):
                 db_session.delete(Entry(code="unsaved"))
+        db.close()
+        self.assertIsNone(db._memory_connection)
+
+        broken = Database("sqlite:///:memory:")
+        broken.connect = lambda: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[method-assign]
+        with self.assertRaises(RuntimeError), broken.session():
+            pass
+        # Lock must not remain held after connect() fails.
+        self.assertTrue(broken._memory_lock.acquire(blocking=False))
+        broken._memory_lock.release()
+
+    def test_core_add_route_is_atomic_on_duplicate_method(self) -> None:
+        from higuma._core import HigumaCore
+
+        core = HigumaCore()
+        core.add_route("/atomic", ["POST"], lambda req: "post")
+        with self.assertRaises(ValueError):
+            core.add_route("/atomic", ["GET", "POST"], lambda req: "both")
+        # GET must not have been partially registered when POST failed.
+        core.add_route("/atomic", ["GET"], lambda req: "get")
 
 
 if __name__ == "__main__":

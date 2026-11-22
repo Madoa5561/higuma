@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import re
 import secrets
 import time
@@ -247,7 +248,7 @@ class HealthChecks:
     """Explicit liveness/readiness; no exception details or dependency URLs in responses."""
 
     def __init__(self, *, timeout=1.0):
-        if not 0 < timeout <= 60:
+        if isinstance(timeout, bool) or not math.isfinite(timeout) or not 0 < timeout <= 60:
             raise ValueError("health check timeout must be in (0, 60]")
         self.timeout, self.ready = timeout, True
         self._checks, self._pending = {}, {}
@@ -255,7 +256,7 @@ class HealthChecks:
         self._executor = None
 
     def add_check(self, name, callback):
-        if not callable(callback) or name in self._checks:
+        if not isinstance(name, str) or not name or not callable(callback) or name in self._checks:
             raise ValueError("health checks need unique names and callable probes")
         self._checks[name] = callback
 
@@ -328,9 +329,12 @@ class HealthChecks:
         async def close():
             self.ready = False
             loop = asyncio.get_running_loop()
+            with self._lock:
+                pending_values = list(self._pending.values())
+                executor, self._executor = self._executor, None
             tasks = [
                 pending
-                for pending in self._pending.values()
+                for pending in pending_values
                 if isinstance(pending, asyncio.Task)
                 and not pending.done()
                 and pending.get_loop() is loop
@@ -339,6 +343,5 @@ class HealthChecks:
                 task.cancel()
             if tasks:
                 await asyncio.wait(tasks, timeout=min(1.0, self.timeout))
-            if self._executor is not None:
-                self._executor.shutdown(wait=False, cancel_futures=True)
-                self._executor = None
+            if executor is not None:
+                executor.shutdown(wait=False, cancel_futures=True)

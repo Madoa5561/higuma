@@ -237,7 +237,9 @@ Never read `X-Forwarded-For` directly without this trust boundary. See
 Signing keys must be `str` or `bytes` containing at least 32 bytes; implicit
 conversion from integers or arrays is rejected. Invalid non-ASCII CSRF tokens
 return 403. `TrustedHostMiddleware` also rejects missing hosts, malformed ports,
-and invalid IPv6 syntax. OAuth token and userinfo requests never follow redirects;
+and invalid IPv6 syntax. `CORSMiddleware`, `TrustedHostMiddleware`, and
+`ProxyHeadersMiddleware` require sequences of strings (such as tuples or lists) rather than
+bare `str` or `bytes` values to prevent accidental character-by-character splitting. OAuth token and userinfo requests never follow redirects;
 configure the provider's final HTTPS URL to avoid forwarding credentials to
 another host or an HTTP endpoint.
 

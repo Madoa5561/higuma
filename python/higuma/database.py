@@ -468,22 +468,32 @@ class Database:
                 self._memory_connection = connection
             return connection
 
+    def close(self) -> None:
+        with self._memory_lock:
+            connection, self._memory_connection = self._memory_connection, None
+            if connection is not None:
+                connection.close()
+
     @contextmanager
     def session(self) -> Iterator[Session]:
+        locked = False
+        connection: sqlite3.Connection | None = None
         if self.path == ":memory:":
             self._memory_lock.acquire()
-        connection = self.connect()
-        session = Session(self, connection)
+            locked = True
         try:
+            connection = self.connect()
+            session = Session(self, connection)
             yield session
             connection.commit()
         except BaseException:
-            connection.rollback()
+            if connection is not None:
+                connection.rollback()
             raise
         finally:
-            if self.path != ":memory:":
+            if connection is not None and self.path != ":memory:":
                 connection.close()
-            else:
+            if locked:
                 self._memory_lock.release()
 
     def create_all(self, *models: type[Model]) -> None:

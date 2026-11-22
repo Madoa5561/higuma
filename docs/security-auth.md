@@ -230,6 +230,8 @@ multi-process supervisorのclient IP制約は[デプロイ](deployment.md)を参
 秘密鍵は32バイト以上の `str` または `bytes` を指定します。整数や配列からの暗黙変換は
 拒否します。CSRFトークンの不正な非ASCII入力は403になります。
 `TrustedHostMiddleware` は空のHost、不正なポートやIPv6構文も拒否します。
+`CORSMiddleware`・`TrustedHostMiddleware`・`ProxyHeadersMiddleware` は設定の誤分割を防ぐため、
+単一の `str` や `bytes` ではなく tuple / list などの文字列 sequence を要求します。
 OAuthのtoken・userinfo HTTPリクエストはリダイレクトを追跡しません。
 認証情報の別ホストやHTTPへの転送を防ぐため、プロバイダーの最終HTTPS URLを設定してください。
 

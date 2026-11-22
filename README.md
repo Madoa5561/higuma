@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.7** — `CORSMiddleware`／`TrustedHostMiddleware`／`ProxyHeadersMiddleware` の単一文字列誤指定防止、
+> `TokenSigner`／`RateLimitMiddleware`／`generate_user_id()`・`HealthChecks` の入力検証と終了時同期、
+> `Database.session()` の lock リーク修正と `Database.close()` 追加、native `add_route()` の原子性確保、
+> `from __future__ import annotations` 下での CLI command 登録を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.6** — `mount_wsgi("/")`／`mount_asgi("/")`／`static_url_path="/"` の二重スラッシュ登録修正、
 > 空 `200` 応答での `Content-Length: 0` 出力、URL-encoded form の `MAX_FORM_PARTS` 強制、
 > 大文字小文字非依存 `Range: bytes=`・`StreamingResponse` header 正規化、ORM `default` 遅延評価・

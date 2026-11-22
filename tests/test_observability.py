@@ -231,3 +231,12 @@ def test_observability_wrap_asgi_ignores_malformed_content_length():
     assert _parse_content_length([(b"content-length", b"not-a-number")]) is None
     assert _parse_content_length([(b"content-length", b"-5")]) is None
     assert _parse_content_length([(b"content-length", b"12")]) == 12
+
+
+def test_health_checks_reject_bool_nan_timeout_and_empty_name():
+    for bad_timeout in (True, False, float("nan"), float("inf"), 0, 61):
+        with pytest.raises(ValueError):
+            HealthChecks(timeout=bad_timeout)
+    health = HealthChecks()
+    with pytest.raises(ValueError):
+        health.add_check("", lambda: True)

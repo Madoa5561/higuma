@@ -7,6 +7,29 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.7] - 2026-11-22
+
+### Fixed
+
+- Reject bare `str`/`bytes` arguments in `CORSMiddleware`, `TrustedHostMiddleware`, and
+  `ProxyHeadersMiddleware` (preventing accidental character-by-character splitting of host,
+  origin, or CIDR lists) and validate `CORSMiddleware(max_age=...)` is a non-negative non-bool
+  integer.
+- Validate `TokenSigner.loads(max_age=...)` and reject boolean `iat` timestamps, validate
+  finite non-bool `limit`/`window`/`max_keys` and use `math.ceil()` for `Retry-After` in
+  `RateLimitMiddleware`, and enforce ASCII prefix, `entropy_bytes >= 6`, and length bounds in
+  `generate_user_id()`.
+- Validate `HealthChecks(timeout=...)` and probe names, synchronize `HealthChecks` shutdown
+  cleanup of pending probe futures and executor teardown under its internal lock, and reject
+  repeated `RedisExtension` startup before shutdown to avoid leaking open client connections.
+- Prevent `Database.session()` from leaking its in-memory SQLite lock if `connect()` raises,
+  and add `Database.close()` to release `:memory:` connections explicitly.
+- Make native `HigumaCore.add_route()` atomic across all methods so a duplicate or invalid
+  method cannot leave partial registrations behind, and clamp `max_body_size` to at least 1 byte.
+- Capture caller locals and resolve parameter annotations gracefully in `CommandGroup.command()`
+  so factory-defined `@app.cli.command()` functions work under `from __future__ import annotations`
+  even when return annotations reference local types.
+
 ## [0.11.6] - 2026-11-22
 
 ### Fixed

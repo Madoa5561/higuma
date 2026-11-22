@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import math
 import re
 import secrets
 import time
@@ -156,7 +157,11 @@ class TokenSigner:
         signature = _b64(hmac.new(self.key, encoded.encode(), hashlib.sha256).digest())
         return f"{encoded}.{signature}"
 
-    def loads(self, token: str, *, max_age: int | None = None) -> Any:
+    def loads(self, token: str, *, max_age: float | None = None) -> Any:
+        if max_age is not None and (
+            isinstance(max_age, bool) or not math.isfinite(max_age) or max_age < 0
+        ):
+            raise ValueError("max_age must be a non-negative finite number")
         if len(token) > 64 * 1024:
             raise ValueError("token is too large")
         try:
@@ -165,7 +170,10 @@ class TokenSigner:
             if not hmac.compare_digest(expected, _unb64(signature)):
                 raise ValueError("invalid token signature")
             payload = json.loads(_unb64(encoded))
-            issued_at = int(payload["iat"])
+            raw_iat = payload["iat"]
+            if not isinstance(raw_iat, int) or isinstance(raw_iat, bool):
+                raise TypeError("invalid token timestamp")
+            issued_at = raw_iat
             if issued_at > int(time.time()) + 60:
                 raise ValueError("token timestamp is in the future")
             if max_age is not None and time.time() - issued_at > max_age:
@@ -225,8 +233,18 @@ class RateLimitMiddleware:
         key: Callable[[Request], str] | None = None,
         max_keys: int = 10_000,
     ) -> None:
-        if limit <= 0 or window <= 0 or max_keys <= 0:
-            raise ValueError("limit, window, and max_keys must be positive")
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or limit <= 0
+            or isinstance(window, bool)
+            or not math.isfinite(window)
+            or window <= 0
+            or not isinstance(max_keys, int)
+            or isinstance(max_keys, bool)
+            or max_keys <= 0
+        ):
+            raise ValueError("limit, window, and max_keys must be positive and finite")
         self.limit = limit
         self.window = window
         self.key = key or self._default_key
@@ -265,7 +283,7 @@ class RateLimitMiddleware:
             while bucket and bucket[0] <= now - self.window:
                 bucket.popleft()
             if len(bucket) >= self.limit:
-                retry_after = max(1, int(self.window - (now - bucket[0])))
+                retry_after = max(1, math.ceil(self.window - (now - bucket[0])))
                 raise TooManyRequests(
                     detail="rate limit exceeded",
                     headers={"retry-after": str(retry_after)},
@@ -286,9 +304,17 @@ class RateLimitMiddleware:
 
 
 def generate_user_id(prefix: str = "usr", *, entropy_bytes: int = 18) -> str:
-    if not prefix or not prefix.replace("_", "").isalnum():
-        raise ValueError("prefix must contain only letters, numbers, and underscores")
-    return f"{prefix}_{secrets.token_urlsafe(entropy_bytes)}"
+    if not isinstance(prefix, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_]*", prefix) is None:
+        raise ValueError(
+            "prefix must start with an ASCII letter or digit and contain only ASCII letters, "
+            "digits, and underscores"
+        )
+    if not isinstance(entropy_bytes, int) or isinstance(entropy_bytes, bool) or entropy_bytes < 6:
+        raise ValueError("entropy_bytes must be an integer of at least 6")
+    value = f"{prefix}_{secrets.token_urlsafe(entropy_bytes)}"
+    if not validate_user_id(value):
+        raise ValueError("generated user ID exceeds the allowed length")
+    return value
 
 
 def validate_user_id(value: str) -> bool:

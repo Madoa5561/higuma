@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import importlib.util
 import sys
 
 import pytest
@@ -148,3 +149,27 @@ def test_cli_commands_flags_context_blueprints_and_failures(monkeypatch):
     monkeypatch.setattr(sys.modules[__name__], "cli_app", app, raising=False)
     assert main(["--app", __name__ + ":cli_app", "greet", "bear"]) == 0
     assert runner.invoke(["routes"]).exit_code == 0
+
+
+def test_cli_command_works_with_postponed_annotations_and_local_return_type(tmp_path):
+    module_path = tmp_path / "postponed_cli_app.py"
+    module_path.write_text(
+        "from __future__ import annotations\n"
+        "from higuma import Higuma\n"
+        "def create_app():\n"
+        "    class LocalResult:\n"
+        "        pass\n"
+        "    app = Higuma(__name__, static_folder=None)\n"
+        "    @app.cli.command()\n"
+        "    def count(times: int = 2) -> LocalResult | str:\n"
+        "        return 'x' * times\n"
+        "    return app\n",
+        encoding="utf-8",
+    )
+    spec = importlib.util.spec_from_file_location("postponed_cli_app", module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    app = module.create_app()
+    result = app.test_cli_runner().invoke("count --times 4")
+    assert result.exit_code == 0 and result.output.strip() == "xxxx"

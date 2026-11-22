@@ -242,7 +242,28 @@ def _exercise_gateways() -> None:
 
 
 def _exercise_developer_apis() -> None:
-    from higuma import Blueprint, HealthChecks, Higuma, Observability, request, request_finished
+    from higuma import (
+        Blueprint,
+        Database,
+        HealthChecks,
+        Higuma,
+        Observability,
+        TrustedHostMiddleware,
+        request,
+        request_finished,
+    )
+
+    try:
+        TrustedHostMiddleware("example.com")  # type: ignore[arg-type]
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("TrustedHostMiddleware must reject bare str")
+
+    memory_db = Database("sqlite:///:memory:")
+    with memory_db.session():
+        pass
+    memory_db.close()
 
     app = Higuma(__name__, static_folder=None, request_memory_limit=4)
     parent = Blueprint("parent", __name__, url_prefix="/parent")

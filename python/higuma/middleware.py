@@ -11,6 +11,12 @@ from .response import Response, ResponseValue, make_response
 NextHandler = Callable[[Request], ResponseValue]
 
 
+def _string_tuple(values: Iterable[str], name: str) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)):
+        raise TypeError(f"{name} must be an iterable of strings, not one string")
+    return tuple(values)
+
+
 class CORSMiddleware:
     def __init__(
         self,
@@ -22,11 +28,15 @@ class CORSMiddleware:
         allow_credentials: bool = False,
         max_age: int = 600,
     ) -> None:
-        self.allow_origins = tuple(allow_origins)
-        self.allow_methods = tuple(method.upper() for method in allow_methods)
-        self.allow_headers = tuple(allow_headers)
-        self.expose_headers = tuple(expose_headers)
+        self.allow_origins = _string_tuple(allow_origins, "allow_origins")
+        self.allow_methods = tuple(
+            method.upper() for method in _string_tuple(allow_methods, "allow_methods")
+        )
+        self.allow_headers = _string_tuple(allow_headers, "allow_headers")
+        self.expose_headers = _string_tuple(expose_headers, "expose_headers")
         self.allow_credentials = allow_credentials
+        if not isinstance(max_age, int) or isinstance(max_age, bool) or max_age < 0:
+            raise ValueError("max_age must be a non-negative integer")
         self.max_age = max_age
         if self.allow_credentials and "*" in self.allow_origins:
             raise ValueError("credentialed CORS requires explicit origins")
@@ -116,7 +126,9 @@ class SecurityHeadersMiddleware:
 
 class TrustedHostMiddleware:
     def __init__(self, allowed_hosts: Iterable[str]) -> None:
-        self.allowed_hosts = tuple(host.lower() for host in allowed_hosts)
+        self.allowed_hosts = tuple(
+            host.lower() for host in _string_tuple(allowed_hosts, "allowed_hosts")
+        )
 
     def __call__(self, request: Request, call_next: NextHandler) -> ResponseValue:
         raw_host = str(request.headers.get("host", "")).lower()
@@ -152,7 +164,10 @@ class ProxyHeadersMiddleware:
         self,
         trusted_proxies: Iterable[str] = ("127.0.0.1", "::1"),
     ) -> None:
-        self.trusted_proxies = tuple(ip_network(value, strict=False) for value in trusted_proxies)
+        self.trusted_proxies = tuple(
+            ip_network(value, strict=False)
+            for value in _string_tuple(trusted_proxies, "trusted_proxies")
+        )
 
     def __call__(self, request: Request, call_next: NextHandler) -> ResponseValue:
         try:
