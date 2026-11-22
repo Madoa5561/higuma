@@ -378,6 +378,54 @@ class PythonCoreRegressionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 db_session.save(item)
 
+    def test_streaming_case_insensitive_length_file_disposition_and_orm_edge_cases(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from higuma import Database, FileResponse, Integer, Model, StreamingResponse, String
+
+        stream = StreamingResponse([b"a"], headers={"CONTENT-LENGTH": "999"})
+        self.assertNotIn("content-length", stream.headers)
+        stream._close()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = Path(tmp) / "note.txt"
+            sample.write_text("hi", encoding="utf-8")
+            response = FileResponse(sample, filename="dir/report.txt", as_attachment=True)
+            self.assertIn(
+                "filename*=UTF-8''dir%2Freport.txt", response.headers["content-disposition"]
+            )
+
+        with self.assertRaises(ValueError):
+            String(length=0)
+        with self.assertRaises(ValueError):
+            String(length=True)
+
+        calls: list[int] = []
+
+        def make_code() -> str:
+            calls.append(1)
+            return f"c{len(calls)}"
+
+        class Entry(Model):
+            __tablename__ = "entries_edge_check"
+            id = Integer(primary_key=True)
+            code = String(default=make_code, nullable=False)
+
+        explicit = Entry(code="fixed")
+        self.assertEqual(calls, [])
+        self.assertEqual(explicit.code, "fixed")
+        self.assertEqual(calls, [])
+
+        db = Database("sqlite:///:memory:")
+        db.create_all(Entry)
+        with db.session() as db_session:
+            db_session.add(explicit)
+            db_session.commit()
+            self.assertIsNone(db_session.query(Entry).limit(0).first())
+            with self.assertRaises(ValueError):
+                db_session.delete(Entry(code="unsaved"))
+
 
 if __name__ == "__main__":
     unittest.main()

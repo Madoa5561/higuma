@@ -326,6 +326,9 @@ supervisor, streaming, and proxy changes.
   256 MiB cap, `Supervisor` binds IPv6 hosts, `StaticFiles` preserves `root_path` in `308`
   redirects, local dataclass/TypedDict hints are cached under `from __future__ import annotations`,
   and `Rule.build()` percent-encodes non-ASCII static route segments.
+  In 0.11.6+, root mounts (`mount_wsgi("/")`, `mount_asgi("/")`, `static_url_path="/"`),
+  empty body-allowed native `Content-Length: 0`, URL-encoded `MAX_FORM_PARTS`, case-insensitive
+  `Range` / `StreamingResponse` header stripping, and lazy ORM `Field(default=...)` are fixed.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

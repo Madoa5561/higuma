@@ -46,6 +46,7 @@ from .response import (
     HTMLResponse,
     JSONResponse,
     Response,
+    ResponseHeaders,
     ResponseValue,
     StreamingResponse,
     TemplateResponse,
@@ -55,7 +56,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.5"
+__version__ = "0.11.6"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -186,7 +187,7 @@ class Higuma:
 
         if self.static_folder:
             self.add_url_rule(
-                f"{self.static_url_path}/<path:filename>",
+                f"{self.static_url_path.rstrip('/')}/<path:filename>",
                 endpoint="static",
                 view_func=self._serve_static,
                 methods=("GET",),
@@ -418,7 +419,10 @@ class Higuma:
                 for route in item._routes
             ]
             if item.static_folder:
-                files = StaticFiles(item.static_folder)
+                files = StaticFiles(
+                    item.static_folder,
+                    max_age=int(self.config["STATIC_CACHE_MAX_AGE"]),
+                )
 
                 def static_view(files):
                     def serve_static(filename: str):
@@ -716,7 +720,7 @@ class Higuma:
         self,
         value: ResponseValue = b"",
         status: int | None = None,
-        headers: Mapping[str, str] | None = None,
+        headers: ResponseHeaders | None = None,
     ):
         return make_response(value, status, headers)
 
@@ -928,7 +932,7 @@ class Higuma:
             include_in_schema=False,
         )
         self.add_url_rule(
-            f"{normalized}/<path:mounted_path>",
+            f"{normalized.rstrip('/')}/<path:mounted_path>",
             endpoint=f"{name}_path",
             view_func=view_func,
             methods=methods,
@@ -1455,7 +1459,8 @@ class Higuma:
                 return conditional(304)
 
         range_header = request.headers.get("range")
-        if not range_header or not str(range_header).startswith("bytes="):
+        normalized_range = str(range_header).strip() if range_header is not None else ""
+        if not normalized_range or not normalized_range.lower().startswith("bytes="):
             return response
         if_range = request.headers.get("if-range")
         if if_range is not None:
@@ -1466,7 +1471,7 @@ class Higuma:
                 matches = timestamp is not None and int(stat.st_mtime) == timestamp
             if not matches:
                 return response
-        parsed_range = _parse_range(str(range_header), stat.st_size)
+        parsed_range = _parse_range(normalized_range, stat.st_size)
         if parsed_range is None:
             headers = dict(response.headers)
             headers.pop("content-length", None)
@@ -1529,6 +1534,11 @@ def _find_root_path(import_name: str) -> Path:
         module_file = getattr(module, "__file__", None)
         if module_file:
             return Path(module_file).resolve().parent
+        module_path = getattr(module, "__path__", None)
+        if module_path:
+            first = next(iter(module_path), None)
+            if first:
+                return Path(first).resolve()
     except (ImportError, TypeError):
         pass
     return Path.cwd()
@@ -1626,15 +1636,21 @@ def _parse_range(value: str, size: int) -> tuple[int, int] | None:
     if size <= 0:
         return None
     try:
-        spec = value.removeprefix("bytes=")
-        if "," in spec:
+        prefix, separator, spec = value.strip().partition("=")
+        if not separator or prefix.lower() != "bytes" or "," in spec:
             return None
         start_text, end_text = spec.split("-", 1)
         if not start_text:
+            if not end_text.isascii() or not end_text.isdigit():
+                return None
             length = int(end_text)
             if length <= 0:
                 return None
             return max(0, size - length), size - 1
+        if not start_text.isascii() or not start_text.isdigit():
+            return None
+        if end_text and (not end_text.isascii() or not end_text.isdigit()):
+            return None
         start = int(start_text)
         end = int(end_text) if end_text else size - 1
         if start < 0 or start >= size or end < start:

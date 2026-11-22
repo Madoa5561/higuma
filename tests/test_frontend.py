@@ -452,3 +452,36 @@ def test_static_html_redirect_preserves_root_path_and_spa_deduplicates_vary_acce
     assert shell.status_code == 200
     vary_tokens = [item.strip().lower() for item in shell.headers["vary"].split(",")]
     assert vary_tokens.count("accept") == 1
+
+
+def test_root_static_url_path_blueprint_cache_age_and_case_insensitive_range(tmp_path):
+    from higuma import Blueprint
+
+    (tmp_path / "app.js").write_text("console.log('root')", encoding="utf-8")
+    app = Higuma(
+        __name__,
+        static_folder=str(tmp_path),
+        static_url_path="/",
+        docs_url=None,
+        openapi_url=None,
+    )
+    app.config["STATIC_CACHE_MAX_AGE"] = 120
+    bp_dir = tmp_path / "bp_static"
+    bp_dir.mkdir()
+    (bp_dir / "style.css").write_text("body{}", encoding="utf-8")
+    bp = Blueprint("ui", __name__, static_folder=str(bp_dir), static_url_path="/ui-static")
+    app.register_blueprint(bp)
+
+    client = app.test_client()
+    root_asset = client.get("/app.js")
+    assert root_asset.status_code == 200 and root_asset.body == b"console.log('root')"
+
+    bp_asset = client.get("/ui-static/style.css")
+    assert (
+        bp_asset.status_code == 200 and bp_asset.headers["cache-control"] == "public, max-age=120"
+    )
+
+    ranged = client.get("/app.js", headers={"range": "BYTES=0-6"})
+    assert ranged.status_code == 206 and ranged.body == b"console"
+    assert client.get("/app.js", headers={"range": "bytes=+0-6"}).status_code == 416
+    assert client.get("/app.js", headers={"range": "bytes=0-+6"}).status_code == 416

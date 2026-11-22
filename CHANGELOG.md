@@ -7,6 +7,28 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.6] - 2026-11-22
+
+### Fixed
+
+- Fix root-prefix route registration (`"/"`) in `mount_wsgi()`, `mount_asgi()`, and
+  `Higuma(..., static_url_path="/")` so subpath rules normalize to `/<path:...>` instead
+  of `//<path:...>`.
+- Honor `STATIC_CACHE_MAX_AGE` on Blueprint static files, support PEP 420 namespace
+  packages in `_find_root_path()`, parse HTTP `Range: bytes=...` units case-insensitively,
+  and reject signed integer tokens (`+0`) in `_parse_range()`.
+- Emit `Content-Length: 0` on empty body-allowed native responses (such as `200`/`201`/`202`
+  responses with `BackgroundTasks`) instead of switching to chunked transfer encoding, and
+  accept Python tuples of `(name, value)` pairs in native `extract_headers()`.
+- Enforce `MAX_FORM_PARTS` on `application/x-www-form-urlencoded` requests in `Request.form`
+  (matching `multipart/form-data`), skip form parsing for `HEAD` in `Request.values`, strip
+  `Content-Length` case-insensitively in `StreamingResponse` when `content_length=None`, and
+  percent-encode `/` in `FileResponse` RFC 5987 `filename*=UTF-8''...` headers.
+- Avoid invoking callable `Field(default=...)` factories when explicit values are supplied
+  to `Model(...)` or on attribute access, validate `String(length=...)` is a positive non-bool
+  integer, preserve `limit(0)` in `Query.first()`, and refuse `Session.delete()` on unsaved
+  instances whose primary key is `None`.
+
 ## [0.11.5] - 2026-11-22
 
 ### Fixed

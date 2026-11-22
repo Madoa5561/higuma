@@ -1542,6 +1542,25 @@ fn extract_headers(obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, String)>> {
         return Ok(pairs);
     }
 
+    if let Ok(items) = obj.cast::<PyTuple>() {
+        let mut pairs = Vec::with_capacity(items.len());
+        for item in items {
+            let tuple = item
+                .cast::<PyTuple>()
+                .map_err(|_| PyValueError::new_err("header items must be (name, value) tuples"))?;
+            if tuple.len() != 2 {
+                return Err(PyValueError::new_err(
+                    "header items must be (name, value) tuples",
+                ));
+            }
+            pairs.push((
+                tuple.get_item(0)?.str()?.to_string(),
+                tuple.get_item(1)?.str()?.to_string(),
+            ));
+        }
+        return Ok(pairs);
+    }
+
     Err(PyValueError::new_err(
         "headers must be a dict or a list of (name, value) tuples",
     ))
@@ -1901,7 +1920,6 @@ impl IntoResponse for ResponsePayload {
             self.body = PayloadBody::Bytes(Vec::new());
         }
         let body_length = self.body.length();
-        let body_is_empty = body_length == Some(0);
         let mut background = self.background.take();
         let body = if !status_allows_body(status) {
             Body::empty()
@@ -1924,7 +1942,7 @@ impl IntoResponse for ResponsePayload {
                 .insert(Arc::new(ResponseCompletion::new(Some(background))));
         }
         *response.status_mut() = status;
-        if !body_is_empty && status_allows_body(status) {
+        if status_allows_body(status) {
             if let Some(body_length) = body_length {
                 if let Ok(value) = HeaderValue::from_str(&body_length.to_string()) {
                     response.headers_mut().insert(CONTENT_LENGTH, value);
@@ -2439,5 +2457,11 @@ mod tests {
         assert!(validate_websocket_close(2999, "").is_err());
         assert!(validate_websocket_close(5000, "").is_err());
         assert!(validate_websocket_close(1000, &"a".repeat(124)).is_err());
+    }
+
+    #[test]
+    fn empty_ok_response_sets_zero_content_length() {
+        let response = ResponsePayload::new(Vec::new(), 200, Vec::new(), None).into_response();
+        assert_eq!(response.headers().get(CONTENT_LENGTH).unwrap(), "0");
     }
 }

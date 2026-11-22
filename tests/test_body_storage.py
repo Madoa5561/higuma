@@ -181,3 +181,28 @@ def test_multipart_accepts_7bit_transfer_encoding_and_rfc2231_name():
     )
     assert current.form["名前"] == "higuma"
     current.close()
+
+
+def test_urlencoded_form_enforces_max_form_parts_and_head_values_skip_form():
+    too_many = Request(
+        {
+            "method": "POST",
+            "body": b"a=1&b=2&c=3",
+            "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        }
+    )
+    too_many.max_form_parts = 2
+    with pytest.raises(RequestEntityTooLarge):
+        _ = too_many.form
+
+    head_req = Request(
+        {
+            "method": "HEAD",
+            "query_string": "q=1",
+            "body": b"a=1&b=2&c=3",
+            "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        }
+    )
+    head_req.max_form_parts = 2
+    assert head_req.values["q"] == "1"
+    assert "a" not in head_req.values

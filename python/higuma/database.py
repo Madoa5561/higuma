@@ -37,7 +37,9 @@ class Field:
     def __get__(self, instance: Model | None, owner: type[Model]) -> Any:
         if instance is None:
             return self
-        return instance.__dict__.get(self.name, self.get_default())
+        if self.name in instance.__dict__:
+            return instance.__dict__[self.name]
+        return self.get_default()
 
     def __set__(self, instance: Model, value: Any) -> None:
         instance.__dict__[self.name] = value
@@ -106,6 +108,10 @@ class String(Field):
     sql_type = "TEXT"
 
     def __init__(self, length: int | None = None, **kwargs: Any) -> None:
+        if length is not None and (
+            not isinstance(length, int) or isinstance(length, bool) or length < 1
+        ):
+            raise ValueError("String length must be a positive integer or None")
         super().__init__(**kwargs)
         self.length = length
 
@@ -204,7 +210,7 @@ class Model(metaclass=ModelMeta):
         if unknown:
             raise TypeError(f"unknown model fields: {', '.join(sorted(unknown))}")
         for name, field in self.__fields__.items():
-            setattr(self, name, values.get(name, field.get_default()))
+            setattr(self, name, values[name] if name in values else field.get_default())
 
     def to_dict(self) -> dict[str, Any]:
         return {name: getattr(self, name) for name in self.__fields__}
@@ -271,6 +277,8 @@ class Query(Generic[ModelT]):
         return [_row_to_model(self.model, row) for row in rows]
 
     def first(self) -> ModelT | None:
+        if self.limit_value == 0:
+            return None
         rows = self.limit(1).all()
         return rows[0] if rows else None
 
@@ -420,9 +428,10 @@ class Session:
         primary_key = model.__primary_key__
         if primary_key is None:
             raise TypeError(f"{model.__name__} does not define a primary key")
-        self.query(model).filter_by(
-            **{primary_key.name: getattr(instance, primary_key.name)}
-        ).delete()
+        primary_value = getattr(instance, primary_key.name)
+        if primary_value is None:
+            raise ValueError(f"cannot delete unsaved {model.__name__} without primary key value")
+        self.query(model).filter_by(**{primary_key.name: primary_value}).delete()
 
     def query(self, model: type[ModelT]) -> Query[ModelT]:
         return Query(self, model)

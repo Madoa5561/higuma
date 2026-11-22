@@ -843,3 +843,39 @@ def test_wsgi_body_seek_failure_closes_file_and_background_runs_once(tmp_path):
     result = wsgi_request(app, "/missing")
     assert result["status"] == 500
     assert ran == ["bg"]
+
+
+def test_root_mount_wsgi_and_asgi_route_root_and_subpaths():
+    wsgi_host = Higuma(__name__, static_folder=None, docs_url=None, openapi_url=None)
+
+    def wsgi_app(environ, start_response):
+        start_response("200 OK", [("Content-Type", "text/plain")])
+        return [environ["PATH_INFO"].encode("utf-8")]
+
+    wsgi_host.mount_wsgi("/", wsgi_app)
+    wsgi_client = wsgi_host.test_client()
+    assert wsgi_client.get("/").text == "/"
+    assert wsgi_client.get("/nested/page").text == "/nested/page"
+
+    asgi_host = Higuma(__name__, static_folder=None, docs_url=None, openapi_url=None)
+
+    async def asgi_sub(asgi_scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/plain")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": asgi_scope["path"].encode("utf-8"),
+                "more_body": False,
+            }
+        )
+
+    asgi_host.mount_asgi("/", asgi_sub)
+    asgi_client = asgi_host.test_client()
+    assert asgi_client.get("/").text == "/"
+    assert asgi_client.get("/nested/page").text == "/nested/page"

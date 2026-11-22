@@ -42,11 +42,11 @@ storage paths when persisting uploads.
 | `MAX_CONTENT_LENGTH` | 8MiB | Entire body; native uses constructor value |
 | `REQUEST_BODY_MEMORY_LIMIT` | 1MiB | Ingress threshold; native uses constructor `request_memory_limit` |
 | `MAX_FORM_MEMORY_SIZE` | 1MiB | Combined non-file multipart fields / whole URL-encoded form |
-| `MAX_FORM_PARTS` | 1000 | Multipart parts |
+| `MAX_FORM_PARTS` | 1000 | Multipart parts and URL-encoded form fields |
 | `UPLOAD_MEMORY_LIMIT` | 1MiB | Each multipart file threshold |
 
 Values must be positive. Preamble and part headers are also limited to 64KiB.
-Browser-style binary/8bit multipart is supported; base64 and other transfer
+Browser-style binary/8bit/7bit multipart is supported; base64 and other transfer
 encodings are rejected. Oversize input gives 413, invalid/incomplete multipart 400.
 
 ## Cleanup and operations

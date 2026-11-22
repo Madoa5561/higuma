@@ -50,11 +50,11 @@ filenameは`secure_filename`で正規化されますが、同名上書きや保�
 | `MAX_CONTENT_LENGTH` | 8MiB | 入力body全体。nativeはconstructorの値を使う |
 | `REQUEST_BODY_MEMORY_LIMIT` | 1MiB | 入力spool閾値。nativeはconstructorの`request_memory_limit` |
 | `MAX_FORM_MEMORY_SIZE` | 1MiB | multipart非file field合計、URL-encoded form全体 |
-| `MAX_FORM_PARTS` | 1000 | multipart part数 |
+| `MAX_FORM_PARTS` | 1000 | multipart part数およびURL-encoded form field数 |
 | `UPLOAD_MEMORY_LIMIT` | 1MiB | multipart fileごとのspool閾値 |
 
 全値は正にしてください。part headerとpreambleにも64KiBの上限があります。
-browserが送るbinary/8bit multipartを対象にし、Content-Transfer-Encodingのbase64等は拒否します。
+browserが送るbinary/8bit/7bit multipartを対象にし、Content-Transfer-Encodingのbase64等は拒否します。
 過大入力は413、不完全・不正なmultipartは400です。
 
 ## リソースと運用境界

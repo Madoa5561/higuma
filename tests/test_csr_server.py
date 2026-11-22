@@ -22,6 +22,12 @@ def hello():
 def echo_path():
     return {"path": request.path}
 
+@app.get("/empty-bg")
+def empty_bg():
+    from higuma import Response
+
+    return Response(b"", status=200, background=lambda: None)
+
 @app.post("/submit")
 def submit():
     return {"ok": True}
@@ -177,3 +183,8 @@ def test_real_native_server_preserves_trailing_slashes_and_static_html_indexes(c
     assert status == 308 and headers["location"] == "/site/guide/"
     status, _, body = server.request("GET", "/site/guide/")
     assert status == 200 and body == b"<html>Guide page</html>"
+
+    status, headers, body = server.request("GET", "/empty-bg")
+    assert status == 200 and body == b""
+    assert headers.get("content-length") == "0"
+    assert "transfer-encoding" not in headers

@@ -346,7 +346,7 @@ class FileResponse(Response):
 
         download_name = filename or file_path.name
         disposition = "attachment" if as_attachment else "inline"
-        encoded_name = quote(download_name)
+        encoded_name = quote(download_name, safe="")
         self.headers.setdefault(
             "content-disposition",
             f"{disposition}; filename*=UTF-8''{encoded_name}",
@@ -405,11 +405,12 @@ class StreamingResponse(Response):
             or content_length < 0
         ):
             raise ValueError("content_length must be a non-negative integer or None")
-        response_headers = dict(headers or {})
-        if content_length is None:
-            response_headers.pop("content-length", None)
-            response_headers.pop("Content-Length", None)
-        else:
+        response_headers = {
+            key: value
+            for key, value in (headers or {}).items()
+            if content_length is not None or str(key).lower() != "content-length"
+        }
+        if content_length is not None:
             response_headers["content-length"] = str(content_length)
         super().__init__(b"", status, response_headers, media_type, background)
         self.content_length = content_length

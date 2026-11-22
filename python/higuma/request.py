@@ -387,7 +387,7 @@ class Request:
 
     @property
     def values(self) -> MultiDict:
-        dictionaries = (self.args,) if self.method == "GET" else (self.args, self.form)
+        dictionaries = (self.args,) if self.method in {"GET", "HEAD"} else (self.args, self.form)
         return _CombinedMultiDict(dictionaries)
 
     @property
@@ -397,7 +397,13 @@ class Request:
             if content_type == "application/x-www-form-urlencoded":
                 if self.body_size > self.max_form_memory_size:
                     raise RequestEntityTooLarge(detail="form data is too large")
-                self._form_cache = MultiDict(iter(parse_qsl(self.text, keep_blank_values=True)))
+                raw_text = self.text
+                if raw_text and raw_text.count("&") + 1 > self.max_form_parts:
+                    raise RequestEntityTooLarge(detail="too many form fields")
+                pairs = parse_qsl(raw_text, keep_blank_values=True)
+                if len(pairs) > self.max_form_parts:
+                    raise RequestEntityTooLarge(detail="too many form fields")
+                self._form_cache = MultiDict(iter(pairs))
             elif content_type == "multipart/form-data":
                 self._parse_multipart()
             else:
