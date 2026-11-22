@@ -22,9 +22,16 @@ return 1
 """
 _LIMIT = """
 local count = tonumber(redis.call('GET', KEYS[1]) or '0')
-if count >= tonumber(ARGV[1]) then return {0, count, redis.call('PTTL', KEYS[1])} end
+if count >= tonumber(ARGV[1]) then
+  local ttl = redis.call('PTTL', KEYS[1])
+  if ttl < 0 then
+    redis.call('PEXPIRE', KEYS[1], ARGV[2])
+    ttl = tonumber(ARGV[2])
+  end
+  return {0, count, ttl}
+end
 count = redis.call('INCR', KEYS[1])
-if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
+if count == 1 or redis.call('PTTL', KEYS[1]) < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
 return {1, count, redis.call('PTTL', KEYS[1])}
 """
 
@@ -56,7 +63,14 @@ class RedisSessionStore:
     def __init__(
         self, client, *, prefix: str, ttl: int = 14 * 24 * 60 * 60, max_bytes: int = 65536
     ):
-        if not isinstance(ttl, int) or ttl < 1 or not isinstance(max_bytes, int) or max_bytes < 1:
+        if (
+            not isinstance(ttl, int)
+            or isinstance(ttl, bool)
+            or ttl < 1
+            or not isinstance(max_bytes, int)
+            or isinstance(max_bytes, bool)
+            or max_bytes < 1
+        ):
             raise ValueError("ttl and max_bytes must be positive integers")
         self.client, self.prefix, self.ttl, self.max_bytes = client, _prefix(prefix), ttl, max_bytes
 
@@ -163,7 +177,12 @@ class RedisSessionMiddleware(SessionMiddleware):
             response.delete_cookie(
                 self.cookie_name, secure=self.secure, httponly=self.httponly, samesite=self.samesite
             )
-            session.sid = None
+            session.sid, session.stored, session.modified, session.rotated = (
+                None,
+                None,
+                False,
+                False,
+            )
             return response
         if sid:
             self.store.save(sid, session.stored, payload)
@@ -185,7 +204,14 @@ class RedisRateLimitMiddleware:
     """Atomic fixed windows shared across processes; Redis TIME/TTL owns the clock."""
 
     def __init__(self, client, *, prefix: str, limit: int = 100, window: float = 60, key=None):
-        if not isinstance(limit, int) or limit < 1 or not math.isfinite(window) or window <= 0:
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or limit < 1
+            or isinstance(window, bool)
+            or not math.isfinite(window)
+            or window <= 0
+        ):
             raise ValueError("limit and window must be positive and finite")
         self.client, self.prefix, self.limit = client, _prefix(prefix), limit
         self.window_ms = max(1, math.ceil(window * 1000))

@@ -106,9 +106,10 @@ if hasher.verify(password, stored):
         stored = hasher.hash(password)
 ```
 
-The format uses scrypt and a random salt. `verify()` returns `False` for a
-malformed or resource-limit-exceeding encoding. Store the encoded hash and
-parameters; never store or log the plain password.
+The format uses scrypt with a random salt (automatically configuring `maxmem` up to
+a 256 MiB safety cap so OWASP work factors such as `n=2**15` and `n=2**16` work out
+of the box). `verify()` returns `False` for a malformed or resource-limit-exceeding
+encoding. Store the encoded hash and parameters; never store or log the plain password.
 
 ## Signed tokens
 

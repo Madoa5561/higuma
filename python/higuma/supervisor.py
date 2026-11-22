@@ -8,6 +8,7 @@ import subprocess  # nosec B404
 import sys
 import time
 from collections import deque
+from ipaddress import ip_address
 from itertools import cycle
 from threading import BoundedSemaphore, Event, Thread
 from typing import Any
@@ -97,10 +98,12 @@ class Supervisor:
         previous_handlers = _install_signal_handlers(self.stop)
         targets = cycle(internal_ports)
         connection_slots = BoundedSemaphore(self.max_connections)
-        listener = socket.create_server((self.host, self.port), reuse_port=False)
+        bind_host, family = _bind_target(self.host)
+        listener = socket.create_server((bind_host, self.port), family=family, reuse_port=False)
         listener.settimeout(0.5)
+        display_host = f"[{bind_host}]" if ":" in bind_host else bind_host
         print(
-            f"higuma supervisor listening on http://{self.host}:{self.port} "
+            f"higuma supervisor listening on http://{display_host}:{self.port} "
             f"with {self.processes} processes"
         )
         try:
@@ -124,11 +127,16 @@ class Supervisor:
                     client.close()
                     continue
                 target_port = next(targets)
-                Thread(
-                    target=_proxy_connection,
-                    args=(client, ("127.0.0.1", target_port), connection_slots),
-                    daemon=True,
-                ).start()
+                try:
+                    Thread(
+                        target=_proxy_connection,
+                        args=(client, ("127.0.0.1", target_port), connection_slots),
+                        daemon=True,
+                    ).start()
+                except BaseException:
+                    client.close()
+                    connection_slots.release()
+                    raise
         finally:
             listener.close()
             _restore_signal_handlers(previous_handlers)
@@ -183,6 +191,17 @@ def _copy_socket(source: socket.socket, destination: socket.socket) -> None:
             destination.shutdown(socket.SHUT_WR)
         except OSError:
             pass
+
+
+def _bind_target(host: str) -> tuple[str, int]:
+    cleaned = host.strip()
+    if cleaned.startswith("[") and cleaned.endswith("]"):
+        cleaned = cleaned[1:-1]
+    try:
+        family = socket.AF_INET6 if ip_address(cleaned).version == 6 else socket.AF_INET
+    except ValueError:
+        family = socket.AF_INET
+    return cleaned, family
 
 
 def _free_port() -> int:

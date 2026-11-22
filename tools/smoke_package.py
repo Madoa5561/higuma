@@ -177,6 +177,10 @@ def _exercise_flask_helpers() -> None:
     assert client.head("/sized-stream").headers["content-length"] == "4"
     multi = app.make_response(("ok", 200, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]))
     assert [v for k, v in multi.header_items if k == "set-cookie"] == ["a=1", "b=2"]
+    from higuma import PasswordHasher
+
+    hasher = PasswordHasher(n=2**15)
+    assert hasher.verify("smoke-pw", hasher.hash("smoke-pw"))
     with app.test_request_context(
         "/smoke/read",
         headers={"cookie": "filter[page]=1; path=/admin; higuma_session=token"},

@@ -250,3 +250,29 @@ def test_oauth2_authorization_url_existing_query_and_non_ascii_state():
 
     state = parse_qs(urlsplit(url).query)["state"][0]
     assert client.get("/callback", query_string={"state": state}).json == {"ok": True}
+
+
+def test_password_hasher_supports_owasp_n_and_caps_scrypt_memory():
+    from higuma import PasswordHasher
+
+    hasher = PasswordHasher(n=2**15, r=8, p=1)
+    encoded = hasher.hash("correct horse battery staple")
+    assert hasher.verify("correct horse battery staple", encoded)
+    assert not hasher.verify("wrong password", encoded)
+
+    with pytest.raises(ValueError, match="memory limit"):
+        PasswordHasher(n=2**19, r=8, p=1)
+
+    crafted = "higuma$scrypt$1048576$32$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    assert not hasher.verify("any", crafted)
+
+
+def test_supervisor_bind_target_supports_ipv4_and_ipv6():
+    import socket
+
+    from higuma.supervisor import _bind_target
+
+    assert _bind_target("127.0.0.1") == ("127.0.0.1", socket.AF_INET)
+    assert _bind_target("::1") == ("::1", socket.AF_INET6)
+    assert _bind_target("[::1]") == ("::1", socket.AF_INET6)
+    assert _bind_target("::") == ("::", socket.AF_INET6)

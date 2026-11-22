@@ -182,7 +182,11 @@ class SessionMiddleware:
         issued_at = payload.get("iat")
         data = payload.get("data")
         permanent = payload.get("permanent", False)
-        if not isinstance(issued_at, int) or not isinstance(data, dict):
+        if (
+            not isinstance(issued_at, int)
+            or isinstance(issued_at, bool)
+            or not isinstance(data, dict)
+        ):
             return Session()
         if not isinstance(permanent, bool):
             return Session()

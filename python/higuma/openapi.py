@@ -14,7 +14,6 @@ from typing import (
     Literal,
     get_args,
     get_origin,
-    get_type_hints,
     is_typeddict,
 )
 from uuid import UUID
@@ -30,10 +29,12 @@ from .parameters import (
     PathParam,
     QueryParam,
     parameter_schema_metadata,
+    resolved_model_hints,
     resolved_parameter_hints,
     serialize_json_value,
     split_parameter_annotation,
 )
+from .request import UploadFile
 
 
 def generate_openapi(app: Any) -> dict[str, Any]:
@@ -137,7 +138,7 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
             schema["uniqueItems"] = True
         return schema
     if origin is tuple:
-        if len(args) > 1 and args[-1] is not Ellipsis:
+        if args and args[-1] is not Ellipsis and args != ((),):
             return {
                 "type": "array",
                 "prefixItems": [schema_for(item, schemas) for item in args],
@@ -146,7 +147,7 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
             }
         return {
             "type": "array",
-            "items": schema_for(args[0] if args else Any, schemas),
+            "items": schema_for(args[0] if args and args != ((),) else Any, schemas),
         }
     if origin in {dict, Mapping}:
         return {
@@ -187,6 +188,7 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         float: {"type": "number"},
         bool: {"type": "boolean"},
         bytes: {"type": "string", "format": "binary"},
+        UploadFile: {"type": "string", "format": "binary"},
         UUID: {"type": "string", "format": "uuid"},
         date: {"type": "string", "format": "date"},
         datetime: {"type": "string", "format": "date-time"},
@@ -195,23 +197,27 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         return primitive
     if inspect.isclass(annotation) and issubclass(annotation, Enum):
         values = [member.value for member in annotation]
-        schema_type = (
-            "integer"
-            if values
-            and all(isinstance(value, int) and not isinstance(value, bool) for value in values)
-            else "string"
-        )
-        return {"type": schema_type, "enum": values}
+        schema = {"enum": values}
+        if values and all(isinstance(value, str) for value in values):
+            schema["type"] = "string"
+        elif values and all(isinstance(value, bool) for value in values):
+            schema["type"] = "boolean"
+        elif values and all(
+            isinstance(value, int) and not isinstance(value, bool) for value in values
+        ):
+            schema["type"] = "integer"
+        elif values and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool) for value in values
+        ):
+            schema["type"] = "number"
+        return schema
 
     if is_typeddict(annotation):
         name = annotation.__name__
         if name in schemas:
             return {"$ref": f"#/components/schemas/{name}"}
         schemas[name] = {}
-        try:
-            type_hints = get_type_hints(annotation, include_extras=True)
-        except (NameError, TypeError):
-            type_hints = dict(annotation.__annotations__)
+        type_hints = resolved_model_hints(annotation) or dict(annotation.__annotations__)
         properties = {
             field_name: schema_for(field_annotation, schemas)
             for field_name, field_annotation in type_hints.items()
@@ -229,10 +235,7 @@ def schema_for(annotation: Any, schemas: dict[str, Any] | None = None) -> dict[s
         if name in schemas:
             return {"$ref": f"#/components/schemas/{name}"}
         schemas[name] = {}
-        try:
-            field_hints = get_type_hints(annotation, include_extras=True)
-        except (NameError, TypeError):
-            field_hints = {}
+        field_hints = resolved_model_hints(annotation)
         properties = {}
         required = []
         for item in fields(annotation):
@@ -400,11 +403,14 @@ def _operation_for(route: Any, method: str, schemas: dict[str, Any]) -> dict[str
             required_fields = []
             for parameter, annotation, marker in multipart_specs:
                 alias = marker.alias or parameter.name
-                schema = (
-                    {"type": "string", "format": "binary"}
-                    if isinstance(marker, File)
-                    else schema_for(annotation, schemas)
-                )
+                if isinstance(marker, File):
+                    schema = (
+                        {"type": "string", "format": "binary"}
+                        if annotation in (inspect.Parameter.empty, Any, UploadFile, bytes)
+                        else schema_for(annotation, schemas)
+                    )
+                else:
+                    schema = schema_for(annotation, schemas)
                 schema.update(parameter_schema_metadata(marker))
                 properties[alias] = schema
                 if _is_required_parameter(parameter):

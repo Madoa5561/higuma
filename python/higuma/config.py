@@ -36,15 +36,22 @@ class Config(dict[str, Any]):
     def from_object(self, obj: object | str) -> bool:
         source = obj
         if isinstance(obj, str):
-            try:
-                source = importlib.import_module(obj)
-            except ModuleNotFoundError as error:
-                if error.name != obj:
-                    raise
-                module, separator, attribute = obj.rpartition(".")
-                if not separator:
-                    raise
-                source = getattr(importlib.import_module(module), attribute)
+            parts = obj.split(".")
+            for split_at in range(len(parts), 0, -1):
+                module_name = ".".join(parts[:split_at])
+                try:
+                    source = importlib.import_module(module_name)
+                except ModuleNotFoundError as error:
+                    if error.name != module_name and (
+                        error.name is None or not module_name.startswith(error.name + ".")
+                    ):
+                        raise
+                    if split_at == 1:
+                        raise
+                    continue
+                for attribute in parts[split_at:]:
+                    source = getattr(source, attribute)
+                break
         for name in dir(source):
             if name.isupper():
                 self[name] = getattr(source, name)
@@ -88,6 +95,8 @@ class Config(dict[str, Any]):
                 continue
             raw_value = os.environ[name]
             key = name[len(marker) :]
+            if not key:
+                continue
             try:
                 value = loads(raw_value)
             except Exception:  # noqa: BLE001 - Flask-compatible loader fallback

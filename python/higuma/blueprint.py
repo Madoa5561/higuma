@@ -173,6 +173,7 @@ class Blueprint:
                 cache_parameter_hints(
                     view_func,
                     frame.f_back.f_locals if frame is not None and frame.f_back is not None else {},
+                    extra_models=(options.get("request_body"), options.get("response_model")),
                 )
             finally:
                 del frame

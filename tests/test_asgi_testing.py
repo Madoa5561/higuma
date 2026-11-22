@@ -164,3 +164,55 @@ def test_async_client_follow_redirects_base_url_override_and_case_insensitive_he
                 assert "application/json" in streamed.headers["Content-Type"]
 
     asyncio.run(exercise())
+
+
+def test_asgi_redirect_preserves_target_query_and_client_cookie_deletion():
+    from higuma import RedirectResponse, Response
+
+    app = Higuma(__name__, static_folder=None)
+
+    @app.get("/old")
+    def old():
+        return RedirectResponse("/new?to=2", status=302)
+
+    @app.get("/new")
+    def new():
+        return {
+            "to": request.args.get("to"),
+            "from": request.args.get("from"),
+            "host": request.host,
+        }
+
+    @app.get("/set-cookies")
+    def set_cookies():
+        response = Response("ok")
+        response.append_header("Set-Cookie", "filter[page]=1; Path=/")
+        response.append_header("Set-Cookie", "exp=1; Path=/")
+        response.append_header("Set-Cookie", "neg=1; Path=/")
+        return response
+
+    @app.get("/del-cookies")
+    def del_cookies():
+        response = Response("ok")
+        response.append_header("Set-Cookie", "filter[page]=; Max-Age=0; Path=/")
+        response.append_header("Set-Cookie", "exp=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/")
+        response.append_header("Set-Cookie", "neg=; Max-Age=-1; Path=/")
+        return response
+
+    sync_client = app.test_client()
+    assert sync_client.get("/set-cookies").status_code == 200
+    assert sync_client.cookies == {"filter[page]": "1", "exp": "1", "neg": "1"}
+    assert sync_client.get("/del-cookies").status_code == 200
+    assert sync_client.cookies == {}
+
+    async def exercise():
+        async with app.test_async_client() as client:
+            followed = await client.get(
+                "/old",
+                query={"from": "1"},
+                base_url="https://api.example:8443",
+                follow_redirects=True,
+            )
+            assert followed.get_json() == {"to": "2", "from": None, "host": "api.example:8443"}
+
+    asyncio.run(exercise())

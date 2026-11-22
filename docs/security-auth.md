@@ -86,7 +86,8 @@ if hasher.verify(password, stored):
         stored = hasher.hash(password)
 ```
 
-標準形式はrandom salt付き`scrypt`です。`verify()`は不正formatやresource上限外の値に対して
+標準形式はrandom salt付き`scrypt`です（256 MiB 上限内で `n=2**15` や `n=2**16` などの
+強固なコスト設定も自動で `maxmem` を調整して利用できます）。`verify()`は不正formatやresource上限外の値に対して
 `False`を返します。password hashとparameterはdatabaseへ保存し、plain passwordは保存・log
 しないでください。
 

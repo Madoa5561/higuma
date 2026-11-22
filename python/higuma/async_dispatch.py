@@ -172,8 +172,8 @@ async def run(app, route, raw, send, receive, respond, worker):
                             await response._aclose()
                     finally:
                         if response is not None and response.background is not None:
-                            await call(response.background)
-                            response.background = None
+                            background, response.background = response.background, None
+                            await call(background)
                 finally:
                     request.state.pop("_higuma_dispatching", None)
                     try:

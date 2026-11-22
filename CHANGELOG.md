@@ -7,6 +7,40 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-11-22
+
+### Fixed
+
+- Compute and bound `maxmem` in `PasswordHasher` (`scrypt`, capped at 256 MiB) so
+  OWASP-recommended work factors such as `n=2**15` and `n=2**16` succeed in `hash()`
+  and `verify()` instead of failing OpenSSL's default 32 MiB limit, while still
+  rejecting excessive-memory hashes.
+- Cache resolved type hints on local `dataclass` and `TypedDict` models referenced by
+  routes (including `request_body` and `response_model`) under
+  `from __future__ import annotations` so factory-scoped models retain full validation
+  and OpenAPI schemas; skip parameter constraints on `None` for optional constrained
+  annotations; emit binary array schemas for `list[UploadFile]` `File()` inputs,
+  1-element fixed `tuple[T]` schemas, and homogeneous `Enum` types in OpenAPI.
+- Preserve `request.root_path` in `StaticFiles` directory-index `308` redirects when
+  mounted behind ASGI `root_path` or WSGI `SCRIPT_NAME`, and deduplicate `Vary: Accept`
+  case-insensitively in `SPAFiles`.
+- Support IPv6 bind hosts (`::1`, `::`, `[::1]`) in `Supervisor` via `AF_INET6` and
+  release connection slots cleanly if starting a proxy thread fails.
+- Accept RFC 7578/2045 `Content-Transfer-Encoding: 7bit` and RFC 2231 `name*=`
+  parameters in multipart form parsing.
+- Prevent `ASGITestClient` redirect following from overwriting redirect target query
+  strings with the original request's `query`/`query_string` or resetting custom
+  origins, and handle negative `Max-Age`, past `Expires`, and bracketed cookie names
+  in `TestClient` cookie tracking.
+- Percent-encode non-ASCII static route segments in `Rule.build()` / `url_for()`,
+  resolve nested dotted attributes in `Config.from_object()` while preserving inner
+  import errors, skip empty `PREFIX_` keys in `Config.from_prefixed_env()`, support
+  single-use iterables for `get_flashed_messages(category_filter=...)`, reject `bool`
+  numeric limits in `RedisSessionStore`/`RedisRateLimitMiddleware`, repair missing TTLs
+  in the Redis rate-limit Lua script, reset cleared `ServerSession` metadata, reject
+  boolean `iat` in `SessionMiddleware._load()`, and clear `response.background` before
+  execution in `TestClient` and the ASGI async fast path.
+
 ## [0.11.4] - 2026-11-22
 
 ### Fixed

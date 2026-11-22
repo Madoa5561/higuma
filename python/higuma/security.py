@@ -18,6 +18,11 @@ from .request import Request, request
 from .response import ResponseValue
 
 _USER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$")
+_MAX_SCRYPT_MEMORY = 256 * 1024 * 1024
+
+
+def _scrypt_memory(n: int, r: int, p: int) -> int:
+    return 128 * r * (n + p + 2)
 
 
 class PasswordHasher:
@@ -36,6 +41,8 @@ class PasswordHasher:
             raise ValueError("r must be an integer between 1 and 32")
         if not isinstance(p, int) or isinstance(p, bool) or not 1 <= p <= 16:
             raise ValueError("p must be an integer between 1 and 16")
+        if _scrypt_memory(n, r, p) > _MAX_SCRYPT_MEMORY:
+            raise ValueError("scrypt parameters exceed the 256 MiB memory limit")
         if (
             not isinstance(salt_bytes, int)
             or isinstance(salt_bytes, bool)
@@ -60,12 +67,14 @@ class PasswordHasher:
         if len(password.encode("utf-8")) > 1024:
             raise ValueError("password must not exceed 1024 UTF-8 bytes")
         salt = secrets.token_bytes(self.salt_bytes)
+        required_memory = _scrypt_memory(self.n, self.r, self.p)
         digest = hashlib.scrypt(
             password.encode("utf-8"),
             salt=salt,
             n=self.n,
             r=self.r,
             p=self.p,
+            maxmem=max(32 * 1024 * 1024, required_memory + 1024 * 1024),
             dklen=self.key_bytes,
         )
         return "$".join(
@@ -88,12 +97,14 @@ class PasswordHasher:
             if marker != "higuma" or algorithm != "scrypt":
                 return False
             work_factor, block_size, parallelism = int(n), int(r), int(p)
+            required_memory = _scrypt_memory(work_factor, block_size, parallelism)
             if (
                 work_factor < 2**10
                 or work_factor > 2**20
                 or work_factor & (work_factor - 1)
                 or not 1 <= block_size <= 32
                 or not 1 <= parallelism <= 16
+                or required_memory > _MAX_SCRYPT_MEMORY
             ):
                 return False
             expected_bytes = _unb64(expected)
@@ -106,6 +117,7 @@ class PasswordHasher:
                 n=work_factor,
                 r=block_size,
                 p=parallelism,
+                maxmem=max(32 * 1024 * 1024, required_memory + 1024 * 1024),
                 dklen=len(expected_bytes),
             )
         except (ValueError, TypeError, binascii.Error):

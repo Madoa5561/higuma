@@ -165,3 +165,19 @@ def test_teardown_failure_still_closes_input_and_yield_dependency():
     with pytest.raises(ValueError, match="teardown failed"):
         app.test_client().get("/")
     assert closed == [True] and inputs[0].closed
+
+
+def test_multipart_accepts_7bit_transfer_encoding_and_rfc2231_name():
+    body = (
+        b"--b7\r\n"
+        b"Content-Disposition: form-data; name*=UTF-8''%E5%90%8D%E5%89%8D\r\n"
+        b"Content-Transfer-Encoding: 7bit\r\n"
+        b"\r\n"
+        b"higuma\r\n"
+        b"--b7--\r\n"
+    )
+    current = Request(
+        {"body": body, "headers": {"Content-Type": "multipart/form-data; boundary=b7"}}
+    )
+    assert current.form["名前"] == "higuma"
+    current.close()

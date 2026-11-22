@@ -359,3 +359,45 @@ def test_config_silent_does_not_mask_loader_errors(tmp_path):
         config.from_file("settings.json", load=load, silent=True)
     with pytest.raises(TypeError, match="must return a mapping"):
         config.from_file("settings.json", load=lambda handle: [], silent=True)
+
+
+def test_unicode_static_route_url_for_nested_config_and_flash_iterator(monkeypatch):
+    from higuma import SessionMiddleware, flash, get_flashed_messages, url_for
+
+    app = Higuma(__name__, static_folder=None)
+    app.add_middleware(SessionMiddleware, "flask-migration-secret-at-least-32-bytes")
+
+    @app.get("/日本語/<name>")
+    def jp_item(name: str):
+        return {"name": name}
+
+    assert app.url_for("jp_item", name="熊") == "/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E7%86%8A"
+    assert app.test_client().get(app.url_for("jp_item", name="熊")).get_json() == {"name": "熊"}
+
+    @app.get("/flash")
+    def flash_view():
+        flash("first", "info")
+        flash("second", "error")
+        flash("third", "error")
+        return {
+            "errors": get_flashed_messages(category_filter=(item for item in ("error",))),
+            "link": url_for("jp_item", name="熊"),
+        }
+
+    assert app.test_client().get("/flash").get_json() == {
+        "errors": ["second", "third"],
+        "link": "/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E7%86%8A",
+    }
+
+    module = types.ModuleType("higuma_nested_test_settings")
+    inner = type("Inner", (), {"NESTED_FLAG": True})
+    module.Outer = type("Outer", (), {"Inner": inner})
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    cfg = Config()
+    assert cfg.from_object("higuma_nested_test_settings.Outer.Inner")
+    assert cfg["NESTED_FLAG"] is True
+
+    monkeypatch.setenv("HIGUMA_EMPTY_KEY_TEST_", "ignored")
+    monkeypatch.setenv("HIGUMA_EMPTY_KEY_TEST_REAL", '"ok"')
+    cfg.from_prefixed_env("HIGUMA_EMPTY_KEY_TEST")
+    assert "" not in cfg and cfg["REAL"] == "ok"

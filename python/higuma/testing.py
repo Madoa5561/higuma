@@ -3,6 +3,8 @@ from __future__ import annotations
 import json as json_module
 import secrets
 from collections.abc import Mapping
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from http.cookies import SimpleCookie
 from pathlib import Path
 from types import TracebackType
@@ -199,8 +201,8 @@ class TestClient:
             response.body = b""
         self._update_cookies(response)
         if response.background is not None:
-            response.background()
-            response.background = None
+            background, response.background = response.background, None
+            background()
         if follow_redirects:
             redirect_headers = dict(headers or {})
             if content_type is not None:
@@ -348,12 +350,50 @@ class TestClient:
             if header_name.lower() != "set-cookie":
                 continue
             parsed = SimpleCookie()
-            parsed.load(raw_cookie)
-            for name, morsel in parsed.items():
-                if morsel["max-age"] == "0":
-                    self.cookies.pop(name, None)
-                else:
-                    self.cookies[name] = morsel.value
+            try:
+                parsed.load(raw_cookie)
+            except Exception:  # noqa: BLE001 - fall back to RFC 6265 pair parsing below
+                parsed = SimpleCookie()
+            if parsed:
+                for name, morsel in parsed.items():
+                    if _cookie_expired(morsel["max-age"], morsel["expires"]):
+                        self.cookies.pop(name, None)
+                    else:
+                        self.cookies[name] = morsel.value
+                continue
+            pair, *attributes = raw_cookie.split(";")
+            if "=" not in pair:
+                continue
+            name, value = pair.split("=", 1)
+            name = name.strip()
+            if not name:
+                continue
+            attr_map: dict[str, str] = {}
+            for attribute in attributes:
+                attr_key, _, attr_value = attribute.strip().partition("=")
+                if attr_key:
+                    attr_map[attr_key.lower()] = attr_value.strip()
+            if _cookie_expired(attr_map.get("max-age", ""), attr_map.get("expires", "")):
+                self.cookies.pop(name, None)
+            else:
+                self.cookies[name] = value.strip().strip('"')
+
+
+def _cookie_expired(max_age: str, expires: str) -> bool:
+    if max_age:
+        try:
+            return int(max_age) <= 0
+        except ValueError:
+            return False
+    if expires:
+        try:
+            expires_at = parsedate_to_datetime(expires)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at <= datetime.now(timezone.utc)
+    return False
 
 
 def _encode_multipart(

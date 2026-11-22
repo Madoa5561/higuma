@@ -407,3 +407,48 @@ def test_file_validators_and_if_range_share_one_boundary(distribution):
         ).status_code
         == 200
     )
+
+
+def test_static_html_redirect_preserves_root_path_and_spa_deduplicates_vary_accept(tmp_path):
+    import asyncio
+
+    (tmp_path / "index.html").write_text("<html>shell</html>", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/index.html").write_text("<html>docs</html>", encoding="utf-8")
+
+    app = Higuma(__name__, static_folder=None, docs_url=None, openapi_url=None)
+    app.mount_static("/docs", tmp_path / "docs", html=True)
+    app.mount_spa("/", tmp_path, headers={"Vary": "Accept-Encoding, accept"})
+
+    async def call_asgi(path: str, *, root_path: str = ""):
+        incoming = asyncio.Queue()
+        incoming.put_nowait({"type": "http.request", "body": b""})
+        events = []
+
+        async def send(event):
+            events.append(event)
+
+        await app.asgi_app(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": f"{root_path}{path}",
+                "raw_path": f"{root_path}{path}".encode("ascii"),
+                "root_path": root_path,
+                "query_string": b"tab=intro",
+                "headers": [(b"host", b"example.test"), (b"accept", b"text/html")],
+            },
+            incoming.get,
+            send,
+        )
+        return events
+
+    events = asyncio.run(call_asgi("/docs", root_path="/portal"))
+    assert events[0]["status"] == 308
+    headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in events[0]["headers"]}
+    assert headers["location"] == "/portal/docs/?tab=intro"
+
+    shell = app.test_client().get("/app/page", headers={"accept": "text/html"})
+    assert shell.status_code == 200
+    vary_tokens = [item.strip().lower() for item in shell.headers["vary"].split(",")]
+    assert vary_tokens.count("accept") == 1

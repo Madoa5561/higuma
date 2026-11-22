@@ -322,6 +322,10 @@ supervisor, streaming, and proxy changes.
   merge per RFC 9110, `make_response()` accepts `(name, value)` header sequences, native
   `app.run()` and WebSocket same-origin support IPv6, and `Observability` middleware
   records inner `HTTPException` statuses accurately.
+  In 0.11.5+, `PasswordHasher` supports OWASP `scrypt` work factors (`n>=2**15`) up to a
+  256 MiB cap, `Supervisor` binds IPv6 hosts, `StaticFiles` preserves `root_path` in `308`
+  redirects, local dataclass/TypedDict hints are cached under `from __future__ import annotations`,
+  and `Rule.build()` percent-encodes non-ASCII static route segments.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

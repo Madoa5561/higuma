@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.5** — `PasswordHasher` の OWASP `scrypt` (`n>=2**15`) 対応と 256 MiB 上限、
+> `from __future__ import annotations` 下のローカル dataclass/TypedDict 検証・OpenAPI 解決、
+> `StaticFiles` の `root_path` 維持リダイレクト、IPv6 `Supervisor` bind、multipart `7bit`／RFC 2231、
+> `ASGITestClient` リダイレクト query 保持、非 ASCII 静的ルート `url_for` エンコードを改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.4** — nativeサーバーの末尾`/`維持（`mount_static(..., html=True)`の無限リダイレクト解消）、
 > IPv6 bind・IPv6 WebSocket same-origin・close検証、RFC 9110重複header統合、
 > `Observability` middlewareの4xx/cancel記録、`make_response`重複header組・SSE改行仕様準拠、

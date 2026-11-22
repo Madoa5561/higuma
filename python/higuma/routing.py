@@ -131,7 +131,7 @@ class Rule:
         parts: list[str] = []
         for kind, value, converter in self._segments:
             if kind == "static":
-                parts.append(str(value))
+                parts.append(quote(str(value), safe="!$&'()*+,-.:;=@_~"))
                 continue
             if value is None:
                 raise RuntimeError("route parameter name is missing")

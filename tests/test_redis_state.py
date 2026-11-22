@@ -150,3 +150,37 @@ def test_redis_outage_fails_closed_without_leaking_backend_error():
     response = app.test_client().get("/")
     assert response.status_code == 503 and not reached
     assert b"private-backend-credential" not in response.body
+
+
+def test_redis_state_rejects_bool_limits_and_resets_empty_session():
+    from higuma import Response, ServerSession
+
+    class FakeClient:
+        def __init__(self):
+            self.deleted = []
+
+        def delete(self, key):
+            self.deleted.append(key)
+            return 1
+
+    fake = FakeClient()
+    with pytest.raises(ValueError, match="positive integers"):
+        RedisSessionStore(fake, prefix="app:", ttl=True)
+    with pytest.raises(ValueError, match="positive integers"):
+        RedisSessionStore(fake, prefix="app:", max_bytes=True)
+    with pytest.raises(ValueError, match="positive and finite"):
+        RedisRateLimitMiddleware(fake, prefix="app:", limit=True)
+    with pytest.raises(ValueError, match="positive and finite"):
+        RedisRateLimitMiddleware(fake, prefix="app:", window=True)
+
+    store = RedisSessionStore(fake, prefix="app:", ttl=60)
+    middleware = RedisSessionMiddleware("secret" * 8, store=store)
+    sid = "a" * 43
+    server_session = ServerSession({"user": "bear"}, sid=sid, stored=b"old")
+    server_session.clear()
+    middleware._save(Response(), server_session)
+    assert fake.deleted == ["app:session:" + sid]
+    assert server_session.sid is None
+    assert server_session.stored is None
+    assert server_session.modified is False
+    assert server_session.rotated is False

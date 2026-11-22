@@ -635,6 +635,64 @@ class ModernApiTests(unittest.TestCase):
         self.assertTrue(all(loop is loops[0] for loop in loops))
         self.assertIsNone(marker.get())
 
+    def test_optional_constrained_none_and_openapi_file_list_tuple_enum(self) -> None:
+        from enum import Enum
+
+        from higuma import Parameter
+
+        class Ratio(Enum):
+            HALF = 0.5
+            WHOLE = 1.0
+
+        class Mixed(Enum):
+            TEXT = "a"
+            NUMBER = 1
+
+        @dataclass
+        class OptionalConstrained:
+            code: Annotated[str | None, Parameter(min_length=3, pattern=r"^[A-Z]+$")] = None
+            count: Annotated[int | None, Parameter(ge=0)] = None
+
+        app = self.make_app()
+
+        @app.post("/optional-constrained")
+        def optional_constrained(
+            payload: Annotated[OptionalConstrained, Body()],
+        ) -> dict[str, object]:
+            return {"code": payload.code, "count": payload.count}
+
+        @app.post("/upload-many")
+        def upload_many(
+            files: Annotated[list[UploadFile], File()],
+        ) -> dict[str, int]:
+            return {"count": len(files)}
+
+        client = app.test_client()
+        self.assertEqual(
+            client.post("/optional-constrained", json={"code": None, "count": None}).json,
+            {"code": None, "count": None},
+        )
+        self.assertEqual(
+            client.post("/optional-constrained", json={"code": "ab", "count": 1}).status_code,
+            422,
+        )
+
+        from higuma.openapi import schema_for
+
+        self.assertEqual(
+            schema_for(tuple[int]),
+            {"type": "array", "prefixItems": [{"type": "integer"}], "minItems": 1, "maxItems": 1},
+        )
+        self.assertEqual(schema_for(Ratio), {"enum": [0.5, 1.0], "type": "number"})
+        self.assertEqual(schema_for(Mixed), {"enum": ["a", 1]})
+        upload_schema = app.openapi()["paths"]["/upload-many"]["post"]["requestBody"]["content"][
+            "multipart/form-data"
+        ]["schema"]["properties"]["files"]
+        self.assertEqual(
+            upload_schema,
+            {"type": "array", "items": {"type": "string", "format": "binary"}},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

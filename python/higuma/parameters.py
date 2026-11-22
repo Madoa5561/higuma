@@ -4,7 +4,7 @@ import inspect
 import math
 import re
 import types
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from datetime import date, datetime
 from enum import Enum
@@ -101,11 +101,16 @@ def cache_parameter_hints(
     func: Callable[..., Any],
     localns: Mapping[str, Any] | None = None,
     seen: set[Callable[..., Any]] | None = None,
+    extra_models: Iterable[Any] = (),
 ) -> None:
     seen = set() if seen is None else seen
     if func in seen:
         return
     seen.add(func)
+    seen_models: set[Any] = set()
+    for model in extra_models:
+        if model is not None:
+            _cache_model_hints(model, localns, seen_models)
     view_class = getattr(func, "view_class", None)
     if inspect.isclass(view_class):
         for attr in (
@@ -134,12 +139,63 @@ def cache_parameter_hints(
         func.__higuma_type_hints__ = hints
     except (AttributeError, TypeError):
         return
+    for hint in hints.values():
+        _cache_model_hints(hint, localns, seen_models)
     signature = inspect.signature(func)
     for parameter in signature.parameters.values():
         annotation = hints.get(parameter.name, parameter.annotation)
         _, marker = split_parameter_annotation(annotation, parameter.default)
         if isinstance(marker, Depends):
             cache_parameter_hints(marker.dependency, localns, seen)
+
+
+def _cache_model_hints(
+    annotation: Any,
+    localns: Mapping[str, Any] | None,
+    seen_models: set[Any],
+) -> None:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        args = get_args(annotation)
+        if args:
+            _cache_model_hints(args[0], localns, seen_models)
+        return
+    if origin is not None:
+        for arg in get_args(annotation):
+            _cache_model_hints(arg, localns, seen_models)
+        return
+    if not inspect.isclass(annotation) or annotation in seen_models:
+        return
+    if not (is_dataclass(annotation) or _is_typed_dict(annotation)):
+        return
+    seen_models.add(annotation)
+    module = inspect.getmodule(annotation)
+    globalns = vars(module) if module is not None else None
+    try:
+        model_hints = get_type_hints(
+            annotation,
+            globalns=globalns,
+            localns=dict(localns or {}),
+            include_extras=True,
+        )
+    except (NameError, TypeError):
+        return
+    try:
+        annotation.__higuma_type_hints__ = model_hints
+    except (AttributeError, TypeError):
+        return
+    for field_hint in model_hints.values():
+        _cache_model_hints(field_hint, localns, seen_models)
+
+
+def resolved_model_hints(annotation: Any) -> dict[str, Any]:
+    cached = getattr(annotation, "__higuma_type_hints__", None)
+    if isinstance(cached, dict):
+        return cached
+    try:
+        return get_type_hints(annotation, include_extras=True)
+    except (NameError, TypeError):
+        return {}
 
 
 def resolve_arguments(
@@ -599,10 +655,7 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
 def _convert_dataclass(value: Any, annotation: Any, *, response: bool = False) -> Any:
     if isinstance(value, annotation):
         if response:
-            try:
-                hints = get_type_hints(annotation, include_extras=True)
-            except (NameError, TypeError):
-                hints = {}
+            hints = resolved_model_hints(annotation)
             validated = object.__new__(annotation)
             for field in fields(annotation):
                 object.__setattr__(
@@ -616,10 +669,7 @@ def _convert_dataclass(value: Any, annotation: Any, *, response: bool = False) -
         return value
     if not isinstance(value, Mapping):
         raise TypeError("value must be an object")
-    try:
-        hints = get_type_hints(annotation, include_extras=True)
-    except (NameError, TypeError):
-        hints = {}
+    hints = resolved_model_hints(annotation)
     known = {field.name for field in fields(annotation) if field.init}
     extra = set(value) - known
     if extra and not response:
@@ -641,10 +691,7 @@ def _convert_dataclass(value: Any, annotation: Any, *, response: bool = False) -
 def _convert_typed_dict(value: Any, annotation: Any, *, response: bool = False) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise TypeError("value must be an object")
-    try:
-        hints = get_type_hints(annotation, include_extras=True)
-    except (NameError, TypeError):
-        hints = dict(annotation.__annotations__)
+    hints = resolved_model_hints(annotation) or dict(annotation.__annotations__)
     extra = set(value) - set(hints)
     if extra and not response:
         raise ValueError(f"unexpected fields: {', '.join(sorted(map(str, extra)))}")
@@ -659,6 +706,8 @@ def _convert_typed_dict(value: Any, annotation: Any, *, response: bool = False) 
 
 
 def _validate_constraints(value: Any, marker: Parameter) -> None:
+    if value is None:
+        return
     if marker.min_length is not None:
         try:
             if len(value) < marker.min_length:

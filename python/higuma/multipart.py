@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from email import policy
 from email.parser import BytesHeaderParser
+from email.utils import collapse_rfc2231_value
 from io import BytesIO
 from tempfile import SpooledTemporaryFile
 from typing import Any
@@ -102,9 +103,18 @@ def parse_multipart(request: Any) -> tuple[list[Any], list[Any]]:
                 raise BadRequest(detail="invalid multipart part headers")
             if part.get_content_disposition() != "form-data":
                 raise BadRequest(detail="multipart parts must use form-data")
-            if part.get("Content-Transfer-Encoding", "binary").lower() not in {"binary", "8bit"}:
+            if part.get("Content-Transfer-Encoding", "binary").strip().lower() not in {
+                "binary",
+                "8bit",
+                "7bit",
+            }:
                 raise BadRequest(detail="encoded multipart transfer is not supported")
-            name = part.get_param("name", header="content-disposition")
+            raw_name = part.get_param("name", header="content-disposition")
+            name = (
+                collapse_rfc2231_value(raw_name)
+                if isinstance(raw_name, tuple)
+                else (str(raw_name) if raw_name else "")
+            )
             if not name:
                 raise BadRequest(detail="multipart part is missing its name")
             filename = part.get_filename()

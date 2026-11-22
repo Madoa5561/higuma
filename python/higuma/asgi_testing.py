@@ -213,7 +213,11 @@ class ASGITestClient:
                         await asyncio.gather(exchange.task, return_exceptions=True)
 
     def _scope(self, path: str, *, method: str = "GET", **kwargs):
-        effective_base_url = kwargs.pop("base_url", None) or self.base_url
+        explicit_base_url = kwargs.pop("base_url", None)
+        split = urlsplit(path)
+        effective_base_url = explicit_base_url or (
+            f"{split.scheme or 'http'}://{split.netloc}" if split.netloc else self.base_url
+        )
         raw, _ = self._helper._build_request(
             path, method=method, base_url=effective_base_url, **kwargs
         )
@@ -304,6 +308,9 @@ class ASGITestClient:
         current = response
         current_method = method
         current_kwargs = dict(kwargs)
+        current_kwargs.pop("query", None)
+        current_kwargs.pop("query_string", None)
+        current_kwargs.pop("base_url", None)
         current_headers = {
             str(key).lower(): str(value)
             for key, value in (current_kwargs.get("headers") or {}).items()

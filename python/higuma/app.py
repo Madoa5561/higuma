@@ -55,7 +55,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.4"
+__version__ = "0.11.5"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -215,6 +215,7 @@ class Higuma:
                 cache_parameter_hints(
                     view_func,
                     frame.f_back.f_locals if frame is not None and frame.f_back is not None else {},
+                    extra_models=(request_body, response_model),
                 )
             finally:
                 del frame

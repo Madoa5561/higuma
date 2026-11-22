@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from urllib.parse import quote
 
 from .exceptions import MethodNotAllowed, NotFound
 from .request import Request
@@ -78,7 +79,8 @@ class StaticFiles:
         if shell:
             # A navigation may select HTML while an API-style fetch selects 404.
             vary = headers.get("vary", "")
-            headers["vary"] = f"{vary}, Accept" if vary else "Accept"
+            if not {"accept", "*"} & {item.strip().lower() for item in vary.split(",")}:
+                headers["vary"] = f"{vary}, Accept" if vary else "Accept"
             headers["cache-control"] = "no-cache"
         media_type = {
             ".js": "text/javascript; charset=utf-8",
@@ -101,8 +103,9 @@ class StaticFiles:
         if candidate.is_dir() and self.html:
             candidate = self._path("/".join(filter(None, (filename, self.index_file))))
             if candidate.is_file() and not request.path.endswith("/"):
+                prefix = quote(request.root_path, safe="/") if request.root_path else ""
                 query = f"?{request.query_string}" if request.query_string else ""
-                return RedirectResponse(f"{request.path}/{query}", status=308)
+                return RedirectResponse(f"{prefix}{request.path}/{query}", status=308)
         if not candidate.is_file():
             raise NotFound()
         return self._response(candidate, html=self.html and candidate.name == self.index_file)

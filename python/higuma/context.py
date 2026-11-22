@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, MutableMapping
+from collections.abc import Callable, Iterable, Iterator, MutableMapping
 from contextvars import ContextVar
 from types import SimpleNamespace
 from typing import Any
@@ -117,16 +117,17 @@ def flash(message: Any, category: str = "message") -> None:
 
 
 def get_flashed_messages(
-    with_categories: bool = False, category_filter: tuple[str, ...] = ()
+    with_categories: bool = False, category_filter: Iterable[str] = ()
 ) -> list[Any]:
     current = _request_context.get()
     if current is None:
         raise RuntimeError("working outside of a request context")
     if "_higuma_flashes" not in current.state:
         current.state["_higuma_flashes"] = session.pop("_flashes", [])
+    allowed_categories = set(category_filter)
     messages = [
         (category, message)
         for category, message in current.state["_higuma_flashes"]
-        if not category_filter or category in category_filter
+        if not allowed_categories or category in allowed_categories
     ]
     return messages if with_categories else [message for _, message in messages]
