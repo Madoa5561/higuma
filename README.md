@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.14** — `TrustedHostMiddleware` の port `0` 拒否・IPv6 正規化（`::1`/`[::1]`）、
+> `SecurityHeadersMiddleware` の `None` 無効化修正、`ProxyHeadersMiddleware` の IPv4-mapped IPv6 対応、
+> `CSRFProtection` / `TokenSigner` / `PasswordHasher` / `validate_user_id` 入力検証、
+> `session |= {...}` 対応、`get_flashed_messages(category_filter=...)` 単一文字列拒否、
+> `HTTPException`/`abort`・`ViteManifest(base_url=...)`・SQLAlchemy 拡張の事前検証を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.13** — `AwaitBridge` (`_AwaitChannel`) の解除済み `ContextVar` リセット、`Signal` の
 > 値型 sender（`str`/`int` 等）一致・async callable 拒否・`connected_to` 同期化、ASGI async fast path の
 > finalizer 例外境界分離、`Response`/`RedirectResponse`/`StreamingResponse` 等の重複ペアヘッダ保持、

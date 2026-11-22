@@ -13,7 +13,11 @@ class HTTPException(Exception):
         detail: str | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> None:
-        resolved_status = self.status_code if status_code is None else int(status_code)
+        if status_code is not None and (
+            isinstance(status_code, bool) or not isinstance(status_code, int)
+        ):
+            raise ValueError("final HTTP status code must be an integer between 200 and 599")
+        resolved_status = self.status_code if status_code is None else status_code
         if not 200 <= resolved_status <= 599:
             raise ValueError("final HTTP status code must be between 200 and 599")
         self.status_code = resolved_status

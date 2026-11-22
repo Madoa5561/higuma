@@ -365,6 +365,11 @@ supervisor, streaming, and proxy changes.
   `Request.close()` closes every upload and stream, `WebSocket` adds `asend()` and structured
   `send_json()`/`asend_json()`, and native `RequestBodyFile` supports `read(None)` and raises
   `ValueError` when closed.
+  In 0.11.14+, `TrustedHostMiddleware` rejects port `0` and canonicalizes IPv6 hosts (`::1` /
+  `[::1]`), `SecurityHeadersMiddleware` omits `X-Frame-Options`/`Referrer-Policy` when `None`,
+  `ProxyHeadersMiddleware` matches IPv4-mapped IPv6 peers, `session |= {...}` works on the
+  session proxy, `get_flashed_messages()` / `CSRFProtection` reject bare string iterables, and
+  `HTTPException`/`ViteManifest`/SQLAlchemy extensions enforce strict upfront validation.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

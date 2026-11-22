@@ -511,3 +511,20 @@ def test_static_non_ascii_redirect_accept_ows_and_prefix_validation(tmp_path):
         SPAFiles(tmp_path, api_prefixes=b"/api")  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         SPAFiles(tmp_path, api_prefixes=[123])  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize(
+    "bad_base_url",
+    [
+        123,
+        "https://cdn.example:0/assets/",
+        "/static/with space/",
+        '/static/"quoted"/',
+        "/static/<tag>/",
+    ],
+)
+def test_vite_manifest_rejects_port_zero_non_str_and_unsafe_base_urls(tmp_path, bad_base_url):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"entry": {"file": "assets/app.js"}}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        ViteManifest(manifest_path, base_url=bad_base_url)

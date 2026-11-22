@@ -916,6 +916,141 @@ class PythonCoreRegressionTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
         self.assertIsInstance(result.exception, ValueError)
 
+    def test_middleware_security_session_ior_flash_filter_and_exception_hardening(self) -> None:
+        from higuma import (
+            AsyncSQLAlchemyExtension,
+            CSRFProtection,
+            Higuma,
+            HTTPException,
+            PasswordHasher,
+            ProxyHeadersMiddleware,
+            SecurityHeadersMiddleware,
+            SessionMiddleware,
+            SQLAlchemyExtension,
+            TokenSigner,
+            TrustedHostMiddleware,
+            abort,
+            flash,
+            get_flashed_messages,
+            request,
+            session,
+            validate_user_id,
+        )
+
+        # TrustedHostMiddleware: reject port 0, canonicalize IPv6 & bracketed patterns
+        host_app = Higuma(__name__, static_folder=None)
+        host_app.add_middleware(TrustedHostMiddleware, ["[::1]", "example.test"])
+
+        @host_app.get("/ping")
+        def ping():
+            return {"ok": True}
+
+        host_client = host_app.test_client()
+        self.assertEqual(
+            host_client.get("/ping", headers={"host": "[0:0:0:0:0:0:0:1]:8000"}).status_code, 200
+        )
+        self.assertEqual(host_client.get("/ping", headers={"host": "[::1]"}).status_code, 200)
+        self.assertEqual(
+            host_client.get("/ping", headers={"host": "example.test:0"}).status_code, 403
+        )
+        with self.assertRaises(TypeError):
+            TrustedHostMiddleware(bytearray(b"example.test"))  # type: ignore[arg-type]
+
+        # SecurityHeadersMiddleware: None/empty disables X-Frame-Options & Referrer-Policy cleanly
+        sec_app = Higuma(__name__, static_folder=None)
+        sec_app.add_middleware(
+            SecurityHeadersMiddleware,
+            frame_options=None,
+            referrer_policy=None,
+        )
+
+        @sec_app.get("/sec")
+        def sec():
+            return "ok"
+
+        sec_resp = sec_app.test_client().get("/sec")
+        self.assertEqual(sec_resp.status_code, 200)
+        self.assertNotIn("x-frame-options", sec_resp.headers)
+        self.assertNotIn("referrer-policy", sec_resp.headers)
+
+        # ProxyHeadersMiddleware: IPv4-mapped IPv6 peer matches IPv4 trusted_proxies
+        proxy_mw = ProxyHeadersMiddleware(["127.0.0.1"])
+        from higuma import Request, Response
+
+        mapped_req = Request(
+            {
+                "client_addr": "::ffff:127.0.0.1",
+                "headers": {
+                    "x-forwarded-for": "203.0.113.42",
+                    "x-forwarded-proto": "https",
+                },
+            }
+        )
+        proxy_mw(mapped_req, lambda req: Response("ok"))
+        self.assertEqual(mapped_req.client_addr, "203.0.113.42")
+        self.assertEqual(mapped_req.scheme, "https")
+
+        # Security helpers: CSRFProtection safe_methods, TokenSigner, PasswordHasher, validate_user_id
+        with self.assertRaises(TypeError):
+            CSRFProtection(safe_methods="GET")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            CSRFProtection(header_name="")
+
+        signer = TokenSigner("a" * 32)
+        with self.assertRaises(ValueError):
+            signer.loads(None)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            signer.loads(123)  # type: ignore[arg-type]
+
+        hasher = PasswordHasher(n=2**10)
+        with self.assertRaises(ValueError):
+            hasher.hash(None)  # type: ignore[arg-type]
+        self.assertFalse(hasher.verify(None, "higuma$scrypt$1024$8$1$aa$bb"))  # type: ignore[arg-type]
+        self.assertFalse(hasher.verify("pw", None))  # type: ignore[arg-type]
+        self.assertTrue(hasher.needs_rehash(None))  # type: ignore[arg-type]
+        self.assertFalse(validate_user_id(None))  # type: ignore[arg-type]
+        self.assertFalse(validate_user_id(12345))  # type: ignore[arg-type]
+
+        # _SessionProxy |= and get_flashed_messages category_filter bare string rejection
+        sess_app = Higuma(__name__, static_folder=None)
+        sess_app.add_middleware(SessionMiddleware, "s" * 32)
+
+        def apply_merge(store) -> None:
+            store |= {"role": "admin", "count": 2}
+
+        @sess_app.post("/merge")
+        def merge():
+            apply_merge(session)
+            flash("saved", "info")
+            return {"role": session["role"], "count": session["count"]}
+
+        @sess_app.get("/flashes")
+        def flashes():
+            if request.args.get("bad"):
+                return {"items": get_flashed_messages(category_filter="info")}  # type: ignore[arg-type]
+            return {"items": get_flashed_messages(category_filter=("info",))}
+
+        sess_client = sess_app.test_client()
+        self.assertEqual(sess_client.post("/merge").json, {"role": "admin", "count": 2})
+        self.assertEqual(sess_client.get("/flashes").json, {"items": ["saved"]})
+        with self.assertRaises(TypeError), sess_app.test_request_context("/flashes"):
+            get_flashed_messages(category_filter="info")
+
+        # HTTPException / abort reject bool/float status codes
+        for bad_status in (True, 400.9, "404"):
+            with self.assertRaises(ValueError):
+                HTTPException(bad_status)  # type: ignore[arg-type]
+            with self.assertRaises(ValueError):
+                abort(bad_status)  # type: ignore[arg-type]
+
+        # SQLAlchemyExtension / AsyncSQLAlchemyExtension reject blank/non-str URLs upfront
+        db_app = Higuma(__name__, static_folder=None)
+        for bad_url in ("", "   ", None, 123):
+            with self.assertRaises(ValueError):
+                SQLAlchemyExtension().init_app(db_app, bad_url)  # type: ignore[arg-type]
+            with self.assertRaises(ValueError):
+                AsyncSQLAlchemyExtension().init_app(db_app, bad_url)  # type: ignore[arg-type]
+
 
 if __name__ == "__main__":
     unittest.main()

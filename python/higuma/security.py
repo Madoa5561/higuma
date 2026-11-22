@@ -63,8 +63,8 @@ class PasswordHasher:
         self.key_bytes = key_bytes
 
     def hash(self, password: str) -> str:
-        if not password:
-            raise ValueError("password must not be empty")
+        if not isinstance(password, str) or not password:
+            raise ValueError("password must be a non-empty string")
         if len(password.encode("utf-8")) > 1024:
             raise ValueError("password must not exceed 1024 UTF-8 bytes")
         salt = secrets.token_bytes(self.salt_bytes)
@@ -91,7 +91,12 @@ class PasswordHasher:
         )
 
     def verify(self, password: str, encoded: str) -> bool:
-        if len(encoded) > 512 or len(password.encode("utf-8")) > 1024:
+        if (
+            not isinstance(password, str)
+            or not isinstance(encoded, str)
+            or len(encoded) > 512
+            or len(password.encode("utf-8")) > 1024
+        ):
             return False
         try:
             marker, algorithm, n, r, p, salt, expected = encoded.split("$")
@@ -126,6 +131,8 @@ class PasswordHasher:
         return hmac.compare_digest(actual, expected_bytes)
 
     def needs_rehash(self, encoded: str) -> bool:
+        if not isinstance(encoded, str):
+            return True
         try:
             marker, algorithm, n, r, p, salt, digest = encoded.split("$")
             return (
@@ -162,6 +169,8 @@ class TokenSigner:
             isinstance(max_age, bool) or not math.isfinite(max_age) or max_age < 0
         ):
             raise ValueError("max_age must be a non-negative finite number")
+        if not isinstance(token, str):
+            raise ValueError("invalid token")  # noqa: TRY004 - loads raises ValueError for bad tokens
         if len(token) > 64 * 1024:
             raise ValueError("token is too large")
         try:
@@ -191,8 +200,17 @@ class CSRFProtection:
         field_name: str = "_csrf_token",
         safe_methods: tuple[str, ...] = ("GET", "HEAD", "OPTIONS"),
     ) -> None:
-        if not header_name or not field_name:
+        if (
+            not isinstance(header_name, str)
+            or not header_name
+            or not isinstance(field_name, str)
+            or not field_name
+        ):
             raise ValueError("header_name and field_name must not be empty")
+        if isinstance(safe_methods, (str, bytes, bytearray)):
+            raise TypeError(
+                "safe_methods must be an iterable of HTTP method strings, not a single string"
+            )
         self.header_name = header_name
         self.field_name = field_name
         self.safe_methods = tuple(method.upper() for method in safe_methods)
@@ -318,7 +336,7 @@ def generate_user_id(prefix: str = "usr", *, entropy_bytes: int = 18) -> str:
 
 
 def validate_user_id(value: str) -> bool:
-    return bool(_USER_ID_RE.fullmatch(value))
+    return isinstance(value, str) and bool(_USER_ID_RE.fullmatch(value))
 
 
 def csrf_token(field_name: str | None = None) -> str:

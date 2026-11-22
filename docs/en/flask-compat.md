@@ -170,7 +170,7 @@ results are not cached.
 
 ## 0.11: URL hooks, reusable components, and configuration
 
-This section describes the 0.11 series. Install with `python -m pip install "higuma==0.11.13"`,
+This section describes the 0.11 series. Install with `python -m pip install "higuma==0.11.14"`,
 or `python -m pip install -e .` for development from a repository checkout.
 Mandatory Python dependencies remain empty.
 

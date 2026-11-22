@@ -10,11 +10,13 @@ class SQLAlchemyExtension:
     key = "higuma.sqlalchemy"
 
     def init_app(self, app: Any, url: str, **engine_options: Any) -> None:
+        if self.key in app.extensions:
+            raise ValueError("SQLAlchemy integration is already initialized")
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("database URL must be a non-empty string")
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
-        if self.key in app.extensions:
-            raise ValueError("SQLAlchemy integration is already initialized")
         engine = create_engine(url, **engine_options)
         app.extensions[self.key] = {
             "owner": self,

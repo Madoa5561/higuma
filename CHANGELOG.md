@@ -7,6 +7,30 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.14] - 2026-11-23
+
+### Fixed
+
+- Harden `TrustedHostMiddleware`, `SecurityHeadersMiddleware`, and `ProxyHeadersMiddleware`:
+  reject port `0` (`Host: example.test:0`) and canonicalize IPv6 literals (accepting both
+  `::1` and bracketed `[::1]` in `allowed_hosts`, matching expanded spellings like
+  `[0:0::1]:8000`); reject `bytearray` alongside `str`/`bytes` in middleware list helpers;
+  omit `X-Frame-Options`/`Referrer-Policy` cleanly when `frame_options=None` or
+  `referrer_policy=None` instead of emitting literal `"None"`; recognize IPv4-mapped IPv6
+  dual-stack proxy peers (`::ffff:127.0.0.1`) against IPv4 `trusted_proxies`.
+- Harden security utilities: reject bare `str`/`bytes`/`bytearray` for
+  `CSRFProtection(safe_methods=...)` and non-string/empty `header_name`/`field_name`; return
+  `ValueError("invalid token")` for non-string `TokenSigner.loads()` inputs; handle
+  non-string inputs cleanly in `PasswordHasher.hash()`/`verify()`/`needs_rehash()` and
+  `validate_user_id()`.
+- Implement `_SessionProxy.__ior__` so `session |= {...}` works through the `session` proxy
+  (matching `Session.__ior__`), reject bare `str`/`bytes`/`bytearray` in
+  `get_flashed_messages(category_filter=...)`, reject boolean/non-int status codes in
+  `HTTPException` / `abort()`, reject port `0` / non-str / whitespace / quote characters in
+  `ViteManifest(base_url=...)`, and validate `SQLAlchemyExtension.init_app()` /
+  `AsyncSQLAlchemyExtension.init_app()` database URLs upfront before importing optional
+  dependencies.
+
 ## [0.11.13] - 2026-11-23
 
 ### Fixed

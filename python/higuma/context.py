@@ -77,6 +77,10 @@ class _SessionProxy(LocalProxy[Any], MutableMapping[str, Any]):
     def __setattr__(self, name: str, value: Any) -> None:
         setattr(self._get_current(), name, value)
 
+    def __ior__(self, other: Any) -> _SessionProxy:  # noqa: PYI034 - Python 3.10 has no typing.Self
+        self._get_current().__ior__(other)
+        return self
+
 
 g = _GlobalsProxy()
 session = _SessionProxy()
@@ -119,6 +123,8 @@ def flash(message: Any, category: str = "message") -> None:
 def get_flashed_messages(
     with_categories: bool = False, category_filter: Iterable[str] = ()
 ) -> list[Any]:
+    if isinstance(category_filter, (str, bytes, bytearray)):
+        raise TypeError("category_filter must be an iterable of category strings, not one string")
     current = _request_context.get()
     if current is None:
         raise RuntimeError("working outside of a request context")

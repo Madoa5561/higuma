@@ -10,6 +10,10 @@ from urllib.parse import quote, urlsplit
 class ViteManifest:
     def __init__(self, path: str | Path, *, base_url: str = "/static/") -> None:
         self.path = Path(path)
+        if not isinstance(base_url, str):
+            raise ValueError(  # noqa: TRY004 - consistent base_url validation error
+                "base_url must be a root-relative path or absolute HTTP(S) URL"
+            )
         parsed = urlsplit(base_url)
         if (
             parsed.scheme not in {"", "http", "https"}
@@ -20,10 +24,11 @@ class ViteManifest:
             or parsed.query
             or parsed.fragment
             or "\\" in base_url
+            or any(char in base_url for char in " \t\"'<>")
             or any(ord(char) < 32 or ord(char) == 127 for char in base_url)
             or any(part in {".", ".."} for part in parsed.path.split("/"))
             or "%" in base_url
-            or (parsed.netloc and parsed.port is not None and not 0 <= parsed.port <= 65535)
+            or (parsed.netloc and parsed.port is not None and not 1 <= parsed.port <= 65535)
         ):
             raise ValueError("base_url must be a root-relative path or absolute HTTP(S) URL")
         self.base_url = base_url.rstrip("/") + "/"

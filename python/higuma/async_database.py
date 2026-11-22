@@ -10,10 +10,12 @@ class AsyncSQLAlchemyExtension:
     key = "higuma.sqlalchemy.async"
 
     def init_app(self, app, url: str, **engine_options):
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
         if self.key in app.extensions:
             raise ValueError("async SQLAlchemy integration is already initialized")
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("database URL must be a non-empty string")
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
         state = {"owner": self, "engine": None, "sessions": None, "loop": None}
         app.extensions[self.key] = state
 

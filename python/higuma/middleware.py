@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from ipaddress import ip_address, ip_network
+from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 
 from .exceptions import Forbidden
 from .request import Request
@@ -12,9 +12,23 @@ NextHandler = Callable[[Request], ResponseValue]
 
 
 def _string_tuple(values: Iterable[str], name: str) -> tuple[str, ...]:
-    if isinstance(values, (str, bytes)):
+    if isinstance(values, (str, bytes, bytearray)):
         raise TypeError(f"{name} must be an iterable of strings, not one string")
     return tuple(values)
+
+
+def _normalize_host_pattern(pattern: str) -> str:
+    candidate = pattern.strip().lower()
+    if candidate.startswith("[") and candidate.endswith("]"):
+        candidate = candidate[1:-1]
+    if ":" in candidate:
+        try:
+            address = ip_address(candidate)
+            if address.version == 6:
+                return str(address)
+        except ValueError:
+            pass
+    return candidate
 
 
 class CORSMiddleware:
@@ -95,8 +109,8 @@ class SecurityHeadersMiddleware:
         self,
         *,
         content_security_policy: str | None = "default-src 'self'",
-        frame_options: str = "DENY",
-        referrer_policy: str = "strict-origin-when-cross-origin",
+        frame_options: str | None = "DENY",
+        referrer_policy: str | None = "strict-origin-when-cross-origin",
         permissions_policy: str | None = "camera=(), microphone=(), geolocation=()",
         strict_transport_security: str | None = None,
     ) -> None:
@@ -109,8 +123,10 @@ class SecurityHeadersMiddleware:
     def __call__(self, request: Request, call_next: NextHandler) -> Response:
         response = make_response(call_next(request))
         response.headers.setdefault("x-content-type-options", "nosniff")
-        response.headers.setdefault("x-frame-options", self.frame_options)
-        response.headers.setdefault("referrer-policy", self.referrer_policy)
+        if self.frame_options:
+            response.headers.setdefault("x-frame-options", self.frame_options)
+        if self.referrer_policy:
+            response.headers.setdefault("referrer-policy", self.referrer_policy)
         response.headers.setdefault("cross-origin-opener-policy", "same-origin")
         if self.content_security_policy:
             response.headers.setdefault("content-security-policy", self.content_security_policy)
@@ -127,7 +143,7 @@ class SecurityHeadersMiddleware:
 class TrustedHostMiddleware:
     def __init__(self, allowed_hosts: Iterable[str]) -> None:
         self.allowed_hosts = tuple(
-            host.lower() for host in _string_tuple(allowed_hosts, "allowed_hosts")
+            _normalize_host_pattern(host) for host in _string_tuple(allowed_hosts, "allowed_hosts")
         )
 
     def __call__(self, request: Request, call_next: NextHandler) -> ResponseValue:
@@ -136,15 +152,18 @@ class TrustedHostMiddleware:
         if match is None:
             raise Forbidden(detail="invalid Host header")
         ipv6, name, port = match.groups()
-        if port is not None and int(port) > 65535:
+        if port is not None and not 1 <= int(port) <= 65535:
             raise Forbidden(detail="invalid Host port")
         if ipv6 is not None:
             try:
-                if ip_address(ipv6).version != 6:
+                parsed_ipv6 = ip_address(ipv6)
+                if parsed_ipv6.version != 6:
                     raise ValueError("expected IPv6")
+                host = str(parsed_ipv6)
             except ValueError as exc:
                 raise Forbidden(detail="invalid Host address") from exc
-        host = ipv6 or name
+        else:
+            host = name
         if not any(self._matches(host, pattern) for pattern in self.allowed_hosts):
             raise Forbidden(detail="untrusted Host header")
         return call_next(request)
@@ -169,12 +188,18 @@ class ProxyHeadersMiddleware:
             for value in _string_tuple(trusted_proxies, "trusted_proxies")
         )
 
+    def _is_trusted(self, address: IPv4Address | IPv6Address) -> bool:
+        if any(address in network for network in self.trusted_proxies):
+            return True
+        mapped = address.ipv4_mapped if isinstance(address, IPv6Address) else None
+        return mapped is not None and any(mapped in network for network in self.trusted_proxies)
+
     def __call__(self, request: Request, call_next: NextHandler) -> ResponseValue:
         try:
             peer = ip_address(request.client_addr)
         except ValueError:
             return call_next(request)
-        if not any(peer in network for network in self.trusted_proxies):
+        if not self._is_trusted(peer):
             return call_next(request)
 
         forwarded_for = str(request.headers.get("x-forwarded-for", ""))
@@ -186,11 +211,7 @@ class ProxyHeadersMiddleware:
                 continue
         chain.append(peer)
         client = next(
-            (
-                address
-                for address in reversed(chain)
-                if not any(address in network for network in self.trusted_proxies)
-            ),
+            (address for address in reversed(chain) if not self._is_trusted(address)),
             chain[0],
         )
         request.client_addr = str(client)

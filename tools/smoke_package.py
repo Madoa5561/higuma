@@ -321,6 +321,17 @@ def _exercise_developer_apis() -> None:
         sig.send(b"topic-x".decode("ascii"))
         assert hits == ["topic-x"]
 
+    ipv6_app = Higuma(__name__, static_folder=None)
+    ipv6_app.add_middleware(TrustedHostMiddleware, ["[::1]"])
+
+    @ipv6_app.get("/ipv6")
+    def ipv6():
+        return {"ok": True}
+
+    ipv6_client = ipv6_app.test_client()
+    assert ipv6_client.get("/ipv6", headers={"host": "[0:0::1]:8000"}).status_code == 200
+    assert ipv6_client.get("/ipv6", headers={"host": "[::1]:0"}).status_code == 403
+
     try:
         TrustedHostMiddleware("example.com")  # type: ignore[arg-type]
     except TypeError:
