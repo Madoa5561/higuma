@@ -474,8 +474,32 @@ class LocalProxy(Generic[T]):
     def __getattr__(self, name: str) -> Any:
         return getattr(self._get_current(), name)
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._get_current(), name, value)
+
+    def __delattr__(self, name: str) -> None:
+        delattr(self._get_current(), name)
+
     def __getitem__(self, key: str) -> Any:
         return self._get_current()[key]  # type: ignore[index]
+
+    def __bool__(self) -> bool:
+        return bool(self._get_current())
+
+    def __eq__(self, other: object) -> bool:
+        try:
+            current = self._get_current()
+        except RuntimeError:
+            return self is other
+        if isinstance(other, LocalProxy):
+            try:
+                other = other._get_current()
+            except RuntimeError:
+                return False
+        return current == other
+
+    def __hash__(self) -> int:
+        return hash(self._get_current())
 
     def __repr__(self) -> str:
         try:

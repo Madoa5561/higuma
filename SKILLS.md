@@ -344,6 +344,11 @@ supervisor, streaming, and proxy changes.
   datetimes convert cleanly, OpenAPI disambiguates colliding model names and emits exact
   `text/plain`/`application/octet-stream` media types for raw `Body()` inputs, and `StaticFiles`
   percent-encodes non-ASCII `308` redirects.
+  In 0.11.10+, `LocalProxy` forwards attribute writes/deletes to the active request/app object
+  (preventing cross-request attribute leaks on `request`), `AuthManager.login_user()` /
+  `logout_user()` update `current_user` immediately in the same request, `OAuth2Client`
+  validates `scopes`/`access_token` and supports preset `scopes` overrides, and
+  `SessionMiddleware` / ORM `Boolean` & `Blob` enforce strict upfront validation.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

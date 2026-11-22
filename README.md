@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.10** — `LocalProxy` (`request` / `current_app` / `current_user`) の `__setattr__`/`__delattr__` 委譲による
+> リクエスト間状態リーク防止、`AuthManager.login_user()`/`logout_user()` の `current_user` 即時反映、
+> `OAuth2Client` の `scopes` 検証・プリセット上書き・`GET userinfo` ヘッダ修正、`SessionMiddleware`/ORM
+> `Boolean`・`Blob`/`Database.connect()`/`Config.from_prefixed_env()` の堅牢化を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.9** — 長大 `<int:...>`/`<float:...>` URL セグメントによる 500 クラッシュ・`inf` 防止と
 > 重複ルートパラメータ名拒否（Rust/Python 双方）、`IntEnum` クエリ変換・RFC 3339 `z`・`Parameter` 境界検証、
 > OpenAPI 同名モデル衝突の自動分離と `str`/`bytes` `Body()` media type 整合、`StaticFiles` 非 ASCII

@@ -267,6 +267,18 @@ def _exercise_developer_apis() -> None:
     cookie_response.set_cookie("sid", "1", max_age=timedelta(seconds=90))
     assert any("Max-Age=90" in value for _, value in cookie_response.header_items)
 
+    proxy_app = Higuma(__name__, static_folder=None)
+
+    @proxy_app.get("/tag")
+    def tag():
+        if "value" in request.args:
+            request.custom_tag = request.args["value"]
+        return {"tag": getattr(request, "custom_tag", None)}
+
+    proxy_client = proxy_app.test_client()
+    assert proxy_client.get("/tag?value=bear").get_json() == {"tag": "bear"}
+    assert proxy_client.get("/tag").get_json() == {"tag": None}
+
     try:
         TrustedHostMiddleware("example.com")  # type: ignore[arg-type]
     except TypeError:

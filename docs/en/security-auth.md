@@ -84,9 +84,9 @@ middleware on the same application. The loader receives a string ID on each
 request and returns a user or `None`. A user exposes `id` and
 `is_authenticated`.
 
-- `login_user(user, remember=False)` rotates the session and active CSRF token (including custom `CSRFProtection(field_name=...)`) and marks login fresh
+- `login_user(user, remember=False)` rotates the session and active CSRF token (including custom `CSRFProtection(field_name=...)`), marks login fresh, and immediately updates `current_user` / `request.user` for the active request
 - `confirm_login()` marks existing login fresh; no login raises `Unauthorized`
-- `logout_user()` clears the session
+- `logout_user()` clears the session and resets `current_user` / `request.user` to anonymous for the active request
 - `login_required` rejects anonymous requests with 401
 - `fresh_login_required` rejects non-fresh login with 401
 - `roles_required` / `permissions_required` reject missing claims with 403

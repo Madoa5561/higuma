@@ -130,7 +130,7 @@ class Boolean(Field):
     def to_database(self, value: Any) -> int | None:
         if value is None:
             return None
-        if value not in (True, False, 0, 1):
+        if not (isinstance(value, bool) or (isinstance(value, int) and value in (0, 1))):
             raise TypeError(f"{self.name} must be a boolean")
         return int(bool(value))
 
@@ -170,7 +170,11 @@ class Blob(Field):
     sql_type = "BLOB"
 
     def to_database(self, value: Any) -> bytes | None:
-        return None if value is None else bytes(value)
+        if value is None:
+            return None
+        if not isinstance(value, (bytes, bytearray, memoryview)):
+            raise TypeError(f"{self.name} must be bytes-like")
+        return bytes(value)
 
 
 class ModelMeta(type):
@@ -459,13 +463,17 @@ class Database:
                 detect_types=sqlite3.PARSE_DECLTYPES,
                 check_same_thread=False,
             )
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA busy_timeout = 5000")
-            if self.path != ":memory:":
-                connection.execute("PRAGMA journal_mode = WAL")
-            else:
-                self._memory_connection = connection
+            try:
+                connection.row_factory = sqlite3.Row
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("PRAGMA busy_timeout = 5000")
+                if self.path != ":memory:":
+                    connection.execute("PRAGMA journal_mode = WAL")
+                else:
+                    self._memory_connection = connection
+            except BaseException:
+                connection.close()
+                raise
             return connection
 
     def close(self) -> None:

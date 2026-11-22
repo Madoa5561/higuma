@@ -585,6 +585,48 @@ class PythonCoreRegressionTests(unittest.TestCase):
         )
         self.assertEqual(bad_ct.status_code, 400)
 
+    def test_request_proxy_setattr_isolation_orm_fields_and_config_prefix(self) -> None:
+        from higuma import Blob, Boolean, Config, Database, Higuma, Integer, Model, request
+
+        app = Higuma(__name__, static_folder=None)
+
+        @app.before_request
+        def attach():
+            if "tenant" in request.args:
+                request.tenant = request.args["tenant"]
+
+        @app.get("/tenant")
+        def tenant():
+            return {"tenant": getattr(request, "tenant", None)}
+
+        client = app.test_client()
+        self.assertEqual(client.get("/tenant?tenant=acme").json, {"tenant": "acme"})
+        # Must never leak onto the global request LocalProxy across requests.
+        self.assertEqual(client.get("/tenant").json, {"tenant": None})
+        self.assertNotIn("tenant", request.__dict__)
+
+        class Record(Model):
+            id = Integer(primary_key=True, autoincrement=True)
+            flag = Boolean(nullable=False)
+            payload = Blob(nullable=True)
+
+        db = Database("sqlite:///:memory:")
+        db.create_all(Record)
+        with db.session() as db_session:
+            with self.assertRaises(TypeError):
+                db_session.add(Record(flag=1.0, payload=b"ok"))
+            with self.assertRaises(TypeError):
+                db_session.add(Record(flag=True, payload=1024))
+            saved = db_session.add(Record(flag=True, payload=bytearray(b"hi")))
+            db_session.commit()
+            loaded = db_session.query(Record).get(saved.id)
+            assert loaded is not None
+            self.assertEqual(loaded.payload, b"hi")
+        db.close()
+
+        with self.assertRaises(ValueError):
+            Config().from_prefixed_env("")
+
 
 if __name__ == "__main__":
     unittest.main()

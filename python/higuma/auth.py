@@ -15,7 +15,7 @@ from urllib.request import Request as URLRequest
 
 from .exceptions import Forbidden, Unauthorized
 from .execution import resolve_awaitable
-from .request import Request, request
+from .request import Request, _request_context, request
 from .response import ResponseValue
 from .security import TokenSigner
 from .sessions import SessionMiddleware
@@ -41,11 +41,22 @@ class AnonymousUser:
 
 class _CurrentUserProxy(Generic[UserT]):
     def _get(self) -> UserT | AnonymousUser:
+        current_request = _request_context.get()
+        if current_request is not None and hasattr(current_request, "user"):
+            user = current_request.user
+            if user is not None:
+                return user
         user = _current_user.get()
         return user if user is not None else AnonymousUser()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._get(), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._get(), name, value)
+
+    def __delattr__(self, name: str) -> None:
+        delattr(self._get(), name)
 
     def __bool__(self) -> bool:
         return bool(getattr(self._get(), "is_authenticated", True))
@@ -117,6 +128,9 @@ class AuthManager:
         request.session["_fresh"] = True
         request.session[csrf_field_name] = secrets.token_urlsafe(32)
         request.session.permanent = bool(remember)
+        current = _request_context.get()
+        if current is not None:
+            current.user = user
 
     def confirm_login(self) -> None:
         if self.session_key not in request.session:
@@ -126,6 +140,9 @@ class AuthManager:
     def logout_user(self) -> None:
         request.session.clear()
         request.session.permanent = False
+        current = _request_context.get()
+        if current is not None:
+            current.user = AnonymousUser()
 
     def login_required(self, func: Callable[..., ResponseValue]):
         return login_required(func)
@@ -218,13 +235,18 @@ class OAuth2Client:
         secret_key: str | bytes,
         extra_authorize_params: Mapping[str, str] | None = None,
     ) -> None:
+        if isinstance(scopes, (str, bytes, bytearray)):
+            raise TypeError("scopes must be an iterable of scope strings, not a single string")
+        normalized_scopes = tuple(scopes)
+        if not all(isinstance(item, str) and item.strip() for item in normalized_scopes):
+            raise ValueError("scopes must contain non-empty strings")
         self.client_id = client_id
         self.client_secret = client_secret
         self.authorize_url = authorize_url
         self.token_url = token_url
         self.userinfo_url = userinfo_url
         self.redirect_uri = redirect_uri
-        self.scopes = scopes
+        self.scopes = normalized_scopes
         self.signer = TokenSigner(secret_key, salt="higuma-oauth-state")
         self.extra_authorize_params = dict(extra_authorize_params or {})
 
@@ -311,6 +333,12 @@ class OAuth2Client:
         )
 
     def userinfo(self, access_token: str) -> dict[str, Any]:
+        if (
+            not isinstance(access_token, str)
+            or not access_token.strip()
+            or any(ch in access_token for ch in "\r\n\x00")
+        ):
+            raise ValueError("access_token must be a non-empty single-line string")
         return self._request_json(
             self.userinfo_url,
             headers={"authorization": f"Bearer {access_token}"},
@@ -318,31 +346,31 @@ class OAuth2Client:
 
     @classmethod
     def google(cls, **options: Any) -> OAuth2Client:
+        options.setdefault("scopes", ("openid", "email", "profile"))
         return cls(
             authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
             token_url="https://oauth2.googleapis.com/token",  # nosec B106
             userinfo_url="https://openidconnect.googleapis.com/v1/userinfo",
-            scopes=("openid", "email", "profile"),
             **options,
         )
 
     @classmethod
     def line(cls, **options: Any) -> OAuth2Client:
+        options.setdefault("scopes", ("profile", "openid", "email"))
         return cls(
             authorize_url="https://access.line.me/oauth2/v2.1/authorize",
             token_url="https://api.line.me/oauth2/v2.1/token",  # nosec B106
             userinfo_url="https://api.line.me/v2/profile",
-            scopes=("profile", "openid", "email"),
             **options,
         )
 
     @classmethod
     def discord(cls, **options: Any) -> OAuth2Client:
+        options.setdefault("scopes", ("identify", "email"))
         return cls(
             authorize_url="https://discord.com/oauth2/authorize",
             token_url="https://discord.com/api/oauth2/token",  # nosec B106
             userinfo_url="https://discord.com/api/users/@me",
-            scopes=("identify", "email"),
             **options,
         )
 
@@ -357,14 +385,14 @@ class OAuth2Client:
         if urlsplit(url).scheme != "https":
             raise ValueError("OAuth endpoints must use HTTPS")
         body = urlencode(data).encode() if data is not None else None
+        request_headers = dict(headers or {})
+        if body is not None and not any(k.lower() == "content-type" for k in request_headers):
+            request_headers["content-type"] = "application/x-www-form-urlencoded"
         request_object = URLRequest(
             url,
             data=body,
             method=method,
-            headers={
-                "content-type": "application/x-www-form-urlencoded",
-                **dict(headers or {}),
-            },
+            headers=request_headers,
         )
         try:
             with build_opener(_RejectOAuthRedirects()).open(request_object, timeout=10) as response:

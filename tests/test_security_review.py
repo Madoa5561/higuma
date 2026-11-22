@@ -354,3 +354,98 @@ def test_websocket_preflight_rejects_empty_host_and_port_zero_and_matches_ipv6()
     assert preflight("example.com:0", "http://example.com:0") == 403
     assert preflight("good.com/evil", "http://good.com") == 403
     assert preflight("[0:0:0:0:0:0:0:1]:8000", "http://[::1]:8000") == 204
+
+
+def test_login_logout_syncs_current_user_and_oauth_session_validation(monkeypatch):
+    from dataclasses import dataclass
+
+    from higuma import AuthManager, Higuma, OAuth2Client, SessionMiddleware, current_user, request
+    from higuma.redis_state import RedisSessionMiddleware, RedisSessionStore
+
+    @dataclass
+    class User:
+        id: str
+        is_authenticated: bool = True
+
+    app = Higuma(__name__, static_folder=None)
+    auth = AuthManager(app, secret_key=SECRET)
+    users = {"u1": User("u1")}
+    auth.load_user(users.get)
+
+    @app.post("/login")
+    def login():
+        auth.login_user(users["u1"])
+        return {
+            "id": current_user.id,
+            "auth": current_user.is_authenticated,
+            "req_user": request.user.id,
+        }
+
+    @app.post("/logout")
+    def logout():
+        auth.logout_user()
+        return {
+            "id": current_user.id,
+            "auth": current_user.is_authenticated,
+            "req_auth": request.user.is_authenticated,
+        }
+
+    client = app.test_client()
+    assert client.post("/login").json == {"id": "u1", "auth": True, "req_user": "u1"}
+    assert client.post("/logout").json == {"id": None, "auth": False, "req_auth": False}
+
+    # OAuth2Client scopes validation, custom preset scopes, access_token check, and GET content-type.
+    with pytest.raises(TypeError, match="scopes"):
+        OAuth2Client.google(
+            client_id="cid",
+            client_secret="csec",
+            redirect_uri="https://app.test/cb",
+            secret_key=SECRET,
+            scopes="openid email",  # type: ignore[arg-type]
+        )
+    custom = OAuth2Client.google(
+        client_id="cid",
+        client_secret="csec",
+        redirect_uri="https://app.test/cb",
+        secret_key=SECRET,
+        scopes=("openid", "email"),
+    )
+    assert custom.scopes == ("openid", "email")
+    with pytest.raises(ValueError, match="access_token"):
+        custom.userinfo("bad\r\nX-Injected: 1")
+
+    seen_headers: dict[str, str] = {}
+
+    class FakeOpener:
+        def open(self, req, timeout=10):
+            seen_headers.update({k.lower(): v for k, v in req.header_items()})
+
+            class Resp:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def read(self, size=-1):
+                    return b'{"sub":"u1"}'
+
+            return Resp()
+
+    monkeypatch.setattr("higuma.auth.build_opener", lambda *_: FakeOpener())
+    assert custom.userinfo("valid-token") == {"sub": "u1"}
+    assert "content-type" not in seen_headers
+
+    for bad_session in (
+        {"cookie_name": ""},
+        {"cookie_name": "bad;name"},
+        {"max_age": 0},
+        {"max_age": True},
+        {"samesite": "Invalid"},
+    ):
+        with pytest.raises(ValueError):
+            SessionMiddleware(SECRET, **bad_session)  # type: ignore[arg-type]
+
+    store = RedisSessionStore(object(), prefix="app:", ttl=1)
+    with pytest.raises(ValueError, match="max_age"):
+        RedisSessionMiddleware(SECRET, store=store, max_age=True)  # type: ignore[arg-type]

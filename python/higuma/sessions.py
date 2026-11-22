@@ -94,6 +94,20 @@ class SessionMiddleware:
         samesite: str = "Lax",
     ) -> None:
         self.secret_key = _validate_secret_key(secret_key)
+        if (
+            not isinstance(cookie_name, str)
+            or not cookie_name
+            or any(
+                ord(ch) <= 32 or ord(ch) >= 127 or ch in '()<>@,;:\\"/[]?={}' for ch in cookie_name
+            )
+        ):
+            raise ValueError("cookie_name must be a valid HTTP token")
+        if isinstance(max_age, bool) or not isinstance(max_age, int) or max_age < 1:
+            raise ValueError("max_age must be a positive integer")
+        if samesite is not None and (
+            not isinstance(samesite, str) or samesite.lower() not in {"lax", "strict", "none"}
+        ):
+            raise ValueError("samesite must be 'Lax', 'Strict', 'None', or None")
         self.cookie_name = cookie_name
         self.max_age = max_age
         self.secure = secure

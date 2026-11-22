@@ -89,6 +89,8 @@ class Config(dict[str, Any]):
     def from_prefixed_env(
         self, prefix: str = "HIGUMA", *, loads: Callable[[str], Any] = json.loads
     ) -> bool:
+        if not isinstance(prefix, str) or not prefix:
+            raise ValueError("prefix must be a non-empty string")
         marker = f"{prefix}_"
         for name in sorted(os.environ):
             if not name.startswith(marker):

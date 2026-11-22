@@ -112,7 +112,9 @@ class ServerSession(Session):
 
 class RedisSessionMiddleware(SessionMiddleware):
     def __init__(self, secret_key, *, store: RedisSessionStore, **options):
-        if "max_age" in options and options["max_age"] != store.ttl:
+        if "max_age" in options and (
+            isinstance(options["max_age"], bool) or options["max_age"] != store.ttl
+        ):
             raise ValueError("Cookie max_age must match the Redis store TTL")
         super().__init__(
             secret_key,

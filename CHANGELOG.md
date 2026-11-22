@@ -7,6 +7,28 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.10] - 2026-11-22
+
+### Fixed
+
+- Forward `__setattr__`, `__delattr__`, `__bool__`, `__eq__`, and `__hash__` on `LocalProxy`
+  (and `__setattr__`/`__delattr__` on `_CurrentUserProxy`) to the active context object so
+  setting custom attributes on `request` (such as `request.tenant = ...`) stays isolated to
+  the current request instead of mutating the global proxy singleton across requests.
+- Synchronize `request.user` and `current_user` immediately inside `AuthManager.login_user()`
+  and `AuthManager.logout_user()` so handlers see the updated authentication state within the
+  same request without leaking context state.
+- Reject bare `str`/`bytes` for `OAuth2Client(scopes=...)`, allow overriding `scopes` in
+  `OAuth2Client.google()` / `.line()` / `.discord()`, reject empty or control-character
+  `access_token` values in `OAuth2Client.userinfo()`, and omit `Content-Type:
+  application/x-www-form-urlencoded` on bodyless `GET` OAuth requests.
+- Validate `cookie_name`, `max_age` (positive non-bool `int`), and `samesite` upfront in
+  `SessionMiddleware.__init__`, and reject boolean `max_age` in `RedisSessionMiddleware.__init__`.
+- Close newly opened SQLite connections in `Database.connect()` if initial `PRAGMA` setup fails,
+  reject float values (`0.0`/`1.0`) in ORM `Boolean` fields, require bytes-like inputs in ORM
+  `Blob` fields (preventing integer-length NUL allocations), and reject empty prefixes in
+  `Config.from_prefixed_env()`.
+
 ## [0.11.9] - 2026-11-22
 
 ### Fixed
