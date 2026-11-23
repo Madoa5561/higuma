@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.21** — `Decimal` の入力パラメータ・モデル変換（有限値・数値制約対応）および OpenAPI
+> `format: "decimal"` 生成、`tuple[()]` Python 3.10 互換、OpenAPI の整数ステータスキー正規化と
+> `205` `content` 省略、`AnonymousUser` の `__eq__`/`__hash__` と `AuthManager(user_loader=...)`
+> callable 検証、`HealthChecks` timeout 検証・`Observability.wrap_asgi()` 堅牢化・ORM
+> `__tablename__` 定義時検証を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.20** — `TemplateResponse`/`render_template()` で dataclass・`Enum`・`Decimal`・`UUID` 等を
 > 構造化コンテキストとして MiniJinja へ渡すよう改善、`Response`/`make_response()` の厳格な整数
 > status 検証と `set_cookie()` 型検証、WSGI/ASGI マウントの callable 検証とプロトコル順序整合

@@ -206,7 +206,7 @@ class Observability:
                     headers = [
                         (key, value)
                         for key, value in event.get("headers", [])
-                        if key.lower() != b"x-request-id"
+                        if bytes(key).lower() != b"x-request-id"
                     ] + [(b"x-request-id", identifier.encode())]
                     event = {**event, "headers": headers}
                     if scope.get("method", "GET").upper() == "HEAD" or status in {204, 205, 304}:
@@ -215,7 +215,7 @@ class Observability:
                         response_remaining = _parse_content_length(headers)
                 elif event["type"] == "http.response.body":
                     if response_remaining is not None:
-                        response_remaining -= len(event.get("body", b""))
+                        response_remaining -= len(event.get("body") or b"")
                     if not event.get("more_body", False):
                         response_complete = True
                 if response_remaining is not None and response_remaining <= 0:
@@ -256,7 +256,12 @@ class HealthChecks:
     """Explicit liveness/readiness; no exception details or dependency URLs in responses."""
 
     def __init__(self, *, timeout=1.0):
-        if isinstance(timeout, bool) or not math.isfinite(timeout) or not 0 < timeout <= 60:
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or not 0 < timeout <= 60
+        ):
             raise ValueError("health check timeout must be in (0, 60]")
         self.timeout, self.ready = timeout, True
         self._checks, self._pending = {}, {}

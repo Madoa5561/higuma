@@ -39,6 +39,12 @@ class AnonymousUser:
     def __bool__(self) -> bool:
         return False
 
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, AnonymousUser)
+
+    def __hash__(self) -> int:
+        return hash(AnonymousUser)
+
 
 class _CurrentUserProxy(Generic[UserT]):
     def _get(self) -> UserT | AnonymousUser:
@@ -90,6 +96,8 @@ class AuthManager:
     ) -> None:
         if not isinstance(session_key, str) or not session_key:
             raise ValueError("session_key must be a non-empty string")
+        if user_loader is not None and not callable(user_loader):
+            raise TypeError("user_loader must be callable")
         self.secret_key = secret_key
         self.user_loader = user_loader
         self.session_key = session_key
@@ -109,6 +117,8 @@ class AuthManager:
         app.add_middleware(self)
 
     def load_user(self, func: Callable[[str], Any]) -> Callable[[str], Any]:
+        if not callable(func):
+            raise TypeError("user_loader must be callable")
         self.user_loader = func
         return func
 

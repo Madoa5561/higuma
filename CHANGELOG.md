@@ -7,6 +7,28 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.21] - 2026-11-23
+
+### Fixed
+
+- Add full `Decimal` input conversion and OpenAPI schema generation (`parameters.py`,
+  `openapi.py`): parse finite `Decimal` values from `Decimal`, `int`, finite `float`, and
+  numeric `str` inputs (rejecting `bool`, `NaN`, and `Infinity`) so `Decimal` works
+  end-to-end across `QueryParam`/`Header`/`Cookie`/`Form`/`Body`, dataclass/TypedDict fields,
+  and numeric bounds (`ge`/`gt`/`le`/`lt`), and map `Decimal` to
+  `{"type": "string", "format": "decimal"}` in OpenAPI 3.1.
+- Fix empty `tuple[()]` conversion on Python 3.10 and catch `(ValueError, TypeError)` in
+  `Enum` conversion (`parameters.py`); normalize custom OpenAPI `responses` keys to strings
+  so integer status keys never collide with auto-added `"422"`, and omit `"content"` on
+  default `205` responses alongside `204`/`304` (`openapi.py`).
+- Implement `__eq__` and `__hash__` on `AnonymousUser` so unauthenticated `current_user`
+  equality/hashing is consistent, and validate `callable(user_loader)` upfront in
+  `AuthManager.__init__()` and `AuthManager.load_user()` (`auth.py`).
+- Harden `observability.py` and `database.py`: reject non-numeric `timeout` in
+  `HealthChecks.__init__()` with `ValueError`, normalize bytes-like response header keys
+  (`memoryview`) and `None` bodies safely in `Observability.wrap_asgi()`, and validate
+  explicit `Model.__tablename__` identifiers upfront at class definition time.
+
 ## [0.11.20] - 2026-11-23
 
 ### Fixed

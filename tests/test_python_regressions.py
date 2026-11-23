@@ -1645,6 +1645,133 @@ class PythonCoreRegressionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Signal(123)  # type: ignore[arg-type]
 
+    def test_decimal_params_openapi_auth_observability_and_orm_tablename(self) -> None:
+        from dataclasses import dataclass
+        from decimal import Decimal
+
+        from higuma import (
+            AnonymousUser,
+            AuthManager,
+            Body,
+            HealthChecks,
+            Model,
+            Observability,
+            QueryParam,
+            String,
+            current_user,
+        )
+        from higuma.parameters import _convert_value
+
+        @dataclass
+        class PriceInput:
+            amount: Decimal
+
+        app = Higuma(__name__, static_folder=None)
+
+        @app.post(
+            "/price",
+            responses={422: {"description": "Custom validation failure"}},
+        )
+        def calc_price(
+            fee: Annotated[Decimal, QueryParam(ge=0)],
+            payload: Annotated[PriceInput, Body()],
+        ):
+            return {"total": payload.amount + fee}
+
+        @app.post("/reset", status_code=205)
+        def reset_form():
+            return None
+
+        client = app.test_client()
+        ok = client.post("/price?fee=1.25", json={"amount": "10.50"})
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json, {"total": "11.75"})
+
+        # Reject bool, NaN, Infinity, non-numeric, and out-of-range Decimal inputs
+        for bad_fee in ("NaN", "Infinity", "abc", "-1"):
+            self.assertEqual(
+                client.post(f"/price?fee={bad_fee}", json={"amount": "1.0"}).status_code, 422
+            )
+        self.assertEqual(client.post("/price?fee=1", json={"amount": True}).status_code, 422)
+        self.assertEqual(_convert_value([], tuple[()]), ())
+
+        # OpenAPI: Decimal schema, 205 omits content, int response keys normalized without duplicate 422
+        spec = app.openapi()
+        price_op = spec["paths"]["/price"]["post"]
+        self.assertEqual(
+            price_op["parameters"][0]["schema"],
+            {"type": "string", "format": "decimal", "minimum": 0},
+        )
+        self.assertEqual(
+            spec["components"]["schemas"]["PriceInput"]["properties"]["amount"],
+            {"type": "string", "format": "decimal"},
+        )
+        self.assertEqual(
+            price_op["responses"]["422"],
+            {"description": "Custom validation failure"},
+        )
+        self.assertNotIn(422, price_op["responses"])
+        self.assertNotIn("content", spec["paths"]["/reset"]["post"]["responses"]["205"])
+
+        # AnonymousUser equality/hash and AuthManager user_loader callability validation
+        self.assertEqual(AnonymousUser(), AnonymousUser())
+        self.assertEqual(hash(AnonymousUser()), hash(AnonymousUser()))
+        with app.test_request_context("/"):
+            self.assertEqual(current_user, AnonymousUser())
+            self.assertEqual(hash(current_user), hash(AnonymousUser()))
+        with self.assertRaises(TypeError):
+            AuthManager(user_loader="not-callable")  # type: ignore[arg-type]
+        auth = AuthManager()
+        with self.assertRaises(TypeError):
+            auth.load_user("not-callable")  # type: ignore[arg-type]
+
+        # HealthChecks non-numeric timeout + Observability.wrap_asgi memoryview headers & None body
+        with self.assertRaises(ValueError):
+            HealthChecks(timeout="1.0")  # type: ignore[arg-type]
+
+        obs = Observability()
+        wrapped_app = Higuma(__name__, static_folder=None)
+
+        async def custom_asgi(scope, receive, send):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(memoryview(b"x-request-id"), b"old"), (b"content-length", b"0")],
+                }
+            )
+            await send({"type": "http.response.body", "body": None, "more_body": False})
+
+        wrapped_app._asgi_application = custom_asgi
+        observed = obs.wrap_asgi(wrapped_app)
+
+        async def run_observed():
+            sent_events = []
+
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            async def send(event):
+                sent_events.append(event)
+
+            await observed(
+                {"type": "http", "method": "GET", "path": "/", "headers": []},
+                receive,
+                send,
+            )
+            return sent_events
+
+        events = asyncio.run(run_observed())
+        start_headers = [bytes(k).lower() for k, _ in events[0]["headers"]]
+        self.assertEqual(start_headers.count(b"x-request-id"), 1)
+
+        # ORM explicit __tablename__ validated at class definition time
+        with self.assertRaises(ValueError):
+
+            class BadTable(Model):
+                __tablename__ = "users; DROP TABLE users"
+                name = String()
+
 
 if __name__ == "__main__":
     unittest.main()

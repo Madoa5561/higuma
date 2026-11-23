@@ -197,6 +197,8 @@ class ModelMeta(type):
         cls = super().__new__(mcls, name, bases, namespace)
         cls.__fields__ = fields
         cls.__tablename__ = namespace.get("__tablename__", name.lower())
+        if "__tablename__" in namespace:
+            quote_identifier(cls.__tablename__)
         primary_keys = [field for field in fields.values() if field.primary_key]
         if name != "Model" and len(primary_keys) > 1:
             raise TypeError("higuma ORM supports one primary key per model")

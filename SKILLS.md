@@ -401,6 +401,11 @@ supervisor, streaming, and proxy changes.
   `Response`/`make_response()` reject `bool`/non-`int` status codes and validate cookie
   attribute types, `wsgi_view()`/`asgi_view()` validate callability and protocol ordering, and
   `BodyBuffer`/`CommandGroup`/`CliRunner`/`Signal` enforce strict argument validation.
+  In 0.11.21+, `Decimal` is supported end-to-end across parameter/model parsing, numeric
+  constraints, and OpenAPI (`format: "decimal"`), OpenAPI normalizes integer `responses` keys
+  and omits `content` on `205`, `AnonymousUser` implements `__eq__`/`__hash__`, `AuthManager`
+  validates `user_loader` callability, and `HealthChecks`/`Observability`/`Model.__tablename__`
+  validate inputs strictly upfront.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

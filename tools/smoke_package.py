@@ -220,6 +220,16 @@ def _exercise_flask_helpers() -> None:
     from higuma import render_template
 
     assert '"name": "Higuma"' in render_template("x.html", bear=SmokeBear("Higuma")).context_json
+    from decimal import Decimal
+    from typing import Annotated
+
+    from higuma import QueryParam
+
+    @app.get("/decimal-smoke")
+    def decimal_smoke(amount: Annotated[Decimal, QueryParam(ge=0)]):
+        return {"amount": amount + Decimal("0.5")}
+
+    assert client.get("/decimal-smoke?amount=2.25").json == {"amount": "2.75"}
     multi = app.make_response(("ok", 200, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]))
     assert [v for k, v in multi.header_items if k == "set-cookie"] == ["a=1", "b=2"]
     from higuma import PasswordHasher

@@ -6,6 +6,7 @@ import types
 from collections.abc import Mapping, Sequence
 from dataclasses import MISSING, fields, is_dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from html import escape
 from typing import (
@@ -241,6 +242,7 @@ def schema_for(
         bytes: {"type": "string", "format": "binary"},
         UploadFile: {"type": "string", "format": "binary"},
         UUID: {"type": "string", "format": "uuid"},
+        Decimal: {"type": "string", "format": "decimal"},
         date: {"type": "string", "format": "date"},
         datetime: {"type": "string", "format": "date-time"},
     }.get(annotation)
@@ -356,10 +358,10 @@ def _operation_for(
     response_model = metadata.pop("response_model", None)
     custom_responses = metadata.pop("responses", None)
     if custom_responses is not None:
-        responses: dict[str, Any] = dict(custom_responses)
+        responses: dict[str, Any] = {str(key): value for key, value in custom_responses.items()}
     else:
         default_response: dict[str, Any] = {"description": "Successful response"}
-        if success_status not in {"204", "304"}:
+        if success_status not in {"204", "205", "304"}:
             default_response["content"] = {
                 "application/json": {
                     "schema": schema_for(

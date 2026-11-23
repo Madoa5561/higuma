@@ -64,7 +64,7 @@ def create_item(
 
 `QueryParam`, `Header`, `Cookie`, `PathParam`, `Body`, `Form`, and `File` declare
 the source and constraints. Conversion recursively supports dataclasses,
-TypedDicts, UUIDs, dates, datetimes, enums, literals, collections, and optional
+TypedDicts, UUIDs, `Decimal`, dates, datetimes, enums, literals, collections, and optional
 values. Invalid inputs return structured JSON 422 responses.
 
 `Depends` supports nested dependencies, sync and async callables, yield cleanup,
@@ -268,7 +268,7 @@ def create_user(payload: Annotated[CreateUser, Body()]):
 ```
 
 `/openapi.json` and `/docs` are enabled by default. Annotations for primitives,
-containers, unions/optionals/literals, dataclasses, TypedDicts, enums, UUIDs,
+containers, unions/optionals/literals, dataclasses, TypedDicts, enums, UUIDs, `Decimal`,
 and dates/datetimes are converted to OpenAPI 3.1 schemas.
 
 Parameter markers such as `Annotated[..., Body()]` drive both runtime validation

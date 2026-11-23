@@ -7,7 +7,7 @@ import types
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Union, get_args, get_origin, get_type_hints
@@ -585,6 +585,10 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
         return converted
     if origin is tuple:
         values = value if isinstance(value, (list, tuple)) else [value]
+        if args == ((),):
+            if values:
+                raise ValueError("tuple requires 0 items")
+            return ()
         if len(args) == 2 and args[1] is Ellipsis:
             return tuple(_convert_value(item, args[0], response=response) for item in values)
         if args and len(values) != len(args):
@@ -641,6 +645,27 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
         if not math.isfinite(converted):
             raise ValueError("value must be finite")
         return converted
+    if annotation is Decimal:
+        if isinstance(value, bool):
+            raise TypeError("value must be a decimal")
+        if isinstance(value, Decimal):
+            converted_decimal = value
+        elif isinstance(value, int):
+            converted_decimal = Decimal(value)
+        elif isinstance(value, float):
+            if not math.isfinite(value):
+                raise ValueError("value must be finite")
+            converted_decimal = Decimal(str(value))
+        elif isinstance(value, str):
+            try:
+                converted_decimal = Decimal(value.strip())
+            except InvalidOperation as exc:
+                raise ValueError("value must be a decimal") from exc
+        else:
+            raise TypeError("value must be a decimal")
+        if not converted_decimal.is_finite():
+            raise ValueError("value must be finite")
+        return converted_decimal
     if annotation is UUID:
         if isinstance(value, UUID):
             return value
@@ -690,7 +715,7 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
             raise ValueError(f"value must be a valid {annotation.__name__}")
         try:
             return annotation(value)
-        except ValueError:
+        except (ValueError, TypeError):
             if issubclass(annotation, int) and isinstance(value, str):
                 try:
                     return annotation(int(value))

@@ -61,7 +61,7 @@ def create_item(
 ```
 
 `QueryParam`、`Header`、`Cookie`、`PathParam`、`Body`、`Form`、`File`は入力元と制約を
-宣言します。dataclass、TypedDict、UUID、date、datetime、Enum、Literal、collection、
+宣言します。dataclass、TypedDict、UUID、`Decimal`、date、datetime、Enum、Literal、collection、
 optionalを再帰的に変換し、不正な入力は構造化されたJSON 422になります。
 
 `Depends`はnested dependency、同期・非同期callable、yield cleanup、request内cacheに対応します。
@@ -257,7 +257,7 @@ def create_user(payload: Annotated[CreateUser, Body()]):
 ```
 
 `/openapi.json`と`/docs`は標準で有効です。annotationからprimitive、container、
-union / optional / literal、dataclass、TypedDict、enum、UUID、date / datetime等を
+union / optional / literal、dataclass、TypedDict、enum、UUID、`Decimal`、date / datetime等を
 OpenAPI 3.1 schemaへ変換します。
 
 `Annotated[..., Body()]`等のparameter markerはruntime validationとOpenAPIの両方に使われます。
