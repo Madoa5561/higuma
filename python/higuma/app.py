@@ -63,7 +63,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.18"
+__version__ = "0.11.19"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -1009,6 +1009,8 @@ class Higuma:
         max_restarts: int = 5,
         restart_window: float = 60.0,
     ) -> None:
+        if not isinstance(host, str) or not host.strip():
+            raise ValueError("host must be a non-empty string")
         if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
             raise ValueError("port must be an integer between 0 and 65535")
         if (

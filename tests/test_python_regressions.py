@@ -1345,6 +1345,187 @@ class PythonCoreRegressionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             asyncio.run(ws.asend_text(123))  # type: ignore[arg-type]
 
+    def test_context_routing_views_security_redis_frontend_config_and_supervisor(self) -> None:
+        import json
+        import tempfile
+        from enum import IntEnum
+        from pathlib import Path
+        from uuid import UUID
+
+        from higuma import (
+            BadRequest,
+            Config,
+            MethodView,
+            RateLimitMiddleware,
+            RedisRateLimitMiddleware,
+            RedisSessionMiddleware,
+            RedisSessionStore,
+            Request,
+            SessionMiddleware,
+            Supervisor,
+            TokenSigner,
+            View,
+            ViteManifest,
+            after_this_request,
+            csrf_token,
+            g,
+        )
+
+        app = Higuma(__name__, static_folder=None)
+
+        # g.pop() matches Flask 3.1: raises KeyError without default, returns default when provided
+        with app.app_context():
+            self.assertIsNone(g.pop("missing", None))
+            self.assertEqual(g.pop("missing", "fallback"), "fallback")
+            with self.assertRaises(KeyError):
+                g.pop("missing")
+            g.token = "abc"
+            self.assertEqual(g.pop("token"), "abc")
+
+        # after_this_request rejects non-callables immediately
+        with app.test_request_context("/"), self.assertRaises(TypeError):
+            after_this_request("not-callable")  # type: ignore[arg-type]
+
+        # url_for / Rule.build validates typed path parameters and rejects None
+        class Kind(IntEnum):
+            BEAR = 7
+
+        @app.get("/users/<int:user_id>/ratio/<float:ratio>/item/<uuid:item_id>")
+        def typed_item(user_id: int, ratio: float, item_id: UUID):
+            return {"id": user_id, "ratio": ratio, "item": str(item_id)}
+
+        uid = UUID("12345678-1234-5678-1234-567812345678")
+        self.assertEqual(
+            app.url_for("typed_item", user_id=Kind.BEAR, ratio=1.5, item_id=uid),
+            f"/users/7/ratio/1.5/item/{uid}",
+        )
+        for bad_kwargs in (
+            {"user_id": None, "ratio": 1.5, "item_id": uid},
+            {"user_id": True, "ratio": 1.5, "item_id": uid},
+            {"user_id": "abc", "ratio": 1.5, "item_id": uid},
+            {"user_id": 1.5, "ratio": 1.5, "item_id": uid},
+            {"user_id": 1, "ratio": True, "item_id": uid},
+            {"user_id": 1, "ratio": float("nan"), "item_id": uid},
+            {"user_id": 1, "ratio": float("inf"), "item_id": uid},
+            {"user_id": 1, "ratio": "bad", "item_id": uid},
+            {"user_id": 1, "ratio": 1.5, "item_id": "not-a-uuid"},
+        ):
+            with self.assertRaises(ValueError):
+                app.url_for("typed_item", **bad_kwargs)
+
+        # View.as_view validates name/methods/decorators; MethodView 405 Allow includes HEAD/OPTIONS
+        class BadMethodsView(View):
+            methods = "GET"  # type: ignore[assignment]
+
+        class BadDecoratorsView(View):
+            decorators = ("not-callable",)  # type: ignore[assignment]
+
+        with self.assertRaises(ValueError):
+            View.as_view(123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            BadMethodsView.as_view("bad_methods")
+        with self.assertRaises(TypeError):
+            BadDecoratorsView.as_view("bad_decorators")
+
+        class ReadOnlyItem(MethodView):
+            def get(self):
+                return "item"
+
+        app.add_url_rule(
+            "/ro",
+            endpoint="ro",
+            view_func=ReadOnlyItem.as_view("ro"),
+            methods=("GET", "POST"),
+        )
+        disallowed = app.test_client().post("/ro")
+        self.assertEqual(disallowed.status_code, 405)
+        self.assertEqual(disallowed.headers["allow"], "GET, HEAD, OPTIONS")
+
+        # Security / Redis / Frontend / Config / Request / Supervisor validation
+        secret = "s" * 32
+        with self.assertRaises(TypeError):
+            TokenSigner(secret, salt=123)  # type: ignore[arg-type]
+        signer = TokenSigner(secret)
+        token = signer.dumps({"ok": True})
+        with self.assertRaises(ValueError):
+            signer.loads(token, max_age="10")  # type: ignore[arg-type]
+
+        with self.assertRaises(ValueError):
+            RateLimitMiddleware(limit=10, window="60")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            RateLimitMiddleware(limit=10, key="ip")  # type: ignore[arg-type]
+
+        csrf_app = Higuma(__name__, static_folder=None)
+        csrf_app.add_middleware(SessionMiddleware, secret)
+
+        @csrf_app.get("/bad-csrf")
+        def bad_csrf():
+            return csrf_token(123)  # type: ignore[arg-type]
+
+        with self.assertRaises(ValueError), csrf_app.test_request_context("/") as req:
+            req.session = {}
+            csrf_token(123)  # type: ignore[arg-type]
+
+        with self.assertRaises(TypeError):
+            RedisSessionMiddleware(secret, store=None)  # type: ignore[arg-type]
+
+        class StringStore(RedisSessionStore):
+            def __init__(self, payload: str, max_bytes: int) -> None:
+                super().__init__(object(), prefix="app:", ttl=60, max_bytes=max_bytes)
+                self._payload = payload
+
+            def load(self, sid: str):
+                return self._payload
+
+        big_utf8 = json.dumps(
+            {"data": {"text": "熊" * 20}, "permanent": False},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        self.assertLessEqual(len(big_utf8), 64)
+        self.assertGreater(len(big_utf8.encode("utf-8")), 64)
+        redis_mw = RedisSessionMiddleware(secret, store=StringStore(big_utf8, max_bytes=64))
+        sid = "a" * 43
+        signed_cookie = f"{sid}.{redis_mw._signature(sid)}"
+        self.assertEqual(redis_mw._load(signed_cookie), {})
+
+        with self.assertRaises(ValueError):
+            RedisRateLimitMiddleware(object(), prefix="app:", limit=5, window="60")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            RedisRateLimitMiddleware(object(), prefix="app:", limit=5, key="ip")  # type: ignore[arg-type]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "manifest.json"
+            manifest_path.write_text(json.dumps({"main.js": {"file": "assets/main.js"}}))
+            manifest = ViteManifest(manifest_path)
+            with self.assertRaises(TypeError):
+                manifest.tags("main.js", nonce=123)  # type: ignore[arg-type]
+            with self.assertRaises(ValueError):
+                manifest.tags("main.js", nonce="bad\nnonce")
+
+        with self.assertRaises(TypeError):
+            Config().from_prefixed_env(loads="not-callable")  # type: ignore[arg-type]
+
+        bad_charset_req = Request(
+            {
+                "method": "POST",
+                "path": "/",
+                "headers": {"content-type": "text/plain; charset=utf-8\x00"},
+                "body": b"hello",
+            }
+        )
+        with self.assertRaises(BadRequest):
+            _ = bad_charset_req.text
+
+        with self.assertRaises(ValueError):
+            app.run(host="   ")
+        with self.assertRaises(ValueError):
+            Supervisor("example:app", host="")
+        with self.assertRaises(ValueError):
+            Supervisor("example:app", startup_timeout="15")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            Supervisor("example:app", restart_window="60")  # type: ignore[arg-type]
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -112,6 +112,8 @@ class ServerSession(Session):
 
 class RedisSessionMiddleware(SessionMiddleware):
     def __init__(self, secret_key, *, store: RedisSessionStore, **options):
+        if not isinstance(store, RedisSessionStore):
+            raise TypeError("store must be a RedisSessionStore")
         if "max_age" in options and (
             isinstance(options["max_age"], bool) or options["max_age"] != store.ttl
         ):
@@ -138,7 +140,14 @@ class RedisSessionMiddleware(SessionMiddleware):
         ):
             return ServerSession()
         payload = self.store.load(sid)
-        if payload is None or len(payload) > self.store.max_bytes:
+        payload_size = (
+            len(payload.encode("utf-8"))
+            if isinstance(payload, str)
+            else len(payload)
+            if payload is not None
+            else 0
+        )
+        if payload is None or payload_size > self.store.max_bytes:
             return ServerSession()
         try:
             document = json.loads(payload)
@@ -211,10 +220,13 @@ class RedisRateLimitMiddleware:
             or isinstance(limit, bool)
             or limit < 1
             or isinstance(window, bool)
+            or not isinstance(window, (int, float))
             or not math.isfinite(window)
             or window <= 0
         ):
             raise ValueError("limit and window must be positive and finite")
+        if key is not None and not callable(key):
+            raise TypeError("key must be callable")
         self.client, self.prefix, self.limit = client, _prefix(prefix), limit
         self.window_ms = max(1, math.ceil(window * 1000))
         self.key = key or (lambda request: request.client_addr or "anonymous")

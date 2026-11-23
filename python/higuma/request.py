@@ -353,7 +353,7 @@ class Request:
                 charset = value.strip("\"'")
         try:
             return self.body.decode(charset, errors="replace")
-        except LookupError as exc:
+        except (LookupError, ValueError) as exc:
             raise BadRequest(detail=f"unknown request charset: {charset}") from exc
 
     @property

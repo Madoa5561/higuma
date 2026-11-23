@@ -42,7 +42,7 @@ Flask拡張はFlask側へ初期化し、個別に動作を検証します。
 | API | 動作 |
 | --- | --- |
 | `with app.app_context():` | `current_app`と`g`を有効化。nested context終了時に外側を復元 |
-| `g.name` / `g.get/pop/setdefault` | アプリコンテキスト単位の値。通常はリクエストごとに独立 |
+| `g.name` / `g.get/pop/setdefault` | アプリコンテキスト単位の値。`g.pop(name)`は既定値なし欠損時に`KeyError`（Flask互換） |
 | `app.extensions` | extensionのアプリ単位の保存先。リクエスト固有値は保存しない |
 | `@app.teardown_appcontext` | context終了時に逆順実行。引数は未処理例外または`None` |
 | `has_app_context()` / `has_request_context()` | contextの存在確認 |
@@ -65,6 +65,7 @@ Flask拡張はFlask側へ初期化し、個別に動作を検証します。
 | `higuma run module:create_app()` | 引数なしfactory。任意式の評価はしない |
 
 相対endpointの`url_for(".detail", id=1)`はBlueprint request内で使用できます。
+必須の型付きpath引数（`int`/`float`/`uuid`）は不正な型・値や`None`を`ValueError`で拒否します。
 余剰query値の`None`は省略します。`_scheme`は`_external=True`が必要です。
 request外の外部URL生成には`app.config["SERVER_NAME"]`を設定してください。
 外部URLにrequestのHostを使う場合、本番では`TrustedHostMiddleware`を設定します。

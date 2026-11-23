@@ -7,12 +7,16 @@ from typing import Any
 
 from .request import LocalProxy, _request_context
 
+_MISSING = object()
+
 
 class _AppGlobals(SimpleNamespace):
     def get(self, name: str, default: Any = None) -> Any:
         return self.__dict__.get(name, default)
 
-    def pop(self, name: str, default: Any = None) -> Any:
+    def pop(self, name: str, default: Any = _MISSING) -> Any:
+        if default is _MISSING:
+            return self.__dict__.pop(name)
         return self.__dict__.pop(name, default)
 
     def setdefault(self, name: str, default: Any = None) -> Any:
@@ -97,6 +101,8 @@ def has_app_context() -> bool:
 
 
 def after_this_request(func: Callable[..., Any]) -> Callable[..., Any]:
+    if not callable(func):
+        raise TypeError("after_this_request callback must be callable")
     current = _request_context.get()
     if current is None:
         raise RuntimeError("after_this_request requires a request context")

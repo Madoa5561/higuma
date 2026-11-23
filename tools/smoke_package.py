@@ -201,6 +201,16 @@ def _exercise_flask_helpers() -> None:
     created = client.post("/created-tuple")
     assert created.status_code == 201 and created.headers["x-smoke"] == "1"
     assert "content-length" not in client.head("/no-content").headers
+    from higuma import g
+
+    with app.app_context():
+        assert g.pop("missing", None) is None
+        try:
+            g.pop("missing")
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("g.pop without default should raise KeyError")
     multi = app.make_response(("ok", 200, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]))
     assert [v for k, v in multi.header_items if k == "set-cookie"] == ["a=1", "b=2"]
     from higuma import PasswordHasher

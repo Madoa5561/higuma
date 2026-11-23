@@ -91,6 +91,8 @@ class Config(dict[str, Any]):
     ) -> bool:
         if not isinstance(prefix, str) or not prefix:
             raise ValueError("prefix must be a non-empty string")
+        if not callable(loads):
+            raise TypeError("loads must be callable")
         marker = f"{prefix}_"
         for name in sorted(os.environ):
             if not name.startswith(marker):

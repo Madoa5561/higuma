@@ -7,6 +7,29 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.19] - 2026-11-23
+
+### Fixed
+
+- Match Flask 3.1 `g.pop()` semantics in `context.py` (raising `KeyError` when called without
+  a default on a missing key while preserving `g.pop(name, default)`), and reject non-callable
+  callbacks upfront in `after_this_request()`.
+- Validate typed route parameter values in `Rule.build()` / `url_for()` (`routing.py`): reject
+  `None` for required path parameters, validate `int` (rejecting `bool`/`float`/non-numeric
+  strings and formatting `IntEnum` via `int()`), finite `float`, and `UUID` values instead of
+  emitting malformed paths.
+- Harden class-based views (`views.py`): validate `View.as_view()` string names, bare-string
+  `methods`, and callable `decorators`, and include `HEAD` (when `GET` is allowed) and
+  `OPTIONS` in `MethodView` `405 Method Not Allowed` `Allow` headers matching app routing.
+- Harden upfront validation and edge cases across `security.py`, `redis_state.py`,
+  `frontend.py`, `config.py`, `request.py`, `supervisor.py`, and `app.py`: validate
+  `TokenSigner` `salt` & numeric `max_age`, `RateLimitMiddleware` / `RedisRateLimitMiddleware`
+  numeric `window` & callable `key`, `csrf_token()` string `field_name`,
+  `RedisSessionMiddleware` `store` type and UTF-8 byte length for `decode_responses=True`
+  payloads, `ViteManifest.tags()` `nonce` type/control characters,
+  `Config.from_prefixed_env()` callable `loads`, invalid `Request.text` `charset` raising
+  `400 BadRequest`, and non-empty `host` / numeric timeouts in `Higuma.run()` and `Supervisor`.
+
 ## [0.11.18] - 2026-11-23
 
 ### Fixed

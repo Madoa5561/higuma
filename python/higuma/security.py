@@ -151,6 +151,8 @@ class PasswordHasher:
 class TokenSigner:
     def __init__(self, secret_key: str | bytes, *, salt: str = "higuma-token") -> None:
         secret = _validate_secret_key(secret_key)
+        if not isinstance(salt, str):
+            raise TypeError("salt must be a string")
         self.key = hmac.new(secret, salt.encode(), hashlib.sha256).digest()
 
     def dumps(self, value: Any) -> str:
@@ -166,7 +168,10 @@ class TokenSigner:
 
     def loads(self, token: str, *, max_age: float | None = None) -> Any:
         if max_age is not None and (
-            isinstance(max_age, bool) or not math.isfinite(max_age) or max_age < 0
+            isinstance(max_age, bool)
+            or not isinstance(max_age, (int, float))
+            or not math.isfinite(max_age)
+            or max_age < 0
         ):
             raise ValueError("max_age must be a non-negative finite number")
         if not isinstance(token, str):
@@ -256,6 +261,7 @@ class RateLimitMiddleware:
             or isinstance(limit, bool)
             or limit <= 0
             or isinstance(window, bool)
+            or not isinstance(window, (int, float))
             or not math.isfinite(window)
             or window <= 0
             or not isinstance(max_keys, int)
@@ -263,6 +269,8 @@ class RateLimitMiddleware:
             or max_keys <= 0
         ):
             raise ValueError("limit, window, and max_keys must be positive and finite")
+        if key is not None and not callable(key):
+            raise TypeError("key must be callable")
         self.limit = limit
         self.window = window
         self.key = key or self._default_key
@@ -348,7 +356,7 @@ def csrf_token(field_name: str | None = None) -> str:
         if field_name is not None
         else request.state.get("_higuma_csrf_field_name", "_csrf_token")
     )
-    if not resolved_field_name:
+    if not isinstance(resolved_field_name, str) or not resolved_field_name:
         raise ValueError("field_name must not be empty")
     token = session.get(resolved_field_name)
     if token is None:

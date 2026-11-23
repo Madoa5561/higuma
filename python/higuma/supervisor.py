@@ -31,6 +31,8 @@ class Supervisor:
     ) -> None:
         if not isinstance(app, str) or not app.strip() or app.strip().startswith("-"):
             raise ValueError("app must be a non-empty module:object reference")
+        if not isinstance(host, str) or not host.strip():
+            raise ValueError("host must be a non-empty string")
         if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
             raise ValueError("port must be an integer between 0 and 65535")
         if isinstance(processes, bool) or not isinstance(processes, int) or processes < 2:
@@ -40,6 +42,7 @@ class Supervisor:
             or not isinstance(threads, int)
             or threads < 0
             or isinstance(startup_timeout, bool)
+            or not isinstance(startup_timeout, (int, float))
             or not math.isfinite(startup_timeout)
             or startup_timeout <= 0
         ):
@@ -55,6 +58,7 @@ class Supervisor:
             or not isinstance(max_restarts, int)
             or max_restarts < 0
             or isinstance(restart_window, bool)
+            or not isinstance(restart_window, (int, float))
             or not math.isfinite(restart_window)
             or restart_window <= 0
             or isinstance(max_connections, bool)

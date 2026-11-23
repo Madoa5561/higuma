@@ -146,9 +146,34 @@ class Rule:
                 raise RuntimeError("route parameter name is missing")
             if value not in values:
                 raise KeyError(f"missing URL value: {value}")
+            raw = values[value]
+            if raw is None:
+                raise ValueError(f"URL parameter {value!r} cannot be None")
+            text = _format_url_value(converter, value, raw)
             safe = "/" if converter == "path" else ""
-            parts.append(quote(str(values[value]), safe=safe))
+            parts.append(quote(text, safe=safe))
         return "/" if not parts else "/" + "/".join(parts)
+
+
+def _format_url_value(converter: str | None, name: str, raw: Any) -> str:
+    if converter == "int":
+        if isinstance(raw, bool):
+            raise ValueError(f"URL parameter {name!r} must be an integer")
+        if isinstance(raw, int):
+            return str(int(raw))
+        if isinstance(raw, str):
+            return str(int(raw))
+        raise ValueError(f"URL parameter {name!r} must be an integer")
+    if converter == "float":
+        if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+            raise ValueError(f"URL parameter {name!r} must be a finite float")
+        number = float(raw)
+        if not math.isfinite(number):
+            raise ValueError(f"URL parameter {name!r} must be a finite float")
+        return str(number)
+    if converter == "uuid":
+        return str(raw if isinstance(raw, UUID) else UUID(str(raw)))
+    return str(raw)
 
 
 def _decode_segment(value: str) -> str | None:

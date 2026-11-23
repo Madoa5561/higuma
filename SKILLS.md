@@ -390,6 +390,12 @@ supervisor, streaming, and proxy changes.
   teardown matching native mode, `TestClient`/`ASGITestClient` validate `base_url` ports and
   omit `Content-Length` on `HEAD` `204`/`205`/`304`, and native `HigumaCore.run(port=0)` logs
   the bound ephemeral port.
+  In 0.11.19+, `g.pop(name)` without a default raises `KeyError` (matching Flask 3.1),
+  `after_this_request()` validates callability upfront, `url_for()` validates required typed
+  path parameters (`int`/`float`/`uuid`/`None`), `View.as_view()`/`MethodView` harden
+  validation and `Allow` headers, `RedisSessionMiddleware` measures UTF-8 bytes for string
+  Redis payloads, and `TokenSigner`/`RateLimitMiddleware`/`ViteManifest`/`Config`/`Request`/
+  `Supervisor` enforce strict upfront parameter validation.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

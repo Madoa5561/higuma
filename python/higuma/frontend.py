@@ -105,6 +105,11 @@ class ViteManifest:
         }
 
     def tags(self, entry: str, *, nonce: str | None = None) -> str:
+        if nonce is not None:
+            if not isinstance(nonce, str):
+                raise TypeError("nonce must be a string")
+            if any(ord(char) < 32 or ord(char) == 127 for char in nonce):
+                raise ValueError("nonce must not contain control characters")
         urls = self.entrypoint(entry)
         nonce_attribute = f' nonce="{escape(nonce, quote=True)}"' if nonce is not None else ""
         styles = list(urls["css"])

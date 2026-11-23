@@ -44,7 +44,7 @@ Flask extensions on the Flask application and test each integration separately.
 | API | Behavior |
 | --- | --- |
 | `with app.app_context():` | Activate `current_app` and `g`; restore outer contexts on exit |
-| `g.name`, `g.get/pop/setdefault` | App-context-local state, normally isolated per request |
+| `g.name`, `g.get/pop/setdefault` | App-context-local state (`g.pop(name)` raises `KeyError` without a default, matching Flask) |
 | `app.extensions` | App-wide extension storage, not request-specific state |
 | `@app.teardown_appcontext` | Reverse-order cleanup with an unhandled exception or `None` |
 | `has_app_context()`, `has_request_context()` | Check context availability |
@@ -67,6 +67,7 @@ Flask extensions on the Flask application and test each integration separately.
 | `higuma run module:create_app()` | No-argument factory syntax, without evaluating arbitrary expressions |
 
 Relative endpoints such as `url_for(".detail", id=1)` require a blueprint request.
+Required typed path parameters (`int`/`float`/`uuid`) reject `None` and invalid values with `ValueError`.
 Extra query values of `None` are omitted. `_scheme` requires `_external=True`.
 Outside a request, external URLs require `app.config["SERVER_NAME"]`. Configure
 `TrustedHostMiddleware` before trusting a request's Host for external URLs.

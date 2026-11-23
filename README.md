@@ -34,6 +34,13 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.19** — `g.pop()` の未指定時 `KeyError`（Flask 3.1 整合）と `after_this_request()`
+> callable 検証、`url_for()` 型付きパス引数（`int`/`float`/`uuid`/`None`）検証、`View.as_view()`
+> 検証＆`MethodView` 405 `Allow` ヘッダ整合、`TokenSigner`/`RateLimitMiddleware`/
+> `RedisSessionMiddleware`（`decode_responses=True` UTF-8 バイト長対応）/`ViteManifest(nonce=...)`/
+> `Config.from_prefixed_env(loads=...)`/`Request.text` 不正 charset `400` 化/`Higuma.run()`・`Supervisor`
+> 引数検証を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.18** — ルート宣言 `status_code` の `(body, headers)` 2-tuple 適用とデバッグ時
 > `traceback.format_exception()` 化、`errorhandler`/`middleware`/`Blueprint` 登録時の厳格検証、
 > ASGI／WebSocket での空・重複 `Origin` 拒否・`raw_path=b""` フォールバック・テキスト/close 引数検証・

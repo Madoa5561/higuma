@@ -22,8 +22,17 @@ class View:
 
     @classmethod
     def as_view(cls, name: str, *class_args: Any, **class_kwargs: Any) -> Callable[..., Any]:
-        if not name or not name.isidentifier():
+        if not isinstance(name, str) or not name or not name.isidentifier():
             raise ValueError("view name must be a valid Python identifier")
+        if isinstance(cls.methods, (str, bytes, bytearray)):
+            raise TypeError(
+                "methods must be an iterable of HTTP method strings, not a single string"
+            )
+        if isinstance(cls.decorators, (str, bytes, bytearray)):
+            raise TypeError("decorators must be an iterable of callables")
+        decorators = tuple(cls.decorators)
+        if not all(callable(decorator) for decorator in decorators):
+            raise TypeError("view decorators must be callable")
 
         def invoke(instance: View, supplied: dict[str, Any]) -> Any:
             if type(instance).dispatch_request is MethodView.dispatch_request:
@@ -50,7 +59,7 @@ class View:
             def view(**kwargs: Any) -> Any:
                 return invoke(instance, kwargs)
 
-        for decorator in cls.decorators:
+        for decorator in decorators:
             view = decorator(view)
         update_wrapper(view, cls, updated=())
         view.__dict__.pop("__wrapped__", None)
@@ -84,8 +93,12 @@ class MethodView(View):
         if handler is None and request.method == "HEAD":
             handler = getattr(self, "get", None)
         if handler is None:
-            allowed = sorted(self.methods or ())
-            raise MethodNotAllowed(headers={"allow": ", ".join(allowed)})
+            allowed_methods = {method.upper() for method in (self.methods or ())}
+            if "GET" in allowed_methods:
+                allowed_methods.add("HEAD")
+            if allowed_methods:
+                allowed_methods.add("OPTIONS")
+            raise MethodNotAllowed(headers={"allow": ", ".join(sorted(allowed_methods))})
         current = _request_context.get()
         if current is None:
             return handler(**kwargs)
