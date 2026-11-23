@@ -92,6 +92,7 @@ OpenAPI route options are `summary`, `description`, `tags`, `responses`, `reques
 (explicit status tuples take precedence). `errorhandler`, `register_error_handler`, `middleware`, `add_middleware`, `register_blueprint`,
 and route, hook, and mount registration APIs validate status codes, exception classes, callables,
 non-empty `endpoint`/`name` strings, and `Blueprint` instances eagerly at registration time.
+`url_for()` also rejects non-string endpoints and empty or control-character path parameters.
 
 `current_app` and `request` are context-local proxies to the active application and request.
 Access outside a request context raises `RuntimeError`. Use `app.config` for configuration and

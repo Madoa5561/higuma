@@ -64,6 +64,8 @@ class Config(dict[str, Any]):
         silent: bool = False,
         text: bool = True,
     ) -> bool:
+        if not callable(load):
+            raise TypeError("load must be callable")
         path = self._root_path / filename
         try:
             handle = path.open("r" if text else "rb", encoding="utf-8" if text else None)
@@ -119,9 +121,11 @@ class Config(dict[str, Any]):
     def get_namespace(
         self, namespace: str, lowercase: bool = True, trim_namespace: bool = True
     ) -> dict[str, Any]:
+        if not isinstance(namespace, str):
+            raise TypeError("namespace must be a string")
         result = {}
         for name, value in self.items():
-            if not name.startswith(namespace):
+            if not isinstance(name, str) or not name.startswith(namespace):
                 continue
             key = name[len(namespace) :] if trim_namespace else name
             result[key.lower() if lowercase else key] = value

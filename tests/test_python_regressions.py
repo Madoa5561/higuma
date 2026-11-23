@@ -2260,6 +2260,86 @@ class PythonCoreRegressionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             middleware("not-callable")  # type: ignore[arg-type]
 
+    def test_routing_url_for_exceptions_config_and_vite_validation(self) -> None:
+        import json
+        import tempfile
+        from http import HTTPStatus
+        from pathlib import Path
+
+        from higuma import Config, Higuma, HTTPException, ViteManifest, abort
+
+        app = Higuma(__name__, static_folder=None)
+
+        with self.assertRaises(TypeError):
+            app.get(123)(lambda: "ok")  # type: ignore[arg-type]
+
+        @app.get("/items/<slug>/detail")
+        def detail(slug: str) -> str:
+            return slug
+
+        @app.get("/files/<path:filepath>")
+        def files(filepath: str) -> str:
+            return filepath
+
+        with self.assertRaises(TypeError):
+            app.url_for(123)  # type: ignore[arg-type]
+        for bad_slug in ("", "bad\nline", "bad\x00nul"):
+            with self.assertRaises(ValueError):
+                app.url_for("detail", slug=bad_slug)
+        with self.assertRaises(ValueError):
+            app.url_for("files", filepath="")
+        self.assertEqual(app.url_for("detail", slug="bear"), "/items/bear/detail")
+        self.assertEqual(app.url_for("files", filepath="docs/a.txt"), "/files/docs/a.txt")
+
+        # HTTPException / abort validation
+        exc = HTTPException(HTTPStatus.NOT_FOUND, headers={"X-Err": "1"})
+        self.assertIs(type(exc.status_code), int)
+        self.assertEqual(exc.status_code, 404)
+        self.assertEqual(exc.headers, {"X-Err": "1"})
+        with self.assertRaises(TypeError):
+            HTTPException(400, headers="bad")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            HTTPException(400, headers={"Bad Header": "1"})
+        with self.assertRaises(ValueError):
+            HTTPException(400, headers={"X-Test": "a\r\nb"})
+        with self.assertRaises(ValueError):
+            abort([404])  # type: ignore[arg-type]
+        with self.assertRaises(HTTPException) as caught:
+            abort(HTTPStatus.FORBIDDEN)
+        self.assertIs(type(caught.exception.status_code), int)
+        self.assertEqual(caught.exception.status_code, 403)
+
+        # Config.from_file(load=...) and Config.get_namespace()
+        cfg = Config()
+        with self.assertRaises(TypeError):
+            cfg.from_file("missing.json", load=None, silent=True)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            cfg.get_namespace(123)  # type: ignore[arg-type]
+        cfg[123] = "ignored"  # type: ignore[index]
+        cfg["APP_HOST"] = "localhost"
+        self.assertEqual(cfg.get_namespace("APP_"), {"host": "localhost"})
+
+        # ViteManifest port error message and non-empty nonce validation
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "manifest.json"
+            manifest_path.write_text(
+                json.dumps({"main.js": {"file": "assets/main.js"}}),
+                encoding="utf-8",
+            )
+            for bad_base in (
+                "https://cdn.example.com:99999/assets/",
+                "https://cdn.example.com:abc/assets/",
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "base_url must be a root-relative path or absolute HTTP\\(S\\) URL",
+                ):
+                    ViteManifest(manifest_path, base_url=bad_base)
+            manifest = ViteManifest(manifest_path)
+            for bad_nonce in ("", "   "):
+                with self.assertRaises(ValueError):
+                    manifest.tags("main.js", nonce=bad_nonce)
+
 
 if __name__ == "__main__":
     unittest.main()

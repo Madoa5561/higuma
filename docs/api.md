@@ -94,7 +94,7 @@ file helperは`helper(request, filename="")`で呼べ、app mountを使うと通
 直接helperを呼ぶだけではapp共通のconditional処理は実行されないため、通常はmount APIを使います。
 
 Vite methodは`asset_url(entry) -> str`、`entrypoint(entry) -> dict`（`file`・`css`・`imports`）、
-`tags(entry, *, nonce=None) -> str`、`reload() -> None`です。
+`tags(entry, *, nonce=None) -> str`（非空の文字列`nonce`のみ許可）、`reload() -> None`です。
 全optionの動作・cache・予約prefix・エラー・security境界は[frontend guide](frontend.md)を参照してください。
 
 ### `Blueprint`（route group）

@@ -247,6 +247,18 @@ def _exercise_flask_helpers() -> None:
         pass
     else:
         raise AssertionError("Response(int) must raise TypeError")
+
+    @app.get("/smoke-items/<slug>")
+    def smoke_item(slug: str):
+        return slug
+
+    assert app.url_for("smoke_item", slug="bear") == "/smoke-items/bear"
+    try:
+        app.url_for("smoke_item", slug="")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("url_for must reject empty path parameters")
     multi = app.make_response(("ok", 200, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]))
     assert [v for k, v in multi.header_items if k == "set-cookie"] == ["a=1", "b=2"]
     from higuma import PasswordHasher

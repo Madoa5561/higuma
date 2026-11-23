@@ -15,6 +15,12 @@ class ViteManifest:
                 "base_url must be a root-relative path or absolute HTTP(S) URL"
             )
         parsed = urlsplit(base_url)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError(
+                "base_url must be a root-relative path or absolute HTTP(S) URL"
+            ) from exc
         if (
             parsed.scheme not in {"", "http", "https"}
             or (parsed.scheme and (not parsed.netloc or not parsed.hostname))
@@ -28,7 +34,7 @@ class ViteManifest:
             or any(ord(char) < 32 or ord(char) == 127 for char in base_url)
             or any(part in {".", ".."} for part in parsed.path.split("/"))
             or "%" in base_url
-            or (parsed.netloc and parsed.port is not None and not 1 <= parsed.port <= 65535)
+            or (parsed.netloc and port is not None and not 1 <= port <= 65535)
         ):
             raise ValueError("base_url must be a root-relative path or absolute HTTP(S) URL")
         self.base_url = base_url.rstrip("/") + "/"
@@ -108,6 +114,8 @@ class ViteManifest:
         if nonce is not None:
             if not isinstance(nonce, str):
                 raise TypeError("nonce must be a string")
+            if not nonce.strip():
+                raise ValueError("nonce must not be empty")
             if any(ord(char) < 32 or ord(char) == 127 for char in nonce):
                 raise ValueError("nonce must not contain control characters")
         urls = self.entrypoint(entry)

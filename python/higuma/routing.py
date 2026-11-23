@@ -14,6 +14,8 @@ _PARAMETER_RE = re.compile(
 
 
 def normalize_rule(rule: str) -> str:
+    if not isinstance(rule, str):
+        raise TypeError("route rule must be a string")
     if not rule.startswith("/"):
         rule = f"/{rule}"
     if len(rule) > 1:
@@ -150,6 +152,10 @@ class Rule:
             if raw is None:
                 raise ValueError(f"URL parameter {value!r} cannot be None")
             text = _format_url_value(converter, value, raw)
+            if not text:
+                raise ValueError(f"URL parameter {value!r} cannot be empty")
+            if any(_is_control(character) for character in text):
+                raise ValueError(f"URL parameter {value!r} cannot contain control characters")
             safe = "/" if converter == "path" else ""
             parts.append(quote(text, safe=safe))
         return "/" if not parts else "/" + "/".join(parts)

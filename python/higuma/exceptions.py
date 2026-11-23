@@ -1,7 +1,27 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from http import HTTPStatus
+
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+
+def _validate_exception_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
+    if headers is None:
+        return {}
+    if not isinstance(headers, Mapping):
+        raise TypeError("exception headers must be a mapping")
+    validated: dict[str, str] = {}
+    for key, value in headers.items():
+        name = str(key)
+        text = str(value)
+        if not _HEADER_NAME_RE.fullmatch(name):
+            raise ValueError(f"invalid HTTP header name: {key!r}")
+        if "\r" in text or "\n" in text or "\x00" in text:
+            raise ValueError(f"invalid HTTP header value for {name!r}")
+        validated[name] = text
+    return validated
 
 
 class HTTPException(Exception):
@@ -17,7 +37,7 @@ class HTTPException(Exception):
             isinstance(status_code, bool) or not isinstance(status_code, int)
         ):
             raise ValueError("final HTTP status code must be an integer between 200 and 599")
-        resolved_status = self.status_code if status_code is None else status_code
+        resolved_status = self.status_code if status_code is None else int(status_code)
         if not 200 <= resolved_status <= 599:
             raise ValueError("final HTTP status code must be between 200 and 599")
         self.status_code = resolved_status
@@ -26,7 +46,7 @@ class HTTPException(Exception):
         except ValueError:
             default_detail = "HTTP Error"
         self.detail = default_detail if detail is None else str(detail)
-        self.headers = dict(headers or {})
+        self.headers = _validate_exception_headers(headers)
         super().__init__(self.detail)
 
 
@@ -111,5 +131,8 @@ def abort(
     detail: str | None = None,
     headers: Mapping[str, str] | None = None,
 ) -> None:
-    exception_type = _STATUS_EXCEPTIONS.get(status_code, HTTPException)
-    raise exception_type(status_code=status_code, detail=detail, headers=headers)
+    if isinstance(status_code, bool) or not isinstance(status_code, int):
+        raise ValueError("final HTTP status code must be an integer between 200 and 599")  # noqa: TRY004
+    code = int(status_code)
+    exception_type = _STATUS_EXCEPTIONS.get(code, HTTPException)
+    raise exception_type(status_code=code, detail=detail, headers=headers)

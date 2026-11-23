@@ -7,6 +7,22 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.26] - 2026-11-23
+
+### Fixed
+
+- Harden routing and URL building (`routing.py`, `app.py`): require `str` in `normalize_rule()`
+  and `Higuma.url_for()`, and reject empty or control-character URL parameter values in
+  `Rule.build()` so `url_for()` never emits unmatchable double-slash or control-byte paths.
+- Harden `HTTPException` and `abort()` (`exceptions.py`): normalize `HTTPStatus` values to
+  plain `int`, eagerly validate `HTTPException(headers=...)` mappings/header names/control
+  characters, and reject unhashable/non-integer `abort()` status values with `ValueError`
+  instead of `TypeError`.
+- Harden `Config` and `ViteManifest` (`config.py`, `frontend.py`): validate `callable(load)`
+  eagerly in `Config.from_file()` even when `silent=True`, validate string `namespace` and
+  tolerate non-string keys in `Config.get_namespace()`, normalize malformed port errors in
+  `ViteManifest(base_url=...)`, and reject empty/whitespace `nonce` in `ViteManifest.tags()`.
+
 ## [0.11.25] - 2026-11-23
 
 ### Fixed

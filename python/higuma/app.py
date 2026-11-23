@@ -63,7 +63,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.25"
+__version__ = "0.11.26"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -788,6 +788,8 @@ class Higuma:
     def url_for(self, endpoint: str, **values: Any) -> str:
         from .request import _request_context
 
+        if not isinstance(endpoint, str):
+            raise TypeError("endpoint must be a string")
         current = _request_context.get()
         if endpoint.startswith("."):
             if current is None or not current.blueprint:

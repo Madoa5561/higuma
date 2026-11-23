@@ -423,6 +423,10 @@ supervisor, streaming, and proxy changes.
   malleability, multipart parsing rejects duplicate `Content-Transfer-Encoding`/`Content-Type`
   part headers with 400, and built-in security/CORS/host middleware constructors validate
   string/header arguments eagerly.
+  In 0.11.26+, `normalize_rule()`/`url_for()` reject non-string rules/endpoints and empty or
+  control-character path parameters, `HTTPException`/`abort()` normalize `HTTPStatus` and
+  validate exception headers eagerly, `Config.from_file()`/`get_namespace()` validate `load`
+  and `namespace`, and `ViteManifest` rejects empty/whitespace `nonce` values.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide
