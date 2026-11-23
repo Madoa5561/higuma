@@ -294,7 +294,7 @@ ASGI loop上で同期WS methodを直接呼び出してはいけません。
 
 fieldの共通optionは`primary_key`、`nullable`、`unique`、`default`、`index`です。
 `Integer`は`autoincrement`、`String`は`length`も受けます。`Query.delete()`はfilterなしの全件削除を
-拒否します。組み込みORMはSQLite用の小さな同期data mapperです。
+拒否し、field未定義の`Model`に対する`create_all()`/`Query`は`TypeError`になります。組み込みORMはSQLite用の小さな同期data mapperです。
 
 ## 認証とsecurity
 

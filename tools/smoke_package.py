@@ -459,6 +459,12 @@ def _exercise_developer_apis() -> None:
     with memory_db.session():
         pass
     memory_db.close()
+    try:
+        Database("sqlite:///   ")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Database must reject whitespace-only SQLite path")
 
     app = Higuma(__name__, static_folder=None, request_memory_limit=4)
     parent = Blueprint("parent", __name__, url_prefix="/parent")

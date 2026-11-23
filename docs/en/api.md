@@ -303,7 +303,7 @@ WS methods directly on the ASGI loop.
 
 Common field options are `primary_key`, `nullable`, `unique`, `default`, and `index`. `Integer`
 also accepts `autoincrement`; `String` accepts `length`. `Query.delete()` refuses an unfiltered
-delete. The built-in ORM is a small synchronous SQLite data mapper.
+delete, and `create_all()` / `Query` reject fieldless `Model` subclasses with `TypeError`. The built-in ORM is a small synchronous SQLite data mapper.
 
 ## Authentication and security
 

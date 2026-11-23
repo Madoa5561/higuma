@@ -322,6 +322,8 @@ class Query(Generic[ModelT]):
         return cursor.rowcount
 
     def _select_sql(self) -> tuple[str, tuple[Any, ...]]:
+        if not self.model.__fields__:
+            raise TypeError(f"{self.model.__name__} does not define any fields")
         columns = ", ".join(quote_identifier(name) for name in self.model.__fields__)
         table = quote_identifier(self.model.__tablename__)
         where, params = self._where_sql()
@@ -468,7 +470,12 @@ class Database:
     def connect(self) -> sqlite3.Connection:
         with self._memory_lock:
             if self.path == ":memory:" and self._memory_connection is not None:
-                return self._memory_connection
+                try:
+                    _ = self._memory_connection.in_transaction
+                except sqlite3.ProgrammingError:
+                    self._memory_connection = None
+                else:
+                    return self._memory_connection
             connection = sqlite3.connect(
                 self.path,
                 detect_types=sqlite3.PARSE_DECLTYPES,
@@ -579,7 +586,7 @@ def _sqlite_path(url: str) -> str:
     if not url.startswith(prefix):
         raise ValueError("built-in Database currently supports sqlite:/// URLs")
     path = url[len(prefix) :]
-    if not path:
+    if not path or not path.strip() or "\x00" in path:
         raise ValueError("SQLite database path must not be empty")
     resolved = Path(path).expanduser()
     resolved.parent.mkdir(parents=True, exist_ok=True)

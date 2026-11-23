@@ -2340,6 +2340,93 @@ class PythonCoreRegressionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     manifest.tags("main.js", nonce=bad_nonce)
 
+    def test_supervisor_reap_database_views_and_cli_runner_validation(self) -> None:
+        import subprocess
+
+        from higuma import Database, Higuma, Model, Supervisor, View
+
+        # Supervisor.stop() must reap killed workers and tolerate concurrent exit OSError
+        supervisor = Supervisor("demo:app", processes=2)
+        events: list[str] = []
+
+        class StubChild:
+            def __init__(self, *, terminate_oserror: bool = False) -> None:
+                self.terminate_oserror = terminate_oserror
+                self.killed = False
+                self.waits = 0
+
+            def poll(self) -> int | None:
+                return 0 if self.killed and self.waits >= 2 else None
+
+            def terminate(self) -> None:
+                events.append("terminate")
+                if self.terminate_oserror:
+                    raise ProcessLookupError("already gone")
+
+            def wait(self, timeout: float | None = None) -> int:
+                self.waits += 1
+                events.append(f"wait:{self.waits}")
+                if self.waits == 1:
+                    raise subprocess.TimeoutExpired("worker", timeout or 0)
+                return -9
+
+            def kill(self) -> None:
+                self.killed = True
+                events.append("kill")
+
+        supervisor._children = [StubChild(terminate_oserror=True), StubChild()]  # type: ignore[list-item]
+        supervisor.stop()
+        self.assertEqual(events.count("kill"), 2)
+        self.assertEqual(events.count("wait:2"), 2)
+
+        # Database: closed :memory: recovery, empty-field Query guard, blank/NUL sqlite path
+        db = Database("sqlite:///:memory:")
+        conn = db.connect()
+        conn.close()
+        with db.session() as db_session:
+            self.assertEqual(db_session.execute("SELECT 1").fetchone()[0], 1)
+
+        class EmptyModel(Model):
+            pass
+
+        with db.session() as db_session, self.assertRaises(TypeError):
+            db_session.query(EmptyModel).all()
+        db.close()
+
+        for bad_url in ("sqlite:///   ", "sqlite:///bad\x00.db"):
+            with self.assertRaises(ValueError):
+                Database(bad_url)
+
+        # View.as_view(): validate methods elements & decorator callable return
+        class BadMethodTypeView(View):
+            methods = (123,)  # type: ignore[assignment]
+
+        with self.assertRaises(TypeError):
+            BadMethodTypeView.as_view("bad_type")
+
+        class BlankMethodView(View):
+            methods = ("  ",)  # type: ignore[assignment]
+
+        with self.assertRaises(ValueError):
+            BlankMethodView.as_view("blank_method")
+
+        class BadDecoratorReturnView(View):
+            decorators = (lambda _fn: "not-callable",)  # type: ignore[assignment]
+
+        with self.assertRaises(TypeError):
+            BadDecoratorReturnView.as_view("bad_dec")
+
+        # CliRunner.invoke(): reject non-string items cleanly with TypeError
+        app = Higuma(__name__, static_folder=None)
+
+        @app.cli.command()
+        def greet(name: str) -> str:
+            return name
+
+        result = app.test_cli_runner().invoke(["greet", 123])  # type: ignore[list-item]
+        self.assertEqual(result.exit_code, 1)
+        self.assertIsInstance(result.exception, TypeError)
+
 
 if __name__ == "__main__":
     unittest.main()

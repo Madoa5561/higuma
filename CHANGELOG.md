@@ -7,6 +7,22 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.27] - 2026-11-23
+
+### Fixed
+
+- Reap force-killed worker processes (`child.wait(timeout=5)`) and ignore concurrent-exit
+  `OSError` during `Supervisor.stop()` (`supervisor.py`), preventing zombie processes and
+  `ResourceWarning` on Unix when stopping unresponsive workers.
+- Harden the built-in SQLite ORM (`database.py`): transparently recover if an in-memory
+  `Database(":memory:")` connection was closed externally, reject queries against fieldless
+  `Model` subclasses with `TypeError` instead of invalid SQL, and reject whitespace-only or
+  NUL-containing `sqlite:///` paths.
+- Harden `View.as_view()` (`views.py`) and `CliRunner.invoke()` (`commands.py`): validate that
+  `View.methods` contains non-empty HTTP method strings (normalized to uppercase), verify view
+  decorators return callables, and reject non-string elements in `CliRunner.invoke()` argument
+  sequences with `TypeError`.
+
 ## [0.11.26] - 2026-11-23
 
 ### Fixed

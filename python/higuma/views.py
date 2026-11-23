@@ -28,6 +28,14 @@ class View:
             raise TypeError(
                 "methods must be an iterable of HTTP method strings, not a single string"
             )
+        normalized_methods: set[str] = set()
+        for method in cls.methods or ():
+            if not isinstance(method, str):
+                raise TypeError("view methods must contain strings")
+            cleaned = method.strip().upper()
+            if not cleaned:
+                raise ValueError("view methods entries must not be empty")
+            normalized_methods.add(cleaned)
         if isinstance(cls.decorators, (str, bytes, bytearray)):
             raise TypeError("decorators must be an iterable of callables")
         decorators = tuple(cls.decorators)
@@ -61,10 +69,12 @@ class View:
 
         for decorator in decorators:
             view = decorator(view)
+            if not callable(view):
+                raise TypeError("view decorators must return a callable")
         update_wrapper(view, cls, updated=())
         view.__dict__.pop("__wrapped__", None)
         view.__name__ = name
-        view.methods = set(cls.methods or ())  # type: ignore[attr-defined]
+        view.methods = normalized_methods  # type: ignore[attr-defined]
         view.view_class = cls  # type: ignore[attr-defined]
         import inspect
 

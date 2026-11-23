@@ -150,7 +150,12 @@ class CliRunner:
             try:
                 if isinstance(args, (bytes, bytearray)):
                     raise TypeError("args must be a command string or sequence of strings")
-                parsed_args = shlex.split(args) if isinstance(args, str) else list(args)
+                if isinstance(args, str):
+                    parsed_args = shlex.split(args)
+                else:
+                    parsed_args = list(args)
+                    if not all(isinstance(item, str) for item in parsed_args):
+                        raise TypeError("args must be a command string or sequence of strings")
                 code = execute(self.app, build_parser(self.app).parse_args(parsed_args))
             except SystemExit as exception:
                 if exception.code is None or isinstance(exception.code, int):

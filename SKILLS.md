@@ -427,6 +427,10 @@ supervisor, streaming, and proxy changes.
   control-character path parameters, `HTTPException`/`abort()` normalize `HTTPStatus` and
   validate exception headers eagerly, `Config.from_file()`/`get_namespace()` validate `load`
   and `namespace`, and `ViteManifest` rejects empty/whitespace `nonce` values.
+  In 0.11.27+, `Supervisor.stop()` reaps force-killed workers and handles concurrent exit
+  races, `Database(":memory:")` recovers from externally closed connections, `Query` rejects
+  fieldless models cleanly, `sqlite:///` rejects blank/NUL paths, and `View.as_view()` /
+  `CliRunner.invoke()` validate method strings, decorator return callables, and CLI arg items.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

@@ -92,7 +92,10 @@ class Supervisor:
         self._stopped.set()
         for child in self._children:
             if child.poll() is None:
-                child.terminate()
+                try:
+                    child.terminate()
+                except OSError:
+                    pass
         deadline = time.monotonic() + 5
         for child in self._children:
             if child.poll() is not None:
@@ -100,7 +103,14 @@ class Supervisor:
             try:
                 child.wait(max(0.0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
-                child.kill()
+                try:
+                    child.kill()
+                except OSError:
+                    pass
+                try:
+                    child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
 
     def _start_worker(self, port: int) -> subprocess.Popen[Any]:
         return subprocess.Popen(  # nosec B603
