@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.25** — `SessionMiddleware`・`TokenSigner`・`PasswordHasher` の厳格な正準 base64url 検証
+> （非 base64 文字・`=` パディング・末尾余剰ビット改変の拒否と scrypt パラメータ正準化）、
+> multipart パートの重複 `Content-Transfer-Encoding` / `Content-Type` 400 拒否、
+> `CORSMiddleware`/`SecurityHeadersMiddleware`/`TrustedHostMiddleware`/`CSRFProtection`/
+> `@middleware` の初期化時バリデーションを改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.24** — `Response`/`set_data`/`Request`/`receive_body`/`wsgi_view`/`asgi_view`/
 > `TestClient`/`ASGITestWebSocket` での非 bytes-like 入力（`bytes(int)` による NUL バイト確保）
 > および `set_cookie`/`delete_cookie` 非文字列引数拒否、WSGI/ASGI/`TestClient` の `FileResponse`

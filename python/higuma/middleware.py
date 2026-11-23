@@ -14,7 +14,22 @@ NextHandler = Callable[[Request], ResponseValue]
 def _string_tuple(values: Iterable[str], name: str) -> tuple[str, ...]:
     if isinstance(values, (str, bytes, bytearray)):
         raise TypeError(f"{name} must be an iterable of strings, not one string")
-    return tuple(values)
+    result: list[str] = []
+    for item in values:
+        if not isinstance(item, str):
+            raise TypeError(f"{name} must contain strings")
+        result.append(item)
+    return tuple(result)
+
+
+def _validate_header_value_text(value: str | None, name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string or None")
+    if "\r" in value or "\n" in value or "\x00" in value:
+        raise ValueError(f"invalid header value for {name}")
+    return value
 
 
 def _normalize_host_pattern(pattern: str) -> str:
@@ -48,6 +63,16 @@ class CORSMiddleware:
         )
         self.allow_headers = _string_tuple(allow_headers, "allow_headers")
         self.expose_headers = _string_tuple(expose_headers, "expose_headers")
+        for label, group in (
+            ("allow_origins", self.allow_origins),
+            ("allow_methods", self.allow_methods),
+            ("allow_headers", self.allow_headers),
+            ("expose_headers", self.expose_headers),
+        ):
+            for entry in group:
+                if not entry.strip():
+                    raise ValueError(f"{label} entries must not be empty")
+                _validate_header_value_text(entry, label)
         self.allow_credentials = allow_credentials
         if not isinstance(max_age, int) or isinstance(max_age, bool) or max_age < 0:
             raise ValueError("max_age must be a non-negative integer")
@@ -114,11 +139,17 @@ class SecurityHeadersMiddleware:
         permissions_policy: str | None = "camera=(), microphone=(), geolocation=()",
         strict_transport_security: str | None = None,
     ) -> None:
-        self.content_security_policy = content_security_policy
-        self.frame_options = frame_options
-        self.referrer_policy = referrer_policy
-        self.permissions_policy = permissions_policy
-        self.strict_transport_security = strict_transport_security
+        self.content_security_policy = _validate_header_value_text(
+            content_security_policy, "content_security_policy"
+        )
+        self.frame_options = _validate_header_value_text(frame_options, "frame_options")
+        self.referrer_policy = _validate_header_value_text(referrer_policy, "referrer_policy")
+        self.permissions_policy = _validate_header_value_text(
+            permissions_policy, "permissions_policy"
+        )
+        self.strict_transport_security = _validate_header_value_text(
+            strict_transport_security, "strict_transport_security"
+        )
 
     def __call__(self, request: Request, call_next: NextHandler) -> Response:
         response = make_response(call_next(request))
@@ -142,9 +173,12 @@ class SecurityHeadersMiddleware:
 
 class TrustedHostMiddleware:
     def __init__(self, allowed_hosts: Iterable[str]) -> None:
-        self.allowed_hosts = tuple(
+        patterns = tuple(
             _normalize_host_pattern(host) for host in _string_tuple(allowed_hosts, "allowed_hosts")
         )
+        if any(not pattern for pattern in patterns):
+            raise ValueError("allowed_hosts entries must not be empty")
+        self.allowed_hosts = patterns
 
     def __call__(self, request: Request, call_next: NextHandler) -> ResponseValue:
         raw_host = str(request.headers.get("host", "")).lower()
@@ -238,4 +272,6 @@ def _add_vary(response: Response, value: str) -> None:
 def middleware(
     func: Callable[[Request, NextHandler], ResponseValue],
 ) -> Callable[[Request, NextHandler], ResponseValue]:
+    if not callable(func):
+        raise TypeError("middleware must be callable")
     return func

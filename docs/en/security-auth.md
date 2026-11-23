@@ -51,7 +51,7 @@ app.add_middleware(
 ```
 
 The cookie is signed, not encrypted. Do not store passwords, tokens, or
-personal data in it. Modified, malformed, and expired cookies become empty
+personal data in it. Modified, non-canonical base64url, malformed, and expired cookies become empty
 sessions. The serialized cookie is limited to 4093 bytes.
 
 A browser session with `session.permanent = False` has no `Max-Age`; only a

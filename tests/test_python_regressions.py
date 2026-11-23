@@ -2130,6 +2130,136 @@ class PythonCoreRegressionTests(unittest.TestCase):
         asyncio.run(check_fast_path_handoff_failure())
         self.assertEqual(cleaned, ["closed", "bg"])
 
+    def test_canonical_base64url_multipart_headers_and_middleware_validation(self) -> None:
+        from higuma import (
+            CORSMiddleware,
+            CSRFProtection,
+            Higuma,
+            PasswordHasher,
+            SecurityHeadersMiddleware,
+            Session,
+            SessionMiddleware,
+            TokenSigner,
+            TrustedHostMiddleware,
+            middleware,
+        )
+
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+        def flip_unused_bits(b64url_43: str) -> str:
+            # 32-byte HMAC-SHA256 digest in 43 base64url chars has 2 unused LSBs in the last char.
+            index = alphabet.index(b64url_43[-1])
+            return b64url_43[:-1] + alphabet[index ^ 1]
+
+        secret = "canonical-security-secret-with-at-least-32-bytes"
+
+        # SessionMiddleware must reject non-base64 junk, '=' padding, and trailing-bit malleability
+        sess_mw = SessionMiddleware(secret)
+        raw_cookie = sess_mw._dump(Session({"user": "bear"}))
+        self.assertEqual(sess_mw._load(raw_cookie)["user"], "bear")
+        self.assertEqual(dict(sess_mw._load(raw_cookie + "!!!")), {})
+        self.assertEqual(dict(sess_mw._load(raw_cookie + "=")), {})
+        payload_part, sig_part = raw_cookie.split(".", 1)
+        self.assertEqual(dict(sess_mw._load(f"{payload_part}.{flip_unused_bits(sig_part)}")), {})
+        self.assertEqual(dict(sess_mw._load(f"extra.{raw_cookie}")), {})
+
+        # TokenSigner must reject '=' padding, extra dots, and trailing-bit malleability
+        signer = TokenSigner(secret)
+        token = signer.dumps({"ok": True})
+        self.assertEqual(signer.loads(token), {"ok": True})
+        tok_payload, tok_sig = token.split(".", 1)
+        for mutated in (
+            token + "=",
+            token + "!!!",
+            f"{tok_payload}.{flip_unused_bits(tok_sig)}",
+            f"extra.{token}",
+        ):
+            with self.assertRaises(ValueError):
+                signer.loads(mutated)
+
+        # PasswordHasher must reject non-canonical scrypt params and non-canonical base64url
+        hasher = PasswordHasher(n=2**10)
+        encoded = hasher.hash("secret-password")
+        self.assertTrue(hasher.verify("secret-password", encoded))
+        parts = encoded.split("$")
+        for mutated_hash in (
+            "$".join([parts[0], parts[1], f"+{parts[2]}", *parts[3:]]),
+            "$".join([parts[0], parts[1], f"0{parts[2]}", *parts[3:]]),
+            "$".join([parts[0], parts[1], "1_024", *parts[3:]]),
+            "$".join([*parts[:-1], parts[-1] + "="]),
+            "$".join([*parts[:-1], flip_unused_bits(parts[-1])]),
+        ):
+            self.assertFalse(hasher.verify("secret-password", mutated_hash))
+            self.assertTrue(hasher.needs_rehash(mutated_hash))
+
+        # CSRFProtection safe_methods item validation
+        with self.assertRaises(TypeError):
+            CSRFProtection(safe_methods=(123,))  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            CSRFProtection(safe_methods=(" ",))
+
+        # Multipart duplicate Content-Transfer-Encoding and duplicate Content-Type rejection
+        mp_app = Higuma(__name__, static_folder=None)
+
+        @mp_app.post("/mp")
+        def mp(req: Any) -> dict[str, Any]:
+            return {"form": req.form.to_dict()}
+
+        dup_cte = (
+            b"--bnd\r\n"
+            b'Content-Disposition: form-data; name="a"\r\n'
+            b"Content-Transfer-Encoding: binary\r\n"
+            b"Content-Transfer-Encoding: base64\r\n\r\n"
+            b"YWJj\r\n"
+            b"--bnd--\r\n"
+        )
+        self.assertEqual(
+            mp_app.test_client()
+            .post(
+                "/mp",
+                data=dup_cte,
+                content_type="multipart/form-data; boundary=bnd",
+            )
+            .status_code,
+            400,
+        )
+        dup_ct = (
+            b"--bnd\r\n"
+            b'Content-Disposition: form-data; name="a"\r\n'
+            b"Content-Type: text/plain\r\n"
+            b"Content-Type: text/html\r\n\r\n"
+            b"hello\r\n"
+            b"--bnd--\r\n"
+        )
+        self.assertEqual(
+            mp_app.test_client()
+            .post(
+                "/mp",
+                data=dup_ct,
+                content_type="multipart/form-data; boundary=bnd",
+            )
+            .status_code,
+            400,
+        )
+
+        # Middleware constructor & decorator validation
+        with self.assertRaises(TypeError):
+            CORSMiddleware(allow_origins=[123])  # type: ignore[list-item]
+        with self.assertRaises(ValueError):
+            CORSMiddleware(allow_origins=["https://example.com\r\nX-Bad: 1"])
+        with self.assertRaises(ValueError):
+            CORSMiddleware(allow_methods=[" "])
+        with self.assertRaises(TypeError):
+            SecurityHeadersMiddleware(content_security_policy=123)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            SecurityHeadersMiddleware(frame_options="DENY\r\nEvil: 1")
+        with self.assertRaises(TypeError):
+            TrustedHostMiddleware([123])  # type: ignore[list-item]
+        with self.assertRaises(ValueError):
+            TrustedHostMiddleware([" "])
+        with self.assertRaises(TypeError):
+            middleware("not-callable")  # type: ignore[arg-type]
+
 
 if __name__ == "__main__":
     unittest.main()

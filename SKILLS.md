@@ -418,6 +418,11 @@ supervisor, streaming, and proxy changes.
   validate `FileResponse` runtime regular-file and range bounds before sending headers (matching
   native Rust), and the ASGI async fast path closes streams and runs background tasks if worker
   handoff fails before `respond()`.
+  In 0.11.25+, `SessionMiddleware`, `TokenSigner`, and `PasswordHasher` enforce canonical
+  unpadded base64url decoding (and canonical ASCII scrypt parameters) against token/signature
+  malleability, multipart parsing rejects duplicate `Content-Transfer-Encoding`/`Content-Type`
+  part headers with 400, and built-in security/CORS/host middleware constructors validate
+  string/header arguments eagerly.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

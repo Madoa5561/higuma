@@ -91,7 +91,7 @@ class SessionMiddleware:
         max_age: int = 14 * 24 * 60 * 60,
         secure: bool = False,
         httponly: bool = True,
-        samesite: str = "Lax",
+        samesite: str | None = "Lax",
     ) -> None:
         self.secret_key = _validate_secret_key(secret_key)
         if (
@@ -173,9 +173,9 @@ class SessionMiddleware:
         return value
 
     def _load(self, value: str | None) -> Session:
-        if not value or len(value) > 16 * 1024 or "." not in value:
+        if not value or len(value) > 16 * 1024 or value.count(".") != 1:
             return Session()
-        encoded, encoded_signature = value.rsplit(".", 1)
+        encoded, encoded_signature = value.split(".", 1)
         try:
             expected = hmac.new(
                 self.secret_key,
@@ -210,5 +210,10 @@ class SessionMiddleware:
 
 
 def _decode_base64(value: str) -> bytes:
+    if not value or not value.isascii() or "=" in value:
+        raise ValueError("invalid base64url value")
     padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(value + padding)
+    decoded = base64.b64decode(value + padding, altchars=b"-_", validate=True)
+    if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != value:
+        raise ValueError("non-canonical base64url value")
+    return decoded

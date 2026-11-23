@@ -252,7 +252,9 @@ def _exercise_flask_helpers() -> None:
     from higuma import PasswordHasher
 
     hasher = PasswordHasher(n=2**15)
-    assert hasher.verify("smoke-pw", hasher.hash("smoke-pw"))
+    encoded_pw = hasher.hash("smoke-pw")
+    assert hasher.verify("smoke-pw", encoded_pw)
+    assert not hasher.verify("smoke-pw", encoded_pw + "=")
     with app.test_request_context(
         "/smoke/read",
         headers={"cookie": "filter[page]=1; path=/admin; higuma_session=token"},

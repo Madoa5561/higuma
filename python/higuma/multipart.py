@@ -105,13 +105,15 @@ def parse_multipart(request: Any) -> tuple[list[Any], list[Any]]:
             part = parser.parsebytes(header_bytes.getvalue() + b"\r\n\r\n")
             if part.defects or len(part.get_all("Content-Disposition", [])) != 1:
                 raise BadRequest(detail="invalid multipart part headers")
+            if len(part.get_all("Content-Type", [])) > 1:
+                raise BadRequest(detail="duplicate multipart Content-Type")
             if part.get_content_disposition() != "form-data":
                 raise BadRequest(detail="multipart parts must use form-data")
-            if part.get("Content-Transfer-Encoding", "binary").strip().lower() not in {
-                "binary",
-                "8bit",
-                "7bit",
-            }:
+            transfer_encodings = part.get_all("Content-Transfer-Encoding", [])
+            if len(transfer_encodings) > 1 or any(
+                str(encoding).strip().lower() not in {"binary", "8bit", "7bit"}
+                for encoding in transfer_encodings
+            ):
                 raise BadRequest(detail="encoded multipart transfer is not supported")
             raw_name = part.get_param("name", header="content-disposition")
             name = (

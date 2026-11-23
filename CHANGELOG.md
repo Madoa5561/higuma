@@ -7,6 +7,24 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.25] - 2026-11-23
+
+### Fixed
+
+- Enforce canonical unpadded base64url decoding across `SessionMiddleware._load()`,
+  `TokenSigner.loads()`, and `PasswordHasher.verify()` / `needs_rehash()` (`sessions.py`,
+  `security.py`), rejecting non-base64 junk characters, explicit `"="` padding, extra `.`
+  separators, and non-zero unused trailing padding bits (preventing token/signature/hash
+  malleability). Also require strict canonical ASCII decimal parameters in `PasswordHasher`
+  and validate `CSRFProtection(safe_methods=...)` elements eagerly.
+- Reject multipart parts with duplicate `Content-Transfer-Encoding` or duplicate `Content-Type`
+  headers with `400 BadRequest` (`multipart.py`), closing a bypass where only the first
+  `Content-Transfer-Encoding` header was inspected.
+- Validate middleware constructor options and decorator callability eagerly (`middleware.py`):
+  require string elements in `_string_tuple()` (CORS, TrustedHost, ProxyHeaders), reject
+  empty/control-character values in `CORSMiddleware` and `SecurityHeadersMiddleware`, reject
+  empty patterns in `TrustedHostMiddleware`, and require a callable in `@middleware`.
+
 ## [0.11.24] - 2026-11-23
 
 ### Fixed

@@ -34,7 +34,7 @@ app.add_middleware(
 ```
 
 cookieは署名されますが暗号化されません。password、token、個人情報をsessionへ保存しないで
-ください。改変、不正形式、期限切れcookieは空sessionとして扱われます。serialized cookieは
+ください。改変、非正準base64url、不正形式、期限切れcookieは空sessionとして扱われます。serialized cookieは
 4093 bytesまでです。
 
 `session.permanent = False`のbrowser sessionは`Max-Age`を付けず、`True`のsessionだけ

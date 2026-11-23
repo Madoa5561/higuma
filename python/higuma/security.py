@@ -102,7 +102,18 @@ class PasswordHasher:
             marker, algorithm, n, r, p, salt, expected = encoded.split("$")
             if marker != "higuma" or algorithm != "scrypt":
                 return False
+            if not (
+                n.isascii()
+                and n.isdigit()
+                and r.isascii()
+                and r.isdigit()
+                and p.isascii()
+                and p.isdigit()
+            ):
+                return False
             work_factor, block_size, parallelism = int(n), int(r), int(p)
+            if str(work_factor) != n or str(block_size) != r or str(parallelism) != p:
+                return False
             required_memory = _scrypt_memory(work_factor, block_size, parallelism)
             if (
                 work_factor < 2**10
@@ -138,9 +149,9 @@ class PasswordHasher:
             return (
                 marker != "higuma"
                 or algorithm != "scrypt"
-                or int(n) != self.n
-                or int(r) != self.r
-                or int(p) != self.p
+                or n != str(self.n)
+                or r != str(self.r)
+                or p != str(self.p)
                 or len(_unb64(salt)) != self.salt_bytes
                 or len(_unb64(digest)) != self.key_bytes
             )
@@ -178,9 +189,11 @@ class TokenSigner:
             raise ValueError("invalid token")  # noqa: TRY004 - loads raises ValueError for bad tokens
         if len(token) > 64 * 1024:
             raise ValueError("token is too large")
+        if token.count(".") != 1:
+            raise ValueError("invalid token")
         try:
-            encoded, signature = token.rsplit(".", 1)
-            expected = hmac.new(self.key, encoded.encode(), hashlib.sha256).digest()
+            encoded, signature = token.split(".", 1)
+            expected = hmac.new(self.key, encoded.encode("ascii"), hashlib.sha256).digest()
             if not hmac.compare_digest(expected, _unb64(signature)):
                 raise ValueError("invalid token signature")
             payload = json.loads(_unb64(encoded))
@@ -216,9 +229,17 @@ class CSRFProtection:
             raise TypeError(
                 "safe_methods must be an iterable of HTTP method strings, not a single string"
             )
+        normalized_methods: list[str] = []
+        for method in safe_methods:
+            if not isinstance(method, str):
+                raise TypeError("safe_methods must contain strings")
+            cleaned = method.strip().upper()
+            if not cleaned:
+                raise ValueError("safe_methods entries must not be empty")
+            normalized_methods.append(cleaned)
         self.header_name = header_name
         self.field_name = field_name
-        self.safe_methods = tuple(method.upper() for method in safe_methods)
+        self.safe_methods = tuple(normalized_methods)
 
     def __call__(
         self,
@@ -370,11 +391,16 @@ def _b64(value: bytes) -> str:
 
 
 def _unb64(value: str) -> bytes:
-    return base64.b64decode(
+    if not value.isascii() or "=" in value:
+        raise ValueError("invalid base64url value")
+    decoded = base64.b64decode(
         value + "=" * (-len(value) % 4),
         altchars=b"-_",
         validate=True,
     )
+    if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != value:
+        raise ValueError("non-canonical base64url value")
+    return decoded
 
 
 def _validate_secret_key(secret_key: str | bytes) -> bytes:
