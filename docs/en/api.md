@@ -89,9 +89,9 @@ OpenAPI route options are `summary`, `description`, `tags`, `responses`, `reques
 `response_model`, `status_code`, `operation_id`, `include_in_schema`, and `openapi_extra`.
 `response_model` also validates and converts output at runtime while filtering undeclared fields.
 `status_code` applies to plain return values, `Response` objects, and `(body, headers)` 2-tuples
-(explicit status tuples take precedence). `errorhandler`, `register_error_handler`, `middleware`,
-`add_middleware`, and `register_blueprint` validate status codes, exception classes, callables,
-and `Blueprint` instances eagerly at registration time.
+(explicit status tuples take precedence). `errorhandler`, `register_error_handler`, `middleware`, `add_middleware`, `register_blueprint`,
+and route, hook, and mount registration APIs validate status codes, exception classes, callables,
+non-empty `endpoint`/`name` strings, and `Blueprint` instances eagerly at registration time.
 
 `current_app` and `request` are context-local proxies to the active application and request.
 Access outside a request context raises `RuntimeError`. Use `app.config` for configuration and

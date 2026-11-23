@@ -230,6 +230,12 @@ def _exercise_flask_helpers() -> None:
         return {"amount": amount + Decimal("0.5")}
 
     assert client.get("/decimal-smoke?amount=2.25").json == {"amount": "2.75"}
+    try:
+        app.before_request("not-callable")  # type: ignore[arg-type]
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("before_request must reject non-callables")
     multi = app.make_response(("ok", 200, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]))
     assert [v for k, v in multi.header_items if k == "set-cookie"] == ["a=1", "b=2"]
     from higuma import PasswordHasher

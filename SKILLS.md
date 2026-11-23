@@ -406,6 +406,9 @@ supervisor, streaming, and proxy changes.
   and omits `content` on `205`, `AnonymousUser` implements `__eq__`/`__hash__`, `AuthManager`
   validates `user_loader` callability, and `HealthChecks`/`Observability`/`Model.__tablename__`
   validate inputs strictly upfront.
+  In 0.11.22+, `Higuma` and `Blueprint` validate `import_name`, `lifespan`, route/WebSocket
+  callables and explicit empty `endpoint=""`, all lifecycle/request/URL hook callables, and
+  mount `name` arguments eagerly at registration time.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

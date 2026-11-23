@@ -67,8 +67,9 @@ routeのOpenAPI optionは`summary`、`description`、`tags`、`responses`、
 `include_in_schema`、`openapi_extra`です。`response_model`は実行時にも出力を検証・変換し、
 宣言外fieldを除外します。`status_code`は通常の戻り値や`Response`だけでなく
 `(body, headers)` 2-tupleにも適用されます（明示的status付きtupleが優先）。
-`errorhandler`／`register_error_handler`／`middleware`／`add_middleware`／`register_blueprint`は
-不正なstatus code・非例外クラス・非callable・非`Blueprint`引数を登録時に検証します。
+`errorhandler`／`register_error_handler`／`middleware`／`add_middleware`／`register_blueprint`や
+各route・hook・mount登録APIは、不正なstatus code・非例外クラス・非callable・空の`endpoint`/`name`・
+非`Blueprint`引数を登録時に検証します。
 
 `current_app`は処理中の`Higuma`、`request`は処理中の`Request`へのcontext-local proxyです。
 request context外で参照すると`RuntimeError`になります。`app.config`は設定dictionary、

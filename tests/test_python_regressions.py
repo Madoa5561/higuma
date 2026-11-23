@@ -1772,6 +1772,83 @@ class PythonCoreRegressionTests(unittest.TestCase):
                 __tablename__ = "users; DROP TABLE users"
                 name = String()
 
+    def test_app_and_blueprint_init_endpoint_hook_and_mount_validation(self) -> None:
+        import tempfile
+
+        from higuma import Blueprint
+
+        with self.assertRaises(ValueError):
+            Higuma("")
+        with self.assertRaises(ValueError):
+            Higuma(123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            Higuma(__name__, lifespan="not-callable")  # type: ignore[arg-type]
+
+        app = Higuma(__name__, static_folder=None)
+        bp = Blueprint("api", __name__)
+
+        # Route / WebSocket endpoint and callable validation
+        with self.assertRaises(TypeError):
+            app.add_url_rule("/bad", endpoint="bad", view_func="not-callable")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            app.add_url_rule("/bad", endpoint="", view_func=lambda: "ok")
+        with self.assertRaises(ValueError):
+            app.add_url_rule("/bad", endpoint=123, view_func=lambda: "ok")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            app.get("/bad", endpoint="")(lambda: "ok")
+        with self.assertRaises(TypeError):
+            app.get("/bad")("not-callable")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            app.websocket("/bad-ws", endpoint="")(lambda ws: None)
+        with self.assertRaises(TypeError):
+            app.websocket("/bad-ws")("not-callable")  # type: ignore[arg-type]
+
+        with self.assertRaises(ValueError):
+            bp.get("/bad", endpoint="")(lambda: "ok")
+        with self.assertRaises(ValueError):
+            bp.get("/bad", endpoint=123)(lambda: "ok")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            bp.get("/bad")("not-callable")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            bp.websocket("/bad-ws", endpoint="")(lambda ws: None)
+        with self.assertRaises(TypeError):
+            bp.websocket("/bad-ws")("not-callable")  # type: ignore[arg-type]
+
+        # All app and blueprint hook decorators reject non-callables upfront
+        for register in (
+            app.before_request,
+            app.after_request,
+            app.teardown_request,
+            app.teardown_appcontext,
+            app.context_processor,
+            app.on_startup,
+            app.on_shutdown,
+            app.url_value_preprocessor,
+            app.url_defaults,
+            bp.before_request,
+            bp.after_request,
+            bp.teardown_request,
+            bp.context_processor,
+            bp.url_value_preprocessor,
+            bp.url_defaults,
+            bp.before_app_request,
+            bp.after_app_request,
+            bp.teardown_app_request,
+            bp.app_context_processor,
+            bp.app_url_value_preprocessor,
+            bp.app_url_defaults,
+        ):
+            with self.assertRaises(TypeError):
+                register("not-callable")  # type: ignore[arg-type]
+
+        # Mount names must be non-empty strings
+        with self.assertRaises(ValueError):
+            app.mount_wsgi("/sub", lambda env, sr: [b""], name="")
+        with self.assertRaises(ValueError):
+            app.mount_asgi("/sub", lambda s, r, sd: None, name=123)  # type: ignore[arg-type]
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
+            app.mount_static("/files", tmp, name="")
+
 
 if __name__ == "__main__":
     unittest.main()

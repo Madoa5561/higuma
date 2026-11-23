@@ -7,6 +7,19 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.22] - 2026-11-23
+
+### Fixed
+
+- Harden `Higuma` and `Blueprint` constructor, route, hook, and mount registration validation
+  (`app.py`, `blueprint.py`): require non-empty string `import_name` and callable `lifespan`
+  in `Higuma.__init__()`; require callable handlers and non-empty string `endpoint` names
+  (preserving explicit empty `endpoint=""` as an error instead of silently falling back to
+  `__name__`) across `route()`, `add_url_rule()`, and `websocket()`; validate callability
+  upfront in all `Higuma` and `Blueprint` lifecycle/request/URL hook decorators; and require
+  non-empty string `name` in `mount_static()`, `mount_spa()`, `mount_wsgi()`, and
+  `mount_asgi()`.
+
 ## [0.11.21] - 2026-11-23
 
 ### Fixed

@@ -26,6 +26,12 @@ class _DeferredWebSocket:
     options: dict[str, Any]
 
 
+def _require_callable(func: Any, label: str) -> Any:
+    if not callable(func):
+        raise TypeError(f"{label} must be callable")
+    return func
+
+
 class Blueprint:
     def __init__(
         self,
@@ -75,35 +81,37 @@ class Blueprint:
         self._app_error_handlers: dict[int | type[BaseException], Callable[..., Any]] = {}
 
     def before_app_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._app_before_request.append(func)
+        self._app_before_request.append(_require_callable(func, "before_app_request hook"))
         return func
 
     def after_app_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._app_after_request.append(func)
+        self._app_after_request.append(_require_callable(func, "after_app_request hook"))
         return func
 
     def teardown_app_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._app_teardown_request.append(func)
+        self._app_teardown_request.append(_require_callable(func, "teardown_app_request hook"))
         return func
 
     def app_context_processor(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._app_context_processors.append(func)
+        self._app_context_processors.append(_require_callable(func, "app_context_processor"))
         return func
 
     def url_value_preprocessor(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._url_value_preprocessors.append(func)
+        self._url_value_preprocessors.append(_require_callable(func, "url_value_preprocessor"))
         return func
 
     def url_defaults(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._url_defaults.append(func)
+        self._url_defaults.append(_require_callable(func, "url_defaults hook"))
         return func
 
     def app_url_value_preprocessor(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._app_url_value_preprocessors.append(func)
+        self._app_url_value_preprocessors.append(
+            _require_callable(func, "app_url_value_preprocessor")
+        )
         return func
 
     def app_url_defaults(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._app_url_defaults.append(func)
+        self._app_url_defaults.append(_require_callable(func, "app_url_defaults hook"))
         return func
 
     def app_errorhandler(self, code_or_exception: int | type[BaseException]):
@@ -131,21 +139,21 @@ class Blueprint:
         self._children.append((blueprint, {"url_prefix": url_prefix, "name": name}))
 
     def before_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._before_request.append(func)
+        self._before_request.append(_require_callable(func, "before_request hook"))
         return func
 
     def after_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._after_request.append(func)
+        self._after_request.append(_require_callable(func, "after_request hook"))
         return func
 
     def teardown_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._teardown_request.append(func)
+        self._teardown_request.append(_require_callable(func, "teardown_request hook"))
         return func
 
     def context_processor(
         self, func: Callable[[], Mapping[str, Any]]
     ) -> Callable[[], Mapping[str, Any]]:
-        self._context_processors.append(func)
+        self._context_processors.append(_require_callable(func, "context_processor"))
         return func
 
     def register_error_handler(
@@ -190,8 +198,11 @@ class Blueprint:
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
             import inspect
 
-            if "." in (endpoint or view_func.__name__):
-                raise ValueError("blueprint endpoints cannot contain a dot")
+            if not callable(view_func):
+                raise TypeError("view_func must be callable")
+            route_endpoint = view_func.__name__ if endpoint is None else endpoint
+            if not isinstance(route_endpoint, str) or not route_endpoint or "." in route_endpoint:
+                raise ValueError("blueprint endpoints must be nonempty strings without a dot")
             if explicit_methods is None:
                 view_methods = getattr(view_func, "methods", None) or ("GET",)
                 if isinstance(view_methods, (str, bytes, bytearray)):
@@ -214,7 +225,7 @@ class Blueprint:
                 _DeferredRoute(
                     rule=rule,
                     methods=method_tuple,
-                    endpoint=endpoint or view_func.__name__,
+                    endpoint=route_endpoint,
                     view_func=view_func,
                     options=options,
                 )
@@ -251,12 +262,15 @@ class Blueprint:
             )
 
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
-            if "." in (endpoint or view_func.__name__):
-                raise ValueError("blueprint endpoints cannot contain a dot")
+            if not callable(view_func):
+                raise TypeError("WebSocket handler must be callable")
+            route_endpoint = view_func.__name__ if endpoint is None else endpoint
+            if not isinstance(route_endpoint, str) or not route_endpoint or "." in route_endpoint:
+                raise ValueError("blueprint endpoints must be nonempty strings without a dot")
             self._websockets.append(
                 _DeferredWebSocket(
                     rule=rule,
-                    endpoint=endpoint or view_func.__name__,
+                    endpoint=route_endpoint,
                     view_func=view_func,
                     options=options,
                 )

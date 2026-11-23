@@ -34,6 +34,10 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.22** — `Higuma.__init__()`（`import_name`・`lifespan`）、`route()`/`add_url_rule()`/
+> `websocket()`（callable・明示的空 `endpoint=""` 拒否）、全ライフサイクル／フック登録デコレータ、
+> および `mount_*()`（非空文字列 `name`）の登録時バリデーションを徹底。必須 Python 依存は 0 のままです。
+>
 > **0.11.21** — `Decimal` の入力パラメータ・モデル変換（有限値・数値制約対応）および OpenAPI
 > `format: "decimal"` 生成、`tuple[()]` Python 3.10 互換、OpenAPI の整数ステータスキー正規化と
 > `205` `content` 省略、`AnonymousUser` の `__eq__`/`__hash__` と `AuthManager(user_loader=...)`

@@ -63,7 +63,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.21"
+__version__ = "0.11.22"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -97,6 +97,10 @@ class Higuma:
         docs_url: str | None = "/docs",
         lifespan: Callable[[Higuma], Any] | None = None,
     ) -> None:
+        if not isinstance(import_name, str) or not import_name:
+            raise ValueError("import_name must be a non-empty string")
+        if lifespan is not None and not callable(lifespan):
+            raise TypeError("lifespan must be callable")
         if (
             isinstance(max_content_length, bool)
             or not isinstance(max_content_length, int)
@@ -225,6 +229,8 @@ class Higuma:
         openapi_extra: Mapping[str, Any] | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
+            if not callable(view_func):
+                raise TypeError("view_func must be callable")
             frame = inspect.currentframe()
             try:
                 cache_parameter_hints(
@@ -236,7 +242,7 @@ class Higuma:
                 del frame
             self.add_url_rule(
                 rule,
-                endpoint=endpoint or view_func.__name__,
+                endpoint=view_func.__name__ if endpoint is None else endpoint,
                 view_func=view_func,
                 methods=methods,
                 summary=summary,
@@ -287,6 +293,10 @@ class Higuma:
         include_in_schema: bool = True,
         openapi_extra: Mapping[str, Any] | None = None,
     ) -> None:
+        if not callable(view_func):
+            raise TypeError("view_func must be callable")
+        if not isinstance(endpoint, str) or not endpoint:
+            raise ValueError("endpoint must be a non-empty string")
         if isinstance(methods, (str, bytes, bytearray)):
             raise TypeError(
                 "methods must be an iterable of HTTP method strings, not a single string"
@@ -360,8 +370,12 @@ class Higuma:
             )
 
         def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
+            if not callable(handler):
+                raise TypeError("WebSocket handler must be callable")
             origins = tuple(allowed_origins or ())
-            route_endpoint = endpoint or handler.__name__
+            route_endpoint = handler.__name__ if endpoint is None else endpoint
+            if not isinstance(route_endpoint, str) or not route_endpoint:
+                raise ValueError("endpoint must be a non-empty string")
             if route_endpoint in self._websocket_rules:
                 raise ValueError(f"WebSocket endpoint {route_endpoint!r} is already registered")
             normalized_rule = normalize_rule(rule)
@@ -533,15 +547,15 @@ class Higuma:
         ]
 
     def before_request(self, func: Callable[..., ResponseValue | None]):
-        self._before_request.append(func)
+        self._before_request.append(_require_callable(func, "before_request hook"))
         return func
 
     def url_value_preprocessor(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._url_value_preprocessors.append(func)
+        self._url_value_preprocessors.append(_require_callable(func, "url_value_preprocessor"))
         return func
 
     def url_defaults(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._url_defaults.append(func)
+        self._url_defaults.append(_require_callable(func, "url_defaults hook"))
         return func
 
     def inject_url_defaults(self, endpoint: str, values: dict[str, Any]) -> None:
@@ -551,7 +565,7 @@ class Higuma:
                 _call_url_hook(callback, endpoint, values)
 
     def after_request(self, func: Callable[..., ResponseValue]):
-        self._after_request.append(func)
+        self._after_request.append(_require_callable(func, "after_request hook"))
         return func
 
     def middleware(self, func: Middleware) -> Middleware:
@@ -587,7 +601,7 @@ class Higuma:
     def context_processor(
         self, func: Callable[[], Mapping[str, Any]]
     ) -> Callable[[], Mapping[str, Any]]:
-        self._context_processors.append(func)
+        self._context_processors.append(_require_callable(func, "context_processor"))
         return func
 
     def register_error_handler(
@@ -599,11 +613,11 @@ class Higuma:
         self._error_handlers[key] = func
 
     def teardown_appcontext(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._teardown_appcontext.append(func)
+        self._teardown_appcontext.append(_require_callable(func, "teardown_appcontext hook"))
         return func
 
     def teardown_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._teardown_request.append(func)
+        self._teardown_request.append(_require_callable(func, "teardown_request hook"))
         return func
 
     def _do_teardown_request(self, error: BaseException | None) -> None:
@@ -681,11 +695,11 @@ class Higuma:
                 signals.appcontext_popped.send(self)
 
     def on_startup(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._startup_handlers.append(func)
+        self._startup_handlers.append(_require_callable(func, "startup handler"))
         return func
 
     def on_shutdown(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        self._shutdown_handlers.append(func)
+        self._shutdown_handlers.append(_require_callable(func, "shutdown handler"))
         return func
 
     @contextmanager
@@ -917,6 +931,8 @@ class Higuma:
         return files
 
     def _mount_files(self, prefix: str, files: StaticFiles, name: str) -> None:
+        if not isinstance(name, str) or not name:
+            raise ValueError("mount name must be a non-empty string")
         prefix = _prefixes((prefix,))[0]
         endpoints = (f"{name}_root", f"{name}_path")
         rules = (prefix, f"{prefix.rstrip('/')}/<path:filename>")
@@ -970,6 +986,8 @@ class Higuma:
         view_func: Callable[..., Any],
         name: str,
     ) -> None:
+        if not isinstance(name, str) or not name:
+            raise ValueError("mount name must be a non-empty string")
         normalized = normalize_rule(prefix)
         methods = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
         endpoints = (f"{name}_root", f"{name}_path")
@@ -1635,6 +1653,12 @@ class Higuma:
         if matched:
             return matched[1], matched[2], methods
         return None, {}, methods
+
+
+def _require_callable(func: Any, label: str) -> Any:
+    if not callable(func):
+        raise TypeError(f"{label} must be callable")
+    return func
 
 
 def _call_url_hook(callback: Callable[..., Any], endpoint: str | None, values: Any) -> None:
