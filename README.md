@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.28** — 認証デコレータの callable 検証、`AuthManager` の `session_middleware`/
+> `session_options` 検証、`OAuth2Client` の URL ホスト・ポート（`1..65535`）・制御文字・
+> `extra_authorize_params` 検証、および `Blueprint`/`Higuma` での `import_name`/`url_prefix`/
+> `rule`/`methods`/`tags`/`allowed_origins` 要素の登録時バリデーションを改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.27** — `Supervisor.stop()` の強制終了（`kill()`）後プロセス回収と終了競合耐性、
 > 組み込み SQLite ORM（クローズ済み `:memory:` 接続の回復・フィールド未定義モデルへの
 > `Query` 保護・空白/NUL パス拒否）、`View.as_view()`（`methods` 要素と decorator 戻り値検証）

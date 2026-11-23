@@ -98,6 +98,10 @@ class AuthManager:
             raise ValueError("session_key must be a non-empty string")
         if user_loader is not None and not callable(user_loader):
             raise TypeError("user_loader must be callable")
+        if session_options is not None and not isinstance(session_options, Mapping):
+            raise TypeError("session_options must be a mapping")
+        if not callable(session_middleware):
+            raise TypeError("session_middleware must be callable")
         self.secret_key = secret_key
         self.user_loader = user_loader
         self.session_key = session_key
@@ -209,6 +213,8 @@ def _check_claims(attribute: str, required: tuple[str, ...], *, match_all: bool)
 
 
 def _wrap_auth(func: Callable[..., Any], guard: Callable[[], None]) -> Callable[..., Any]:
+    if not callable(func):
+        raise TypeError("auth-decorated view must be callable")
     if inspect.iscoroutinefunction(func):
 
         @wraps(func)
@@ -293,16 +299,15 @@ class OAuth2Client:
             ("token_url", token_url),
             ("userinfo_url", userinfo_url),
         ):
-            if not isinstance(url, str):
-                raise ValueError(f"{label} must be an HTTPS URL")  # noqa: TRY004 - uniform URL validation
-            parsed = urlsplit(url)
-            if parsed.scheme != "https" or not parsed.netloc:
-                raise ValueError(f"{label} must be an HTTPS URL")
-        if not isinstance(redirect_uri, str):
-            raise ValueError("redirect_uri must be an HTTP(S) URL")  # noqa: TRY004 - uniform URL validation
-        parsed_redirect = urlsplit(redirect_uri)
-        if parsed_redirect.scheme not in {"http", "https"} or not parsed_redirect.netloc:
-            raise ValueError("redirect_uri must be an HTTP(S) URL")
+            _validate_oauth_url(url, label, allowed_schemes={"https"}, error_label="an HTTPS URL")
+        _validate_oauth_url(
+            redirect_uri,
+            "redirect_uri",
+            allowed_schemes={"http", "https"},
+            error_label="an HTTP(S) URL",
+        )
+        if extra_authorize_params is not None and not isinstance(extra_authorize_params, Mapping):
+            raise TypeError("extra_authorize_params must be a mapping")
         if isinstance(scopes, (str, bytes, bytearray)):
             raise TypeError("scopes must be an iterable of scope strings, not a single string")
         normalized_scopes = tuple(scopes)
@@ -509,6 +514,29 @@ def _require_active_session() -> MutableMapping[str, Any]:
     if active_session is None:
         raise RuntimeError("OAuth2Client requires SessionMiddleware and an active request")
     return active_session
+
+
+def _validate_oauth_url(
+    url: Any,
+    label: str,
+    *,
+    allowed_schemes: set[str],
+    error_label: str,
+) -> None:
+    if not isinstance(url, str) or any(ord(ch) < 32 or ord(ch) == 127 for ch in url):
+        raise ValueError(f"{label} must be {error_label}")
+    parsed = urlsplit(url)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"{label} must be {error_label}") from exc
+    if (
+        parsed.scheme not in allowed_schemes
+        or not parsed.netloc
+        or not parsed.hostname
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        raise ValueError(f"{label} must be {error_label}")
 
 
 def _urlsafe_b64(value: bytes) -> str:

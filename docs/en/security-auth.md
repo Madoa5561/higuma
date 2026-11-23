@@ -239,7 +239,8 @@ conversion from integers or arrays is rejected. Invalid non-ASCII CSRF tokens
 return 403. `TrustedHostMiddleware` also rejects missing hosts, malformed ports,
 and invalid IPv6 syntax. `CORSMiddleware`, `TrustedHostMiddleware`, and
 `ProxyHeadersMiddleware` require sequences of strings (such as tuples or lists) rather than
-bare `str` or `bytes` values to prevent accidental character-by-character splitting. OAuth token and userinfo requests never follow redirects;
+bare `str` or `bytes` values to prevent accidental character-by-character splitting. OAuth token and userinfo requests never follow redirects, and `OAuth2Client` eagerly validates
+endpoint/redirect URL schemes, hostnames, port bounds (1–65535), and absence of control characters;
 configure the provider's final HTTPS URL to avoid forwarding credentials to
 another host or an HTTP endpoint.
 

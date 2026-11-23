@@ -233,6 +233,7 @@ multi-process supervisorのclient IP制約は[デプロイ](deployment.md)を参
 `CORSMiddleware`・`TrustedHostMiddleware`・`ProxyHeadersMiddleware` は設定の誤分割を防ぐため、
 単一の `str` や `bytes` ではなく tuple / list などの文字列 sequence を要求します。
 OAuthのtoken・userinfo HTTPリクエストはリダイレクトを追跡しません。
+`OAuth2Client`は初期化時にエンドポイントURLのHTTPS・ホスト名・ポート範囲（1〜65535）・制御文字の有無も検証します。
 認証情報の別ホストやHTTPへの転送を防ぐため、プロバイダーの最終HTTPS URLを設定してください。
 
 - password、session、OAuth token、secretをlogしない

@@ -447,6 +447,12 @@ def _exercise_developer_apis() -> None:
         return {"ok": True}
 
     assert inspect.iscoroutinefunction(smoke_protected)
+    try:
+        login_required("not-callable")  # type: ignore[arg-type]
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("login_required must reject non-callable target")
 
     try:
         TrustedHostMiddleware("example.com")  # type: ignore[arg-type]

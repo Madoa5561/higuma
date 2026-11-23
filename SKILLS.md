@@ -431,6 +431,11 @@ supervisor, streaming, and proxy changes.
   races, `Database(":memory:")` recovers from externally closed connections, `Query` rejects
   fieldless models cleanly, `sqlite:///` rejects blank/NUL paths, and `View.as_view()` /
   `CliRunner.invoke()` validate method strings, decorator return callables, and CLI arg items.
+  In 0.11.28+, auth decorators validate callable targets, `AuthManager` validates
+  `session_middleware`/`session_options`, `OAuth2Client` validates URL hostnames, ports,
+  control characters, and `extra_authorize_params`, and `Higuma`/`Blueprint` eagerly validate
+  `import_name`, `url_prefix`, `rule`, and non-empty string elements in `methods`/`tags`/
+  `allowed_origins`.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

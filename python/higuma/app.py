@@ -63,7 +63,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.27"
+__version__ = "0.11.28"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -310,9 +310,26 @@ class Higuma:
             raise TypeError(
                 "methods must be an iterable of HTTP method strings, not a single string"
             )
-        method_tuple = tuple(dict.fromkeys(method.upper() for method in declared_methods))
+        normalized_methods: list[str] = []
+        for method in declared_methods:
+            if not isinstance(method, str):
+                raise TypeError("methods must contain strings")
+            cleaned = method.strip().upper()
+            if not cleaned:
+                raise ValueError("methods entries must not be empty")
+            normalized_methods.append(cleaned)
+        method_tuple = tuple(dict.fromkeys(normalized_methods))
         if not method_tuple:
             raise ValueError("methods must not be empty")
+        normalized_tags: tuple[str, ...] | None = None
+        if tags is not None:
+            tag_items = tuple(tags)
+            if not all(isinstance(tag, str) for tag in tag_items):
+                raise TypeError("tags must contain strings")
+            if any(not tag.strip() for tag in tag_items):
+                raise ValueError("tags entries must not be empty")
+            if tag_items:
+                normalized_tags = tag_items
         if endpoint in self._endpoint_rules:
             raise ValueError(f"endpoint {endpoint!r} is already registered")
         if status_code is not None:
@@ -334,7 +351,7 @@ class Higuma:
                 for key, value in {
                     "summary": summary,
                     "description": description,
-                    "tags": tuple(tags) if tags else None,
+                    "tags": normalized_tags,
                     "responses": dict(responses) if responses else None,
                     "request_body": request_body,
                     "response_model": response_model,
@@ -373,6 +390,10 @@ class Higuma:
             if not callable(handler):
                 raise TypeError("WebSocket handler must be callable")
             origins = tuple(allowed_origins or ())
+            if not all(isinstance(origin, str) for origin in origins):
+                raise TypeError("allowed_origins must contain strings")
+            if any(not origin.strip() for origin in origins):
+                raise ValueError("allowed_origins entries must not be empty")
             route_endpoint = handler.__name__ if endpoint is None else endpoint
             if not isinstance(route_endpoint, str) or not route_endpoint:
                 raise ValueError("endpoint must be a non-empty string")

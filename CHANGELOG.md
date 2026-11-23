@@ -7,6 +7,21 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.28] - 2026-11-23
+
+### Fixed
+
+- Harden auth decorators, `AuthManager`, and `OAuth2Client` (`auth.py`): require callable
+  targets in `login_required`, `fresh_login_required`, `roles_required`, and
+  `permissions_required`; validate `session_middleware` callability and `session_options`
+  mapping type in `AuthManager`; and validate non-empty hostnames, port bounds (`1..65535`),
+  absence of control characters in OAuth endpoint/redirect URLs, and mapping type for
+  `extra_authorize_params` in `OAuth2Client`.
+- Harden `Blueprint` and `Higuma` route/WebSocket option validation (`blueprint.py`, `app.py`):
+  validate `Blueprint` `import_name`, `url_prefix`, `static_url_path`, and `rule` eagerly,
+  and validate non-empty string elements in `methods`, `tags`, and WebSocket `allowed_origins`
+  across both `Higuma` and `Blueprint`.
+
 ## [0.11.27] - 2026-11-23
 
 ### Fixed

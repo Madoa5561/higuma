@@ -46,6 +46,12 @@ class Blueprint:
     ) -> None:
         if not isinstance(name, str) or not name or "." in name:
             raise ValueError("blueprint names must be nonempty and cannot contain a dot")
+        if not isinstance(import_name, str) or not import_name.strip():
+            raise ValueError("import_name must be a non-empty string")
+        if not isinstance(url_prefix, str):
+            raise TypeError("url_prefix must be a string")
+        if not isinstance(static_url_path, str):
+            raise TypeError("static_url_path must be a string")
         self.name = name
         self.import_name = import_name
         self.url_prefix = url_prefix.rstrip("/")
@@ -136,6 +142,8 @@ class Blueprint:
             raise ValueError(
                 "blueprint registration names must be nonempty and cannot contain a dot"
             )
+        if url_prefix is not None and not isinstance(url_prefix, str):
+            raise TypeError("url_prefix must be a string or None")
         self._children.append((blueprint, {"url_prefix": url_prefix, "name": name}))
 
     def before_request(self, func: Callable[..., Any]) -> Callable[..., Any]:
@@ -181,17 +189,32 @@ class Blueprint:
         endpoint: str | None = None,
         **options: Any,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        if not isinstance(rule, str):
+            raise TypeError("route rule must be a string")
         if isinstance(methods, (str, bytes, bytearray)):
             raise TypeError(
                 "methods must be an iterable of HTTP method strings, not a single string"
             )
         if isinstance(options.get("tags"), (str, bytes, bytearray)):
             raise TypeError("tags must be an iterable of tag strings, not a single string")
-        explicit_methods = (
-            tuple(dict.fromkeys(method.upper() for method in methods))
-            if methods is not None
-            else None
-        )
+        if options.get("tags") is not None:
+            tag_items = tuple(options["tags"])
+            if not all(isinstance(tag, str) for tag in tag_items):
+                raise TypeError("tags must contain strings")
+            if any(not tag.strip() for tag in tag_items):
+                raise ValueError("tags entries must not be empty")
+            options = {**options, "tags": tag_items}
+        explicit_methods: tuple[str, ...] | None = None
+        if methods is not None:
+            normalized_methods: list[str] = []
+            for method in methods:
+                if not isinstance(method, str):
+                    raise TypeError("methods must contain strings")
+                cleaned = method.strip().upper()
+                if not cleaned:
+                    raise ValueError("methods entries must not be empty")
+                normalized_methods.append(cleaned)
+            explicit_methods = tuple(dict.fromkeys(normalized_methods))
         if explicit_methods is not None and not explicit_methods:
             raise ValueError("methods must not be empty")
 
@@ -256,10 +279,19 @@ class Blueprint:
         endpoint: str | None = None,
         **options: Any,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        if not isinstance(rule, str):
+            raise TypeError("route rule must be a string")
         if isinstance(options.get("allowed_origins"), (str, bytes, bytearray)):
             raise TypeError(
                 "allowed_origins must be an iterable of origin strings, not a single string"
             )
+        if options.get("allowed_origins") is not None:
+            origins = tuple(options["allowed_origins"])
+            if not all(isinstance(origin, str) for origin in origins):
+                raise TypeError("allowed_origins must contain strings")
+            if any(not origin.strip() for origin in origins):
+                raise ValueError("allowed_origins entries must not be empty")
+            options = {**options, "allowed_origins": origins}
 
         def decorator(view_func: Callable[..., Any]) -> Callable[..., Any]:
             if not callable(view_func):

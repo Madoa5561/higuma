@@ -2427,6 +2427,102 @@ class PythonCoreRegressionTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
         self.assertIsInstance(result.exception, TypeError)
 
+    def test_auth_oauth_blueprint_and_route_option_validation(self) -> None:
+        from higuma import (
+            AuthManager,
+            Blueprint,
+            Higuma,
+            OAuth2Client,
+            fresh_login_required,
+            login_required,
+            permissions_required,
+            roles_required,
+        )
+
+        # Auth decorators must reject non-callable targets eagerly
+        for decorator in (
+            login_required,
+            fresh_login_required,
+            roles_required("admin"),
+            permissions_required("write"),
+        ):
+            with self.assertRaises(TypeError):
+                decorator("not-callable")  # type: ignore[arg-type]
+
+        # AuthManager constructor option checks
+        with self.assertRaises(TypeError):
+            AuthManager(session_options="bad")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            AuthManager(session_middleware="not-callable")  # type: ignore[arg-type]
+
+        # OAuth2Client URL host/port/control-char and extra_authorize_params checks
+        secret = "oauth-validation-secret-at-least-32-bytes"
+        base_oauth: dict[str, Any] = {
+            "client_id": "cid",
+            "client_secret": "csec",
+            "authorize_url": "https://oauth.example.com/auth",
+            "token_url": "https://oauth.example.com/token",
+            "userinfo_url": "https://oauth.example.com/userinfo",
+            "redirect_uri": "https://app.example.com/callback",
+            "scopes": ("openid",),
+            "secret_key": secret,
+        }
+        for bad_url in (
+            "https://:443/auth",
+            "https://oauth.example.com:0/auth",
+            "https://oauth.example.com:99999/auth",
+            "https://oauth.example.com:abc/auth",
+            "https://oauth.example.com/auth\r\nX: 1",
+        ):
+            with self.assertRaises(ValueError):
+                OAuth2Client(**{**base_oauth, "authorize_url": bad_url})
+        with self.assertRaises(ValueError):
+            OAuth2Client(**{**base_oauth, "redirect_uri": "http://:8000/cb"})
+        with self.assertRaises(TypeError):
+            OAuth2Client(**{**base_oauth, "extra_authorize_params": "bad"})
+
+        # Blueprint constructor & route/websocket eager checks
+        with self.assertRaises(ValueError):
+            Blueprint("bp", "")
+        with self.assertRaises(TypeError):
+            Blueprint("bp", __name__, url_prefix=123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            Blueprint("bp", __name__, static_url_path=123)  # type: ignore[arg-type]
+        bp = Blueprint("bp", __name__)
+        with self.assertRaises(TypeError):
+            bp.register_blueprint(Blueprint("child", __name__), url_prefix=123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            bp.route(123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            bp.route("/x", methods=[123])  # type: ignore[list-item]
+        with self.assertRaises(ValueError):
+            bp.route("/x", methods=[" "])
+        with self.assertRaises(TypeError):
+            bp.route("/x", tags=[123])  # type: ignore[list-item]
+        with self.assertRaises(ValueError):
+            bp.route("/x", tags=[" "])
+        with self.assertRaises(TypeError):
+            bp.websocket(123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            bp.websocket("/ws", allowed_origins=[123])  # type: ignore[list-item]
+        with self.assertRaises(ValueError):
+            bp.websocket("/ws", allowed_origins=[" "])
+
+        # Higuma add_url_rule / websocket element validation parity
+        app = Higuma(__name__, static_folder=None)
+        with self.assertRaises(TypeError):
+            app.route("/a", methods=[123])(lambda: "ok")  # type: ignore[list-item]
+        with self.assertRaises(ValueError):
+            app.route("/a", methods=[" "])(lambda: "ok")
+        with self.assertRaises(TypeError):
+            app.route("/a", tags=[123])(lambda: "ok")  # type: ignore[list-item]
+        with self.assertRaises(ValueError):
+            app.route("/a", tags=[" "])(lambda: "ok")
+        with self.assertRaises(TypeError):
+            app.websocket("/ws", allowed_origins=[123])(lambda ws: None)  # type: ignore[list-item]
+        with self.assertRaises(ValueError):
+            app.websocket("/ws", allowed_origins=[" "])(lambda ws: None)
+
 
 if __name__ == "__main__":
     unittest.main()
