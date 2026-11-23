@@ -224,7 +224,8 @@ stream/file/templateの遅延内容を直接body helperで読み出すAPIでは�
 
 helperは`jsonify()`、`make_response()`、`redirect()`、`render_template()`、`send_file()`です。
 handlerはresponseに加え、文字列、bytes-like、JSON化可能値、`None`、
-`(body, status[, headers])`を返せます。dataclass、enum、UUID、日付等もJSONへ変換されます。
+`(body, status[, headers])`を返せます。dataclass、enum、UUID、`Decimal`、日付等はJSONおよび
+`render_template()`のテンプレートコンテキストへ構造化データとして変換されます。
 
 ### Streaming / SSE
 

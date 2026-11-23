@@ -12,6 +12,9 @@ from .response import Response
 
 
 def wsgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request], Response]:
+    if not callable(application):
+        raise TypeError("mounted application must be callable")
+
     def mounted(request: Request) -> Response:
         status: str | None = None
         response_headers: list[tuple[str, str]] = []
@@ -22,6 +25,8 @@ def wsgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
             nonlocal headers_sent
             data = bytes(chunk)
             if data:
+                if status is None:
+                    raise RuntimeError("mounted WSGI app yielded body before start_response")
                 headers_sent = True
                 body_chunks.append(data)
 
@@ -64,9 +69,13 @@ def wsgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
 
 
 def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request], Any]:
+    if not callable(application):
+        raise TypeError("mounted application must be callable")
+
     async def mounted(request: Request) -> Response:
         events: list[dict[str, Any]] = []
         received = False
+        started = False
         response_complete = asyncio.Event()
         response_remaining: int | None = None
 
@@ -83,18 +92,25 @@ def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
             }
 
         async def send(event: dict[str, Any]) -> None:
-            nonlocal response_remaining
-            events.append(event)
-            if event.get("type") == "http.response.start":
+            nonlocal started, response_remaining
+            event_type = event.get("type")
+            if event_type == "http.response.start":
+                if started:
+                    raise RuntimeError("mounted ASGI app sent http.response.start more than once")
+                started = True
                 if request.method == "HEAD" or int(event.get("status", 200)) in {204, 205, 304}:
                     response_remaining = 0
                 else:
                     response_remaining = _parse_content_length(event.get("headers", []))
-            elif event.get("type") == "http.response.body":
+            elif event_type == "http.response.body":
+                if not started:
+                    raise RuntimeError("mounted ASGI app sent http.response.body before start")
+                chunk = bytes(event.get("body") or b"")
                 if response_remaining is not None:
-                    response_remaining -= len(event.get("body", b""))
+                    response_remaining -= len(chunk)
                 if not event.get("more_body", False):
                     response_complete.set()
+            events.append(event)
             if response_remaining is not None and response_remaining <= 0:
                 response_complete.set()
 
@@ -106,7 +122,9 @@ def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
         if start is None:
             raise RuntimeError("mounted ASGI app did not send http.response.start")
         body = b"".join(
-            event.get("body", b"") for event in events if event.get("type") == "http.response.body"
+            bytes(event.get("body") or b"")
+            for event in events
+            if event.get("type") == "http.response.body"
         )
         headers = [
             (bytes(key).decode("latin-1"), bytes(value).decode("latin-1"))

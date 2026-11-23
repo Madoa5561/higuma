@@ -40,6 +40,11 @@ class BodyBuffer:
         return self.file.read(size)
 
     def fill_from(self, source, length: int | None, terminated: bool) -> None:
+        if length is not None and (
+            isinstance(length, bool) or not isinstance(length, int) or length < 0
+        ):
+            self.close()
+            raise BadRequest(detail="invalid Content-Length")
         remaining = length if length is not None else (self.maximum + 1 if terminated else 0)
         try:
             while remaining:

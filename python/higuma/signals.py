@@ -33,6 +33,8 @@ def _same_sender(stored, target, by_value: bool) -> bool:
 
 class Signal:
     def __init__(self, name: str):
+        if not isinstance(name, str) or not name:
+            raise ValueError("signal name must be a non-empty string")
         self.name = name
         self._subscriptions = []
         self._lock = RLock()

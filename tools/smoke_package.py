@@ -211,6 +211,15 @@ def _exercise_flask_helpers() -> None:
             pass
         else:
             raise AssertionError("g.pop without default should raise KeyError")
+    from dataclasses import dataclass
+
+    @dataclass
+    class SmokeBear:
+        name: str
+
+    from higuma import render_template
+
+    assert '"name": "Higuma"' in render_template("x.html", bear=SmokeBear("Higuma")).context_json
     multi = app.make_response(("ok", 200, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]))
     assert [v for k, v in multi.header_items if k == "set-cookie"] == ["a=1", "b=2"]
     from higuma import PasswordHasher

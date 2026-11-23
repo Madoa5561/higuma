@@ -134,7 +134,7 @@ def parse_multipart(request: Any) -> tuple[list[Any], list[Any]]:
                 total_fields += len(raw)
                 try:
                     value = raw.decode(part.get_content_charset() or "utf-8", errors="replace")
-                except LookupError as error:
+                except (LookupError, ValueError) as error:
                     raise BadRequest(detail="unknown multipart charset") from error
                 fields.append((name, value))
             else:

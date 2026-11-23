@@ -34,6 +34,13 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.20** — `TemplateResponse`/`render_template()` で dataclass・`Enum`・`Decimal`・`UUID` 等を
+> 構造化コンテキストとして MiniJinja へ渡すよう改善、`Response`/`make_response()` の厳格な整数
+> status 検証と `set_cookie()` 型検証、WSGI/ASGI マウントの callable 検証とプロトコル順序整合
+> （`start_response` 前出力・`http.response.start` 前 body 拒否・`bytearray`/`None` body 対応）、
+> multipart 不正 charset `400` 化・`BodyBuffer` 負長拒否・CLI `command("")` / `bytes` 引数・
+> `Signal` 名検証を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.19** — `g.pop()` の未指定時 `KeyError`（Flask 3.1 整合）と `after_this_request()`
 > callable 検証、`url_for()` 型付きパス引数（`int`/`float`/`uuid`/`None`）検証、`View.as_view()`
 > 検証＆`MethodView` 405 `Allow` ヘッダ整合、`TokenSigner`/`RateLimitMiddleware`/

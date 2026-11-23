@@ -19,8 +19,15 @@ class CommandGroup:
         self.commands: dict[str, tuple[Callable[..., Any], str]] = {}
 
     def command(self, name: str | None = None, *, help: str | None = None):
+        if name is not None and not isinstance(name, str):
+            raise ValueError("command names must contain letters, digits, or hyphens")
+        if help is not None and not isinstance(help, str):
+            raise TypeError("command help must be a string")
+
         def register(function: Callable[..., Any]):
-            command_name = name or function.__name__.replace("_", "-")
+            if not callable(function):
+                raise TypeError("CLI command must be callable")
+            command_name = function.__name__.replace("_", "-") if name is None else name
             if (
                 not command_name
                 or not command_name[0].isalnum()
@@ -141,6 +148,8 @@ class CliRunner:
         code = 0
         with redirect_stdout(output), redirect_stderr(output):
             try:
+                if isinstance(args, (bytes, bytearray)):
+                    raise TypeError("args must be a command string or sequence of strings")
                 parsed_args = shlex.split(args) if isinstance(args, str) else list(args)
                 code = execute(self.app, build_parser(self.app).parse_args(parsed_args))
             except SystemExit as exception:

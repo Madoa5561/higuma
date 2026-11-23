@@ -231,7 +231,8 @@ do not read deferred stream/file/template content directly.
 
 Helpers are `jsonify()`, `make_response()`, `redirect()`, `render_template()`, and `send_file()`.
 A handler may also return strings, bytes-like objects, JSON-compatible values, `None`, or
-`(body, status[, headers])`. Dataclasses, enums, UUIDs, and dates serialize to JSON.
+`(body, status[, headers])`. Dataclasses, enums, UUIDs, `Decimal`, and dates serialize cleanly
+for both JSON responses and `render_template()` template contexts.
 
 ### Streaming and SSE
 

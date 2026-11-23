@@ -7,6 +7,28 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.20] - 2026-11-23
+
+### Fixed
+
+- Serialize `TemplateResponse.context_json` via `serialize_json_value()` (`response.py`) so
+  dataclasses, enums, UUIDs, Decimals, dates, and paths render as structured MiniJinja
+  template context values (e.g. `{{ card.name }}`) instead of Python `repr()` strings.
+- Harden `Response` and `make_response()` validation (`response.py`): reject `bool` and
+  non-`int` status codes consistently with `HTTPException`/`abort()` while continuing to
+  accept `int` and `HTTPStatus`, and validate `samesite`, `path`, `domain`, and `expires`
+  types in `Response.set_cookie()`.
+- Harden mounted WSGI/ASGI adapters (`mounts.py`): require callable applications upfront in
+  `wsgi_view()`/`asgi_view()`, reject non-empty WSGI chunks emitted before `start_response()`,
+  reject ASGI `http.response.body` before `http.response.start` or duplicate start events,
+  and accept `None`/`bytearray`/`memoryview` ASGI body chunks safely.
+- Harden ingress, CLI, and signal validation: catch `(LookupError, ValueError)` for invalid
+  multipart text charsets (`multipart.py`), reject negative/`bool`/non-`int` `length` in
+  `BodyBuffer.fill_from()` (`body.py`), reject explicit empty `name=""` / non-string `name` /
+  non-string `help` / non-callable handlers in `CommandGroup.command()` and `bytes` arguments
+  in `CliRunner.invoke()` (`commands.py`), and require non-empty string names in `Signal()`
+  (`signals.py`).
+
 ## [0.11.19] - 2026-11-23
 
 ### Fixed

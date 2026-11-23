@@ -1526,6 +1526,125 @@ class PythonCoreRegressionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Supervisor("example:app", restart_window="60")  # type: ignore[arg-type]
 
+    def test_template_dataclass_context_response_mounts_body_cli_and_signal(self) -> None:
+        import io
+        import tempfile
+        from dataclasses import dataclass
+        from decimal import Decimal
+        from enum import Enum
+        from http import HTTPStatus
+        from pathlib import Path
+
+        from higuma import BadRequest, Response, Signal, make_response, render_template
+        from higuma.body import BodyBuffer
+        from higuma.mounts import asgi_view, wsgi_view
+
+        class Badge(Enum):
+            GOLD = "gold"
+
+        @dataclass
+        class BearCard:
+            name: str
+            badge: Badge
+            score: Decimal
+
+        with tempfile.TemporaryDirectory() as tmp:
+            templates = Path(tmp) / "templates"
+            templates.mkdir()
+            (templates / "card.html").write_text(
+                "{{ card.name }}|{{ card.badge }}|{{ card.score }}", encoding="utf-8"
+            )
+            tpl_app = Higuma(__name__, template_folder=str(templates), static_folder=None)
+
+            @tpl_app.get("/card")
+            def card_view():
+                return render_template(
+                    "card.html",
+                    card=BearCard(name="Higuma", badge=Badge.GOLD, score=Decimal("9.5")),
+                )
+
+            rendered = tpl_app.test_client().get("/card")
+            self.assertEqual(rendered.status_code, 200)
+            self.assertEqual(rendered.text, "Higuma|gold|9.5")
+
+        # Response / make_response strict integer status + HTTPStatus + cookie arg validation
+        self.assertEqual(Response("ok", HTTPStatus.CREATED).status_code, 201)
+        for bad_status in (True, False, 200.5, "200"):
+            with self.assertRaises(ValueError):
+                Response("ok", bad_status)  # type: ignore[arg-type]
+            with self.assertRaises(ValueError):
+                make_response(("ok", bad_status))  # type: ignore[arg-type]
+            with self.assertRaises(ValueError):
+                make_response(("ok", bad_status, {"x-a": "1"}))  # type: ignore[arg-type]
+
+        resp = Response("ok")
+        with self.assertRaises(ValueError):
+            resp.set_cookie("sid", "1", samesite=123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            resp.set_cookie("sid", "1", path=123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            resp.set_cookie("sid", "1", domain=123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            resp.set_cookie("sid", "1", expires=123)  # type: ignore[arg-type]
+
+        # Mounted WSGI / ASGI validation and protocol safety
+        with self.assertRaises(TypeError):
+            wsgi_view("not-callable", "/sub")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            asgi_view("not-callable", "/sub")  # type: ignore[arg-type]
+
+        mount_app = Higuma(__name__, static_folder=None)
+
+        def early_body_wsgi(environ, start_response):
+            yield b"before-start"
+            start_response("200 OK", [])
+
+        async def early_body_asgi(scope, receive, send):
+            await send({"type": "http.response.body", "body": b"oops"})
+
+        async def bytearray_asgi(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": bytearray(b"hi"), "more_body": True})
+            await send({"type": "http.response.body", "body": None, "more_body": False})
+
+        mount_app.mount_wsgi("/early-wsgi", early_body_wsgi, name="early_wsgi")
+        mount_app.mount_asgi("/early-asgi", early_body_asgi, name="early_asgi")
+        mount_app.mount_asgi("/ba-asgi", bytearray_asgi, name="ba_asgi")
+
+        mount_client = mount_app.test_client()
+        self.assertEqual(mount_client.get("/early-wsgi/").status_code, 500)
+        self.assertEqual(mount_client.get("/early-asgi/").status_code, 500)
+        ok_asgi = mount_client.get("/ba-asgi/")
+        self.assertEqual(ok_asgi.status_code, 200)
+        self.assertEqual(ok_asgi.body, b"hi")
+
+        # BodyBuffer.fill_from rejects negative / bool / non-int Content-Length
+        for bad_length in (-1, True, "5"):
+            buf = BodyBuffer(64)
+            with self.assertRaises(BadRequest):
+                buf.fill_from(io.BytesIO(b"hello"), bad_length, False)  # type: ignore[arg-type]
+            self.assertTrue(buf.closed)
+
+        # CommandGroup.command and CliRunner validation
+        cli_app = Higuma(__name__, static_folder=None)
+        with self.assertRaises(ValueError):
+            cli_app.cli.command("")(lambda: None)
+        with self.assertRaises(ValueError):
+            cli_app.cli.command(123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            cli_app.cli.command("ok", help=123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            cli_app.cli.command("ok")("not-callable")  # type: ignore[arg-type]
+        bytes_result = cli_app.test_cli_runner().invoke(b"routes")  # type: ignore[arg-type]
+        self.assertEqual(bytes_result.exit_code, 1)
+        self.assertIsInstance(bytes_result.exception, TypeError)
+
+        # Signal name validation
+        with self.assertRaises(ValueError):
+            Signal("")
+        with self.assertRaises(ValueError):
+            Signal(123)  # type: ignore[arg-type]
+
 
 if __name__ == "__main__":
     unittest.main()

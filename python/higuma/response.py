@@ -23,6 +23,10 @@ _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
 
 def _validate_status(status: int) -> int:
+    if isinstance(status, bool) or not isinstance(status, int):
+        raise ValueError(  # noqa: TRY004 - consistent HTTP status validation error
+            "final HTTP status code must be an integer between 200 and 599"
+        )
     value = int(status)
     if not 200 <= value <= 599:
         raise ValueError("final HTTP status code must be between 200 and 599")
@@ -207,15 +211,22 @@ class Response:
         samesite: str | None = "Lax",
         partitioned: bool = False,
     ) -> None:
-        if samesite is not None and samesite.lower() not in {"lax", "strict", "none"}:
+        if samesite is not None and (
+            not isinstance(samesite, str) or samesite.lower() not in {"lax", "strict", "none"}
+        ):
             raise ValueError("samesite must be 'Lax', 'Strict', 'None', or None")
         if partitioned and sys.version_info < (3, 14):
             raise ValueError("partitioned cookies require Python 3.14 or newer")
         if partitioned and not secure:
             raise ValueError("partitioned cookies must also set secure=True")
         for attr_name, attr_value in (("path", path), ("domain", domain)):
-            if attr_value is not None and any(ch in attr_value for ch in ";\r\n\x00"):
-                raise ValueError(f"cookie {attr_name} contains invalid characters")
+            if attr_value is not None:
+                if not isinstance(attr_value, str):
+                    raise TypeError(f"cookie {attr_name} must be a string")
+                if any(ch in attr_value for ch in ";\r\n\x00"):
+                    raise ValueError(f"cookie {attr_name} contains invalid characters")
+        if expires is not None and not isinstance(expires, (datetime, str)):
+            raise TypeError("cookie expires must be a datetime or HTTP-date string")
         if isinstance(expires, str) and any(ch in expires for ch in ";\r\n\x00"):
             raise ValueError("cookie expires contains invalid characters")
         cookie = SimpleCookie()
@@ -396,7 +407,7 @@ class TemplateResponse(Response):
 
     @property
     def context_json(self) -> str:
-        return json.dumps(self.context, ensure_ascii=False, default=str)
+        return json.dumps(serialize_json_value(self.context), ensure_ascii=False, default=str)
 
 
 class StreamingResponse(Response):
@@ -653,10 +664,10 @@ def make_response(
             ):
                 tuple_headers = tuple_status
             else:
-                status = int(tuple_status)
+                status = _validate_status(tuple_status)
         elif len(value) == 3:
             value, tuple_status, tuple_headers = value
-            status = int(tuple_status)
+            status = _validate_status(tuple_status)
         else:
             raise TypeError(
                 "response tuple must be (body, status), (body, headers) or (body, status, headers)"

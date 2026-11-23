@@ -396,6 +396,11 @@ supervisor, streaming, and proxy changes.
   validation and `Allow` headers, `RedisSessionMiddleware` measures UTF-8 bytes for string
   Redis payloads, and `TokenSigner`/`RateLimitMiddleware`/`ViteManifest`/`Config`/`Request`/
   `Supervisor` enforce strict upfront parameter validation.
+  In 0.11.20+, `TemplateResponse`/`render_template()` serializes dataclasses, enums, Decimals,
+  UUIDs, and dates via `serialize_json_value()` into structured MiniJinja template contexts,
+  `Response`/`make_response()` reject `bool`/non-`int` status codes and validate cookie
+  attribute types, `wsgi_view()`/`asgi_view()` validate callability and protocol ordering, and
+  `BodyBuffer`/`CommandGroup`/`CliRunner`/`Signal` enforce strict argument validation.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide
