@@ -160,8 +160,8 @@ def create_item(
 
 - `QueryParam`, `Header`, `Cookie`, `PathParam`, `Body`, `Form`, and `File` derive from `Parameter`.
 - Common options are `alias`, `title`, `description`, `deprecated`, `min_length`, `max_length`,
-  `pattern`, `ge`, `gt`, `le`, and `lt`.
-- Recursive conversion supports primitives, `UUID`, date/time, `Enum`, `Literal`, unions,
+  `pattern`, `ge`, `gt`, `le`, and `lt` (supporting finite `int`, `float`, and `Decimal`).
+- Recursive conversion supports primitives, `UUID`, `Decimal`, date/time, `Enum`, `Literal`, unions,
   optional values, collections, dataclasses, and `TypedDict`.
 - Collection types receive repeated query, form, or file values.
 - `Depends(callable, use_cache=True)` resolves nested sync, async, and yield dependencies.

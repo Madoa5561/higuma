@@ -34,6 +34,11 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.29** — `Parameter`（`QueryParam`/`Form`/`Body` 等）での有限 `Decimal` 数値境界
+> （`ge`/`gt`/`le`/`lt`）の厳密比較と OpenAPI 数値出力対応、`pattern`/`alias`/`title`/
+> `description` の型事前検証、複数ファイルアップロード 422 エラーでの `UploadFile` 要約出力、
+> および `swagger_ui_html()` の `<!--` エスケープを改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.28** — 認証デコレータの callable 検証、`AuthManager` の `session_middleware`/
 > `session_options` 検証、`OAuth2Client` の URL ホスト・ポート（`1..65535`）・制御文字・
 > `extra_authorize_params` 検証、および `Blueprint`/`Higuma` での `import_name`/`url_prefix`/

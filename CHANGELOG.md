@@ -7,6 +7,19 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.29] - 2026-11-23
+
+### Fixed
+
+- Support finite `Decimal` numeric bounds (`ge`, `gt`, `le`, `lt`) on `Parameter` markers
+  (`QueryParam`, `Header`, `Cookie`, `PathParam`, `Form`, `Body`, `File`) with exact
+  `Decimal` runtime comparison and JSON Schema numeric `minimum`/`maximum` serialization in
+  OpenAPI 3.1 (`parameters.py`).
+- Validate `Parameter` metadata types eagerly (`pattern`, `alias`, `title`, `description`),
+  preventing `bytes` regex patterns from crashing at request time; summarize nested
+  `UploadFile` items cleanly in multi-file 422 validation error payloads (`parameters.py`);
+  and escape `<!--` inside `swagger_ui_html()` `<script>` blocks (`openapi.py`).
+
 ## [0.11.28] - 2026-11-23
 
 ### Fixed

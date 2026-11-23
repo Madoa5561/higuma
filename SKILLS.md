@@ -436,6 +436,10 @@ supervisor, streaming, and proxy changes.
   control characters, and `extra_authorize_params`, and `Higuma`/`Blueprint` eagerly validate
   `import_name`, `url_prefix`, `rule`, and non-empty string elements in `methods`/`tags`/
   `allowed_origins`.
+  In 0.11.29+, `Parameter` numeric bounds (`ge`/`gt`/`le`/`lt`) accept exact finite `Decimal`
+  values (emitted as JSON numbers in OpenAPI 3.1), `Parameter` validates `pattern`/`alias`/
+  `title`/`description` types eagerly, multi-file 422 errors summarize nested `UploadFile`
+  metadata cleanly, and `swagger_ui_html()` escapes `<!--` inside `<script>`.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

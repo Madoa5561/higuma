@@ -85,7 +85,7 @@ def generate_openapi(app: Any) -> dict[str, Any]:
 
 def swagger_ui_html(openapi_url: str, title: str) -> str:
     safe_title = escape(title)
-    safe_url = json.dumps(openapi_url).replace("</", "<\\/")
+    safe_url = json.dumps(openapi_url).replace("</", "<\\/").replace("<!--", "<\\!--")
     return f"""<!doctype html>
 <html lang="en">
 <head>

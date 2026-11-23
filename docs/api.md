@@ -156,8 +156,8 @@ def create_item(
 
 - `QueryParam`、`Header`、`Cookie`、`PathParam`、`Body`、`Form`、`File`は`Parameter`の派生型です。
 - 共通optionは`alias`、`title`、`description`、`deprecated`、`min_length`、
-  `max_length`、`pattern`、`ge`、`gt`、`le`、`lt`です。
-- primitive、`UUID`、`date` / `datetime`、`Enum`、`Literal`、union / optional、
+  `max_length`、`pattern`、`ge`、`gt`、`le`、`lt`（有限`int`/`float`/`Decimal`対応）です。
+- primitive、`UUID`、`Decimal`、`date` / `datetime`、`Enum`、`Literal`、union / optional、
   collection、dataclass、`TypedDict`を再帰的に変換します。
 - list等にはrepeated query/form/file値を渡します。
 - `Depends(callable, use_cache=True)`は同期・非同期・yield dependencyを再帰解決します。

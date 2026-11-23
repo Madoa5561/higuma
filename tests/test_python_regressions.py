@@ -2523,6 +2523,73 @@ class PythonCoreRegressionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.websocket("/ws", allowed_origins=[" "])(lambda ws: None)
 
+    def test_decimal_parameter_bounds_metadata_validation_and_file_error_summary(self) -> None:
+        from decimal import Decimal
+
+        from higuma import File, Higuma, QueryParam, UploadFile
+        from higuma.openapi import swagger_ui_html
+
+        # Parameter must accept exact finite Decimal bounds and reject NaN/Inf/invalid metadata
+        app = Higuma(__name__, static_folder=None)
+
+        @app.get("/price")
+        def price(
+            amount: Annotated[
+                Decimal,
+                QueryParam(ge=Decimal("0.01"), le=Decimal("99.99"), title="Amount"),
+            ],
+        ) -> dict[str, Decimal]:
+            return {"amount": amount}
+
+        @app.post("/uploads")
+        def uploads(
+            files: Annotated[list[UploadFile], File(min_length=2)],
+        ) -> dict[str, int]:
+            return {"count": len(files)}
+
+        client = app.test_client()
+        self.assertEqual(client.get("/price?amount=0.01").json, {"amount": "0.01"})
+        self.assertEqual(client.get("/price?amount=99.99").json, {"amount": "99.99"})
+        self.assertEqual(client.get("/price?amount=0.009").status_code, 422)
+        self.assertEqual(client.get("/price?amount=100.00").status_code, 422)
+
+        spec = app.openapi()
+        param_schema = spec["paths"]["/price"]["get"]["parameters"][0]["schema"]
+        self.assertEqual(param_schema["type"], "string")
+        self.assertEqual(param_schema["format"], "decimal")
+        self.assertEqual(param_schema["minimum"], 0.01)
+        self.assertEqual(param_schema["maximum"], 99.99)
+
+        # Non-finite Decimal bounds & invalid metadata types must be rejected eagerly
+        for bad_bound in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")):
+            with self.assertRaises(ValueError):
+                QueryParam(ge=bad_bound)
+        with self.assertRaises(ValueError):
+            QueryParam(ge=Decimal("10.00"), le=Decimal("9.99"))
+        with self.assertRaises(TypeError):
+            QueryParam(pattern=b"[a-z]+")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            QueryParam(alias=123)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            QueryParam(alias="  ")
+        with self.assertRaises(TypeError):
+            QueryParam(title=123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            QueryParam(description=123)  # type: ignore[arg-type]
+
+        # Multi-file validation error summarizes UploadFile items cleanly
+        upload_err = client.post("/uploads", files={"files": ("only.txt", b"hi", "text/plain")})
+        self.assertEqual(upload_err.status_code, 422)
+        self.assertEqual(
+            upload_err.json["detail"][0]["input"],
+            [{"filename": "only.txt", "content_type": "text/plain", "size": 2}],
+        )
+
+        # swagger_ui_html escapes HTML comment openers inside <script>
+        rendered = swagger_ui_html("/openapi.json<!--x-->", "API")
+        self.assertIn("<\\!--", rendered)
+        self.assertNotIn('"/openapi.json<!--', rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -226,10 +226,11 @@ def _exercise_flask_helpers() -> None:
     from higuma import QueryParam
 
     @app.get("/decimal-smoke")
-    def decimal_smoke(amount: Annotated[Decimal, QueryParam(ge=0)]):
+    def decimal_smoke(amount: Annotated[Decimal, QueryParam(ge=Decimal("0.01"))]):
         return {"amount": amount + Decimal("0.5")}
 
     assert client.get("/decimal-smoke?amount=2.25").json == {"amount": "2.75"}
+    assert client.get("/decimal-smoke?amount=0.00").status_code == 422
     try:
         app.before_request("not-callable")  # type: ignore[arg-type]
     except TypeError:

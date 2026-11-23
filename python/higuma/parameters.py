@@ -28,14 +28,23 @@ class Parameter:
     min_length: int | None = None
     max_length: int | None = None
     pattern: str | None = None
-    ge: float | None = None
-    gt: float | None = None
-    le: float | None = None
-    lt: float | None = None
+    ge: int | float | Decimal | None = None
+    gt: int | float | Decimal | None = None
+    le: int | float | Decimal | None = None
+    lt: int | float | Decimal | None = None
 
     location: ClassVar[str]
 
     def __post_init__(self) -> None:
+        if self.alias is not None:
+            if not isinstance(self.alias, str):
+                raise TypeError("alias must be a string")
+            if not self.alias.strip():
+                raise ValueError("alias must not be empty")
+        if self.title is not None and not isinstance(self.title, str):
+            raise TypeError("title must be a string")
+        if self.description is not None and not isinstance(self.description, str):
+            raise TypeError("description must be a string")
         if self.min_length is not None and (
             isinstance(self.min_length, bool)
             or not isinstance(self.min_length, int)
@@ -60,11 +69,7 @@ class Parameter:
             ("le", self.le),
             ("lt", self.lt),
         ):
-            if bound is not None and (
-                isinstance(bound, bool)
-                or not isinstance(bound, (int, float))
-                or not math.isfinite(bound)
-            ):
+            if bound is not None and not _is_finite_bound(bound):
                 raise ValueError(f"{bound_name} must be a finite number")
         if self.ge is not None and self.le is not None and self.ge > self.le:
             raise ValueError("ge must not exceed le")
@@ -75,7 +80,17 @@ class Parameter:
         if self.gt is not None and self.lt is not None and self.gt >= self.lt:
             raise ValueError("gt must be less than lt")
         if self.pattern is not None:
+            if not isinstance(self.pattern, str):
+                raise TypeError("pattern must be a string")
             re.compile(self.pattern)
+
+
+def _is_finite_bound(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, Decimal):
+        return value.is_finite()
+    return isinstance(value, (int, float)) and math.isfinite(value)
 
 
 class QueryParam(Parameter):
@@ -399,7 +414,13 @@ def parameter_schema_metadata(marker: Parameter) -> dict[str, Any]:
     ):
         value = getattr(marker, source)
         if value is not None:
-            metadata[target] = value
+            if isinstance(value, Decimal):
+                numeric = float(value)
+                if not math.isfinite(numeric):
+                    continue
+                metadata[target] = numeric
+            else:
+                metadata[target] = value
     return metadata
 
 
@@ -839,6 +860,8 @@ def _safe_input(value: Any) -> Any:
 
 
 def _redact_sensitive_values(value: Any) -> Any:
+    if isinstance(value, UploadFile):
+        return {"filename": value.filename, "content_type": value.content_type, "size": value.size}
     if isinstance(value, Mapping):
         return {
             str(key): "***" if _is_sensitive_name(str(key)) else _redact_sensitive_values(item)
