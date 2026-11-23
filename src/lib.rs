@@ -1519,10 +1519,15 @@ fn file_response_from_py(obj: &Bound<'_, PyAny>) -> PyResult<ResponsePayload> {
     let mut file = fs::File::open(&path).map_err(|e| {
         PyRuntimeError::new_err(format!("failed to open response file {path}: {e}"))
     })?;
-    let file_length = file
-        .metadata()
-        .map_err(|e| PyRuntimeError::new_err(format!("failed to stat response file {path}: {e}")))?
-        .len();
+    let metadata = file.metadata().map_err(|e| {
+        PyRuntimeError::new_err(format!("failed to stat response file {path}: {e}"))
+    })?;
+    if !metadata.is_file() {
+        return Err(PyRuntimeError::new_err(format!(
+            "response file {path} is not a regular file"
+        )));
+    }
+    let file_length = metadata.len();
     if offset > file_length {
         return Err(PyRuntimeError::new_err(format!(
             "response file {path} became shorter than offset {offset}"

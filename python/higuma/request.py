@@ -172,7 +172,12 @@ class Headers(Mapping[str, str]):
         self._values = {str(key).lower(): str(value) for key, value in (values or {}).items()}
 
     def __getitem__(self, key: str) -> str:
+        if not isinstance(key, str):
+            raise KeyError(key)
         return self._values[key.lower()]
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and key.lower() in self._values
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._values)
@@ -181,6 +186,8 @@ class Headers(Mapping[str, str]):
         return len(self._values)
 
     def get(self, key: str, default: T | None = None) -> str | T | None:
+        if not isinstance(key, str):
+            return default
         return self._values.get(key.lower(), default)
 
 

@@ -34,6 +34,10 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.23** — `FileResponse`（Python／Rust 双方）でのディレクトリ・非通常ファイル拒否、
+> `RedirectResponse` の非空文字列 `location` 検証、`Headers` / `response.headers` の非文字列キー
+> `Mapping`/`dict` 契約準拠と `.copy()` 大文字小文字非区別保持を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.22** — `Higuma.__init__()`（`import_name`・`lifespan`）、`route()`/`add_url_rule()`/
 > `websocket()`（callable・明示的空 `endpoint=""` 拒否）、全ライフサイクル／フック登録デコレータ、
 > および `mount_*()`（非空文字列 `name`）の登録時バリデーションを徹底。必須 Python 依存は 0 のままです。

@@ -409,6 +409,9 @@ supervisor, streaming, and proxy changes.
   In 0.11.22+, `Higuma` and `Blueprint` validate `import_name`, `lifespan`, route/WebSocket
   callables and explicit empty `endpoint=""`, all lifecycle/request/URL hook callables, and
   mount `name` arguments eagerly at registration time.
+  In 0.11.23+, `FileResponse` rejects directories and non-regular files across both Python and
+  native Rust, `RedirectResponse` validates non-empty string `location`, and `Headers` /
+  `response.headers` follow `Mapping`/`dict` contracts for non-string keys and `.copy()`.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

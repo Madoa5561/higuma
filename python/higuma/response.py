@@ -4,6 +4,7 @@ import inspect
 import json
 import mimetypes
 import re
+import stat as stat_module
 import sys
 from collections.abc import AsyncIterable, Callable, Iterable, Mapping
 from contextvars import copy_context
@@ -53,19 +54,34 @@ class _ResponseHeaders(dict[str, str]):
         super().__setitem__(normalized, text)
 
     def __getitem__(self, name: str) -> str:
+        if not isinstance(name, str):
+            raise KeyError(name)
         return super().__getitem__(name.lower())
 
     def get(self, name: str, default: Any = None) -> Any:
+        if not isinstance(name, str):
+            return default
         return super().get(name.lower(), default)
 
     def __contains__(self, name: object) -> bool:
         return isinstance(name, str) and super().__contains__(name.lower())
 
     def __delitem__(self, name: str) -> None:
+        if not isinstance(name, str):
+            raise KeyError(name)
         super().__delitem__(name.lower())
 
     def pop(self, name: str, *default: Any) -> Any:
+        if len(default) > 1:
+            raise TypeError(f"pop expected at most 2 arguments, got {len(default) + 1}")
+        if not isinstance(name, str):
+            if default:
+                return default[0]
+            raise KeyError(name)
         return super().pop(name.lower(), *default)
+
+    def copy(self) -> _ResponseHeaders:
+        return _ResponseHeaders(self)
 
     def __ior__(self, other: Mapping[str, str]) -> _ResponseHeaders:  # noqa: PYI034 - Python 3.10
         self.update(other)
@@ -330,6 +346,10 @@ class RedirectResponse(Response):
         headers: ResponseHeaders | None = None,
         background: BackgroundTask | BackgroundTasks | Callable[[], Any] | None = None,
     ) -> None:
+        if not isinstance(location, str):
+            raise TypeError("redirect location must be a string")
+        if not location.strip():
+            raise ValueError("redirect location must not be empty")
         response_headers = [
             (key, value) for key, value in _header_pairs(headers) if str(key).lower() != "location"
         ]
@@ -379,6 +399,10 @@ class FileResponse(Response):
             stat = file_path.stat()
         except OSError:
             return
+        if stat_module.S_ISDIR(stat.st_mode):
+            raise IsADirectoryError(f"response file path is a directory: {file_path}")
+        if not stat_module.S_ISREG(stat.st_mode):
+            raise ValueError(f"response file path must be a regular file: {file_path}")
         if offset > stat.st_size:
             raise ValueError("offset exceeds the response file size")
         selected_length = stat.st_size - offset if length is None else length

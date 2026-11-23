@@ -217,8 +217,9 @@ names, extensions, content checks, and quotas.
 - `FileResponse(path, *, filename=None, as_attachment=False, offset=0, length=None, ...)`
 
 Full-file `FileResponse` and `send_file()` values automatically handle ETags,
-`If-None-Match`, and single byte ranges for GET/HEAD. Explicit `offset` / `length`
-values stream the selected range directly from Rust.
+`If-None-Match`, and single byte ranges for GET/HEAD, and reject directories and non-regular
+files across both Python and Rust. Explicit `offset` / `length` values stream the selected
+range directly from Rust.
 
 `Response` exposes `status_code` / `status`, `headers`, `media_type`, `body`, and `history`.
 It provides `append_header()`, `get_json()`, `set_cookie()`, and `delete_cookie()`.

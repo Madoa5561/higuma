@@ -1849,6 +1849,41 @@ class PythonCoreRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
             app.mount_static("/files", tmp, name="")
 
+    def test_file_response_redirect_and_header_mapping_contracts(self) -> None:
+        import tempfile
+
+        from higuma import FileResponse, Headers, RedirectResponse, Response
+
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(IsADirectoryError):
+            FileResponse(tmp)
+
+        with self.assertRaises(TypeError):
+            RedirectResponse(123)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            RedirectResponse("   ")
+
+        req_headers = Headers({"Content-Type": "text/plain"})
+        self.assertFalse(123 in req_headers)
+        self.assertIsNone(req_headers.get(123))  # type: ignore[arg-type]
+        self.assertEqual(req_headers.get(123, "fallback"), "fallback")  # type: ignore[arg-type]
+        with self.assertRaises(KeyError):
+            _ = req_headers[123]  # type: ignore[index]
+
+        resp = Response("ok", headers={"X-Test": "1"})
+        self.assertFalse(123 in resp.headers)
+        self.assertIsNone(resp.headers.get(123))  # type: ignore[arg-type]
+        self.assertEqual(resp.headers.pop(123, "fallback"), "fallback")  # type: ignore[arg-type]
+        with self.assertRaises(KeyError):
+            _ = resp.headers[123]  # type: ignore[index]
+        with self.assertRaises(KeyError):
+            del resp.headers[123]  # type: ignore[arg-type]
+        with self.assertRaises(KeyError):
+            resp.headers.pop(123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            resp.headers.pop("x-test", "a", "b")
+        copied = resp.headers.copy()
+        self.assertEqual(copied["X-TEST"], "1")
+
 
 if __name__ == "__main__":
     unittest.main()

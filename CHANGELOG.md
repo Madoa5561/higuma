@@ -7,6 +7,19 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.23] - 2026-11-23
+
+### Fixed
+
+- Reject directories (`IsADirectoryError`) and non-regular files in `FileResponse.__init__()`
+  (`response.py`) and reject non-regular file descriptors (`!metadata.is_file()`) in native
+  Rust `file_response_from_py()` (`src/lib.rs`), preventing Linux from returning `200 OK`
+  on an opened directory handle before failing mid-stream with `EISDIR`.
+- Require a non-empty string `location` in `RedirectResponse.__init__()` (`response.py`).
+- Enforce Python `Mapping`/`dict` contracts for non-string keys on `Headers` (`request.py`)
+  and `_ResponseHeaders` (`response.py`) — returning `False`/default or raising `KeyError`
+  instead of `AttributeError` — and preserve case-insensitive `_ResponseHeaders` on `.copy()`.
+
 ## [0.11.22] - 2026-11-23
 
 ### Fixed
