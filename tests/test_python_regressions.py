@@ -2590,6 +2590,80 @@ class PythonCoreRegressionTests(unittest.TestCase):
         self.assertIn("<\\!--", rendered)
         self.assertNotIn('"/openapi.json<!--', rendered)
 
+    def test_strict_collection_bare_container_int_decimal_and_bytes_coercion(self) -> None:
+        from dataclasses import dataclass
+        from decimal import Decimal
+        from typing import Literal
+
+        from higuma import Body, Higuma, QueryParam, ResponseValidationError
+        from higuma.parameters import coerce_response_model
+
+        @dataclass
+        class TagPayload:
+            tags: list[str]
+            pair: tuple[int, str]
+
+        app = Higuma(__name__, static_folder=None)
+
+        @app.post("/tags")
+        def tags(payload: Annotated[TagPayload, Body()]) -> dict[str, Any]:
+            return {"tags": payload.tags, "pair": list(payload.pair)}
+
+        @app.post("/bare-dict")
+        def bare_dict(payload: Annotated[dict, Body()]) -> dict[str, Any]:
+            return {"keys": sorted(payload)}
+
+        @app.post("/bare-list")
+        def bare_list(payload: Annotated[list, Body()]) -> dict[str, Any]:
+            return {"items": payload}
+
+        @app.get("/bare-query")
+        def bare_query(
+            items: Annotated[list, QueryParam()],
+            unique: Annotated[set, QueryParam()],
+            fixed: Annotated[tuple, QueryParam()],
+        ) -> dict[str, Any]:
+            return {"items": items, "unique": sorted(unique), "fixed": list(fixed)}
+
+        client = app.test_client()
+        # Non-array JSON values must not be silently wrapped for list/tuple fields
+        self.assertEqual(
+            client.post("/tags", json={"tags": "scalar", "pair": [1, "a"]}).status_code, 422
+        )
+        self.assertEqual(
+            client.post("/tags", json={"tags": {"k": "v"}, "pair": [1, "a"]}).status_code, 422
+        )
+        self.assertEqual(client.post("/tags", json={"tags": ["a"], "pair": 1}).status_code, 422)
+        self.assertEqual(
+            client.post("/tags", json={"tags": ["a", "b"], "pair": [1, "x"]}).json,
+            {"tags": ["a", "b"], "pair": [1, "x"]},
+        )
+
+        # Bare dict/list Body validation and bare list/set/tuple QueryParam extraction
+        self.assertEqual(client.post("/bare-dict", json=["not", "dict"]).status_code, 422)
+        self.assertEqual(client.post("/bare-dict", json="not-dict").status_code, 422)
+        self.assertEqual(
+            client.post("/bare-dict", json={"b": 2, "a": 1}).json, {"keys": ["a", "b"]}
+        )
+        self.assertEqual(client.post("/bare-list", json={"a": 1}).status_code, 422)
+        self.assertEqual(client.post("/bare-list", json=[1, 2]).json, {"items": [1, 2]})
+        self.assertEqual(
+            client.get("/bare-query?items=a&items=b&unique=x&unique=x&fixed=1&fixed=2").json,
+            {"items": ["a", "b"], "unique": ["x"], "fixed": ["1", "2"]},
+        )
+
+        # int coercion rejects fractional/non-finite Decimal, bytes accepts bytearray/memoryview
+        self.assertEqual(coerce_response_model(Decimal("42.0"), int), 42)
+        for bad_dec in (Decimal("1.5"), Decimal("Infinity"), Decimal("NaN")):
+            with self.assertRaises(ResponseValidationError):
+                coerce_response_model(bad_dec, int)
+        self.assertEqual(coerce_response_model(bytearray(b"ok"), bytes), b"ok")
+        self.assertEqual(coerce_response_model(memoryview(b"mv"), bytes), b"mv")
+        with self.assertRaises(ResponseValidationError):
+            coerce_response_model("not-a-dict", dict)
+        with self.assertRaises(ResponseValidationError):
+            coerce_response_model(True, Literal[1])
+
 
 if __name__ == "__main__":
     unittest.main()

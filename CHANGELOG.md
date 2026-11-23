@@ -7,6 +7,22 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.30] - 2026-11-23
+
+### Fixed
+
+- Harden runtime type conversion in `parameters.py`:
+  - Reject non-array JSON inputs (scalars, strings, objects) for `list`, `set`, `frozenset`,
+    `Sequence`, and `tuple` annotations instead of silently wrapping them in a single-item list.
+  - Validate and convert bare unparameterized container annotations (`list`, `tuple`, `set`,
+    `frozenset`, `Sequence`, `dict`, `Mapping`) across `Body`, `QueryParam`/`Form`/`File`
+    (`_is_collection_annotation`), and `response_model` (closing silent validation bypasses on
+    `Annotated[dict, Body()]` / `Annotated[list, Body()]`).
+  - Reject fractional or non-finite `Decimal` values when coercing to `int` (preventing silent
+    truncation or uncaught `OverflowError`), enforce exact runtime type matching in `Literal`,
+    propagate `response=response` to `dict` key coercion, and accept `bytearray`/`memoryview`
+    for `bytes` annotations.
+
 ## [0.11.29] - 2026-11-23
 
 ### Fixed

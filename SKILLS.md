@@ -440,6 +440,11 @@ supervisor, streaming, and proxy changes.
   values (emitted as JSON numbers in OpenAPI 3.1), `Parameter` validates `pattern`/`alias`/
   `title`/`description` types eagerly, multi-file 422 errors summarize nested `UploadFile`
   metadata cleanly, and `swagger_ui_html()` escapes `<!--` inside `<script>`.
+  In 0.11.30+, collection annotations (`list`, `tuple`, `set`, `frozenset`, `Sequence`) reject
+  non-array inputs instead of wrapping scalars/objects, bare container annotations (`list`,
+  `dict`, `Mapping`, etc.) validate consistently across `Body`/`QueryParam`/`response_model`,
+  `int` coercion rejects fractional/non-finite `Decimal`, `Literal` checks exact types, and
+  `bytes` coercion accepts `bytearray`/`memoryview`.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

@@ -231,6 +231,15 @@ def _exercise_flask_helpers() -> None:
 
     assert client.get("/decimal-smoke?amount=2.25").json == {"amount": "2.75"}
     assert client.get("/decimal-smoke?amount=0.00").status_code == 422
+
+    from higuma import Body
+
+    @app.post("/bare-dict-smoke")
+    def bare_dict_smoke(payload: Annotated[dict, Body()]):
+        return {"ok": "k" in payload}
+
+    assert client.post("/bare-dict-smoke", json={"k": 1}).json == {"ok": True}
+    assert client.post("/bare-dict-smoke", json=[1, 2]).status_code == 422
     try:
         app.before_request("not-callable")  # type: ignore[arg-type]
     except TypeError:

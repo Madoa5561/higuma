@@ -591,13 +591,14 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
                 converted = _convert_value(value, type(allowed), response=response)
             except (TypeError, ValueError):
                 continue
-            if converted == allowed:
+            if converted == allowed and type(converted) is type(allowed):
                 return allowed
         raise ValueError(f"value must be one of {args!r}")
     if origin in (list, set, frozenset, Sequence):
-        values = value if isinstance(value, (list, tuple, set, frozenset)) else [value]
+        if not isinstance(value, (list, tuple, set, frozenset)):
+            raise TypeError("value must be an array")
         converted = [
-            _convert_value(item, args[0] if args else Any, response=response) for item in values
+            _convert_value(item, args[0] if args else Any, response=response) for item in value
         ]
         if origin is set:
             return set(converted)
@@ -605,27 +606,47 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
             return frozenset(converted)
         return converted
     if origin is tuple:
-        values = value if isinstance(value, (list, tuple)) else [value]
+        if not isinstance(value, (list, tuple)):
+            raise TypeError("value must be an array")
         if args == ((),):
-            if values:
+            if value:
                 raise ValueError("tuple requires 0 items")
             return ()
         if len(args) == 2 and args[1] is Ellipsis:
-            return tuple(_convert_value(item, args[0], response=response) for item in values)
-        if args and len(values) != len(args):
+            return tuple(_convert_value(item, args[0], response=response) for item in value)
+        if args and len(value) != len(args):
             raise ValueError(f"tuple requires {len(args)} items")
         return tuple(
             _convert_value(item, args[index] if args else Any, response=response)
-            for index, item in enumerate(values)
+            for index, item in enumerate(value)
         )
     if origin in (dict, Mapping):
         if not isinstance(value, Mapping):
             raise TypeError("value must be an object")
         key_type, value_type = args if len(args) == 2 else (Any, Any)
         return {
-            _convert_value(key, key_type): _convert_value(item, value_type, response=response)
+            _convert_value(key, key_type, response=response): _convert_value(
+                item, value_type, response=response
+            )
             for key, item in value.items()
         }
+
+    if annotation in (list, set, frozenset, Sequence):
+        if not isinstance(value, (list, tuple, set, frozenset)):
+            raise TypeError("value must be an array")
+        if annotation is set:
+            return set(value)
+        if annotation is frozenset:
+            return frozenset(value)
+        return list(value)
+    if annotation is tuple:
+        if not isinstance(value, (list, tuple)):
+            raise TypeError("value must be an array")
+        return tuple(value)
+    if annotation in (dict, Mapping):
+        if not isinstance(value, Mapping):
+            raise TypeError("value must be an object")
+        return dict(value)
 
     if annotation is str:
         if isinstance(value, str):
@@ -634,6 +655,8 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
     if annotation is bytes:
         if isinstance(value, bytes):
             return value
+        if isinstance(value, (bytearray, memoryview)):
+            return bytes(value)
         if isinstance(value, str):
             return value.encode()
         raise TypeError("value must be bytes")
@@ -652,9 +675,13 @@ def _convert_value(value: Any, annotation: Any, *, response: bool = False) -> An
             raise TypeError("value must be an integer")
         if isinstance(value, float) and not value.is_integer():
             raise ValueError("value must be an integer")
+        if isinstance(value, Decimal) and (
+            not value.is_finite() or value != value.to_integral_value()
+        ):
+            raise ValueError("value must be an integer")
         try:
             return int(value)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("value must be an integer") from exc
     if annotation is float:
         if isinstance(value, bool):
@@ -895,7 +922,13 @@ def _is_collection_annotation(annotation: Any) -> bool:
         return _is_collection_annotation(get_args(annotation)[0])
     if origin in (types.UnionType, Union):
         return any(_is_collection_annotation(item) for item in get_args(annotation))
-    return origin in (list, tuple, set, frozenset, Sequence)
+    return annotation in (list, tuple, set, frozenset, Sequence) or origin in (
+        list,
+        tuple,
+        set,
+        frozenset,
+        Sequence,
+    )
 
 
 def _is_typed_dict(annotation: Any) -> bool:

@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.30** — 型付き入力・`response_model` 変換の厳格化：`list`/`set`/`frozenset`/`tuple`
+> への非配列値（文字列・数値・オブジェクト等）の暗黙ラップを廃止し 422 拒否、型引数なしの
+> `list`/`tuple`/`set`/`frozenset`/`dict`/`Mapping` 注釈に対する検証・複数取得に対応、`int`
+> 変換時の小数・非有限 `Decimal` 切り捨て/`OverflowError` 防止、`Literal` 厳密型一致および
+> `bytes` での `bytearray`/`memoryview` 対応を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.29** — `Parameter`（`QueryParam`/`Form`/`Body` 等）での有限 `Decimal` 数値境界
 > （`ge`/`gt`/`le`/`lt`）の厳密比較と OpenAPI 数値出力対応、`pattern`/`alias`/`title`/
 > `description` の型事前検証、複数ファイルアップロード 422 エラーでの `UploadFile` 要約出力、
