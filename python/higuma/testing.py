@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json as json_module
+import os
 import secrets
+import stat as stat_module
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -352,9 +354,29 @@ class TestClient:
             materialized._extra_headers.extend(response._extra_headers)
             return materialized
         if isinstance(response, FileResponse):
+            path_stat = os.stat(response.path)
+            if stat_module.S_ISDIR(path_stat.st_mode):
+                raise IsADirectoryError(f"response file path is a directory: {response.path}")
+            if not stat_module.S_ISREG(path_stat.st_mode):
+                raise OSError(f"response file is not a regular file: {response.path}")
             with Path(response.path).open("rb") as handle:
+                file_stat = os.fstat(handle.fileno())
+                if not stat_module.S_ISREG(file_stat.st_mode):
+                    raise OSError(f"response file is not a regular file: {response.path}")
+                file_length = file_stat.st_size
+                if response.offset > file_length:
+                    raise OSError(
+                        f"response file {response.path} became shorter than offset {response.offset}"
+                    )
+                selected_length = (
+                    file_length - response.offset if response.length is None else response.length
+                )
+                if selected_length > file_length - response.offset:
+                    raise OSError(
+                        f"response file {response.path} became shorter than the selected range"
+                    )
                 handle.seek(response.offset)
-                body = handle.read(response.length)
+                body = handle.read(selected_length)
             materialized = Response(
                 body,
                 response.status_code,
@@ -362,6 +384,7 @@ class TestClient:
                 response.media_type,
                 response.background,
             )
+            materialized.headers.setdefault("content-length", str(selected_length))
             materialized._extra_headers.extend(response._extra_headers)
             return materialized
         return response
@@ -478,6 +501,13 @@ def _normalize_test_file(value: Any) -> tuple[str, bytes, str]:
     raw_content = value[1]
     if hasattr(raw_content, "read"):
         raw_content = raw_content.read()
-    content = raw_content.encode("utf-8") if isinstance(raw_content, str) else bytes(raw_content)
+    if isinstance(raw_content, str):
+        content = raw_content.encode("utf-8")
+    elif isinstance(raw_content, bytes):
+        content = raw_content
+    elif isinstance(raw_content, (bytearray, memoryview)):
+        content = bytes(raw_content)
+    else:
+        raise TypeError("test file content must be str or bytes-like")
     content_type = str(value[2]) if len(value) == 3 else "application/octet-stream"
     return filename, content, content_type

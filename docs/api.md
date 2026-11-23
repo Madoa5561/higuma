@@ -212,7 +212,7 @@ directory要素や危険な文字を除去します。一意名、拡張子、�
 - `FileResponse(path, *, filename=None, as_attachment=False, offset=0, length=None, ...)`
 
 full-fileの`FileResponse`と`send_file()`はGET/HEADのETag、`If-None-Match`、single byte rangeを
-自動処理し、通常ファイル以外（ディレクトリ等）はPython・Rust双方で拒否します。明示的な`offset` / `length`は指定範囲をそのままRustからstreamします。
+自動処理し、通常ファイル以外（ディレクトリ等）や送信時の範囲不整合はPython・WSGI/ASGI・Rust全体で拒否します。明示的な`offset` / `length`は指定範囲をそのままstreamします。
 
 `Response`は`status_code` / `status`、`headers`、`media_type`、`body`、`history`を持ちます。
 `append_header()`、`get_json()`、`set_cookie()`、`delete_cookie()`を提供します。

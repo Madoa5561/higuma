@@ -99,7 +99,16 @@ async def receive_body(storage: BodyBuffer, receive) -> bool:
                 return False
             if event["type"] != "http.request":
                 raise RuntimeError("expected http.request")
-            await store_chunk(storage, bytes(event.get("body", b"")))
+            raw_chunk = event.get("body", b"")
+            if raw_chunk is None:
+                chunk = b""
+            elif isinstance(raw_chunk, bytes):
+                chunk = raw_chunk
+            elif isinstance(raw_chunk, (bytearray, memoryview)):
+                chunk = bytes(raw_chunk)
+            else:
+                raise TypeError("ASGI request body chunks must be bytes-like")
+            await store_chunk(storage, chunk)
             if not event.get("more_body", False):
                 storage.seek(0)
                 return True

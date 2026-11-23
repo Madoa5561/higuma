@@ -104,14 +104,22 @@ class ASGITestWebSocket:
         self.closed = False
 
     async def send_text(self, value: str) -> None:
+        if not isinstance(value, str):
+            raise TypeError("WebSocket text payload must be str")
         if self.closed:
             raise WebSocketDisconnect(1006)
         await self._exchange.incoming.put({"type": "websocket.receive", "text": value})
 
-    async def send_bytes(self, value: bytes) -> None:
+    async def send_bytes(self, value: bytes | bytearray | memoryview) -> None:
+        if isinstance(value, bytes):
+            payload = value
+        elif isinstance(value, (bytearray, memoryview)):
+            payload = bytes(value)
+        else:
+            raise TypeError("WebSocket binary payload must be bytes-like")
         if self.closed:
             raise WebSocketDisconnect(1006)
-        await self._exchange.incoming.put({"type": "websocket.receive", "bytes": bytes(value)})
+        await self._exchange.incoming.put({"type": "websocket.receive", "bytes": payload})
 
     async def send_json(self, value: Any) -> None:
         await self.send_text(json.dumps(value, ensure_ascii=False))

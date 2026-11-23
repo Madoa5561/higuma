@@ -102,6 +102,14 @@ class _ResponseHeaders(dict[str, str]):
             super().__setitem__(name, value)
 
 
+def _coerce_bytes_body(value: Any, label: str) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value)
+    raise TypeError(f"{label} must be str or bytes-like")
+
+
 class Response:
     __higuma_response__ = True
 
@@ -115,11 +123,13 @@ class Response:
     ) -> None:
         if body is None:
             body = b""
-        if isinstance(body, str):
+        elif isinstance(body, str):
             body = body.encode("utf-8")
             media_type = media_type or "text/html; charset=utf-8"
-        elif not isinstance(body, bytes):
-            body = bytes(body)
+        elif isinstance(body, (bytes, bytearray, memoryview)):
+            body = bytes(body) if not isinstance(body, bytes) else body
+        else:
+            raise TypeError("response body must be str, bytes-like, or None")
 
         self.body = body
         self.status_code = _validate_status(status)
@@ -179,8 +189,12 @@ class Response:
     def get_data(self, as_text: bool = False) -> bytes | str:
         return self.text if as_text else self.body
 
-    def set_data(self, value: str | bytes) -> None:
-        self.body = value.encode("utf-8") if isinstance(value, str) else bytes(value)
+    def set_data(self, value: str | bytes | bytearray | memoryview) -> None:
+        self.body = (
+            value.encode("utf-8")
+            if isinstance(value, str)
+            else _coerce_bytes_body(value, "response data")
+        )
         if "content-length" in self.headers:
             self.headers["content-length"] = str(len(self.body))
 
@@ -227,6 +241,10 @@ class Response:
         samesite: str | None = "Lax",
         partitioned: bool = False,
     ) -> None:
+        if not isinstance(key, str):
+            raise TypeError("cookie key must be a string")
+        if not isinstance(value, str):
+            raise TypeError("cookie value must be a string")
         if samesite is not None and (
             not isinstance(samesite, str) or samesite.lower() not in {"lax", "strict", "none"}
         ):
@@ -285,6 +303,8 @@ class Response:
         samesite: str | None = "Lax",
         partitioned: bool = False,
     ) -> None:
+        if not isinstance(key, str):
+            raise TypeError("cookie key must be a string")
         self.set_cookie(
             key,
             "",

@@ -4,7 +4,7 @@ import asyncio
 import unittest
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
@@ -1883,6 +1883,252 @@ class PythonCoreRegressionTests(unittest.TestCase):
             resp.headers.pop("x-test", "a", "b")
         copied = resp.headers.copy()
         self.assertEqual(copied["X-TEST"], "1")
+
+    def test_bytes_like_body_cookie_file_runtime_and_fast_path_cleanup(self) -> None:
+        import asyncio
+        import io
+        import tempfile
+        from pathlib import Path
+
+        from higuma import (
+            BackgroundTask,
+            FileResponse,
+            Higuma,
+            Request,
+            Response,
+            StreamingResponse,
+            make_response,
+        )
+        from higuma.body import BodyBuffer, receive_body
+        from higuma.mounts import asgi_view, wsgi_view
+
+        # Response / make_response / set_data must reject int/bool instead of allocating NUL bytes
+        for bad_body in (5, True, [65, 66]):
+            with self.assertRaises(TypeError):
+                Response(bad_body)  # type: ignore[arg-type]
+            with self.assertRaises(TypeError):
+                Response().set_data(bad_body)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            make_response(42)  # type: ignore[arg-type]
+        self.assertEqual(Response(bytearray(b"ok")).body, b"ok")
+        self.assertEqual(Response(memoryview(b"mv")).body, b"mv")
+        mutable = Response()
+        mutable.set_data(bytearray(b"updated"))
+        self.assertEqual(mutable.body, b"updated")
+
+        # set_cookie / delete_cookie must require str key and value
+        with self.assertRaises(TypeError):
+            Response().set_cookie(123, "v")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            Response().set_cookie("k", 123)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            Response().delete_cookie(123)  # type: ignore[arg-type]
+
+        # Request / receive_body / wsgi_view / asgi_view bytes-like guards
+        self.assertEqual(Request({"body": None}).body, b"")
+        self.assertEqual(Request({"body": bytearray(b"hi")}).body, b"hi")
+        with self.assertRaises(TypeError):
+            Request({"body": 5})
+
+        async def check_receive_body() -> None:
+            buf_none = BodyBuffer(64, 32)
+            events_none = iter([{"type": "http.request", "body": None, "more_body": False}])
+
+            async def recv_none() -> dict[str, Any]:
+                return next(events_none)
+
+            self.assertTrue(await receive_body(buf_none, recv_none))
+            self.assertEqual(buf_none.size, 0)
+            buf_none.close()
+
+            buf_bad = BodyBuffer(64, 32)
+            events_bad = iter([{"type": "http.request", "body": 5, "more_body": False}])
+
+            async def recv_bad() -> dict[str, Any]:
+                return next(events_bad)
+
+            with self.assertRaises(TypeError):
+                await receive_body(buf_bad, recv_bad)
+            self.assertTrue(buf_bad.closed)
+
+        asyncio.run(check_receive_body())
+
+        def bad_wsgi(_env: Any, start_response: Any) -> list[Any]:
+            start_response("200 OK", [("Content-Type", "text/plain")])
+            return [5]
+
+        with self.assertRaises(TypeError):
+            wsgi_view(bad_wsgi, "/sub")(Request({"path": "/sub", "method": "GET"}))
+
+        async def bad_asgi(_scope: Any, _receive: Any, send: Any) -> None:
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": 5, "more_body": False})
+
+        with self.assertRaises(TypeError):
+            asyncio.run(asgi_view(bad_asgi, "/sub")(Request({"path": "/sub", "method": "GET"})))
+
+        # TestClient multipart file validation & ASGITestWebSocket payload validation
+        app = Higuma(__name__, static_folder=None)
+
+        @app.post("/upload")
+        def upload() -> str:
+            return "ok"
+
+        @app.websocket("/ws")
+        async def ws_echo(ws: Any) -> None:
+            await ws.asend_text(await ws.areceive_text())
+
+        with self.assertRaises(TypeError):
+            app.test_client().post("/upload", files={"file": ("a.txt", 16)})
+
+        async def check_asgi_ws_validation() -> None:
+            async with (
+                app.test_async_client() as client,
+                client.websocket_connect("/ws") as ws,
+            ):
+                with self.assertRaises(TypeError):
+                    await ws.send_text(123)  # type: ignore[arg-type]
+                with self.assertRaises(TypeError):
+                    await ws.send_bytes(5)  # type: ignore[arg-type]
+                await ws.send_text("ok")
+                self.assertEqual(await ws.receive_text(), "ok")
+
+        asyncio.run(check_asgi_ws_validation())
+
+        # FileResponse runtime size/type validation parity across WSGI, ASGI, and TestClient
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            shrinking = tmp_dir / "shrink.txt"
+            late = tmp_dir / "late.txt"
+            file_app = Higuma(__name__, static_folder=None)
+
+            @file_app.get("/shrink")
+            def shrink_route() -> FileResponse:
+                shrinking.write_bytes(b"0123456789")
+                response = FileResponse(shrinking)
+                shrinking.write_bytes(b"01")
+                return response
+
+            @file_app.get("/late")
+            def late_route() -> FileResponse:
+                if late.exists():
+                    late.unlink()
+                response = FileResponse(late)
+                late.write_bytes(b"appeared")
+                return response
+
+            # TestClient
+            with self.assertRaises(OSError):
+                file_app.test_client().get("/shrink")
+            late_tc = file_app.test_client().get("/late")
+            self.assertEqual(late_tc.body, b"appeared")
+            self.assertEqual(late_tc.headers.get("content-length"), "8")
+
+            # WSGI
+            def run_wsgi(path: str) -> tuple[int, dict[str, str], bytes]:
+                captured: dict[str, Any] = {}
+
+                def start_response(status: str, headers: list[tuple[str, str]]) -> None:
+                    captured["status"] = int(status.split(" ", 1)[0])
+                    captured["headers"] = {k.lower(): v for k, v in headers}
+
+                env = {
+                    "REQUEST_METHOD": "GET",
+                    "PATH_INFO": path,
+                    "QUERY_STRING": "",
+                    "SERVER_NAME": "localhost",
+                    "SERVER_PORT": "80",
+                    "wsgi.url_scheme": "http",
+                    "wsgi.input": io.BytesIO(b""),
+                }
+                result = file_app.wsgi_app(env, start_response)
+                try:
+                    body = b"".join(result)
+                finally:
+                    result.close()
+                return captured["status"], captured["headers"], body
+
+            shrink_status, _, _ = run_wsgi("/shrink")
+            self.assertEqual(shrink_status, 500)
+            late_status, late_headers, late_body = run_wsgi("/late")
+            self.assertEqual(late_status, 200)
+            self.assertEqual(late_body, b"appeared")
+            self.assertEqual(late_headers.get("content-length"), "8")
+
+            # ASGI
+            async def check_asgi_files() -> None:
+                async with file_app.test_async_client() as client:
+                    resp_shrink = await client.get("/shrink")
+                    self.assertEqual(resp_shrink.status_code, 500)
+                    resp_late = await client.get("/late")
+                    self.assertEqual(resp_late.status_code, 200)
+                    self.assertEqual(resp_late.body, b"appeared")
+                    self.assertEqual(resp_late.headers.get("content-length"), "8")
+
+            asyncio.run(check_asgi_files())
+
+        # ASGI async fast-path must close stream and run background if handoff fails before respond()
+        from higuma.async_dispatch import run as run_fast_path
+
+        fast_app = Higuma(__name__, static_folder=None)
+        cleaned: list[str] = []
+
+        class TrackedStream:
+            def __aiter__(self) -> TrackedStream:
+                return self
+
+            async def __anext__(self) -> bytes:
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                cleaned.append("closed")
+
+        @fast_app.get("/fast-stream")
+        async def fast_stream() -> StreamingResponse:
+            return StreamingResponse(
+                TrackedStream(),
+                background=BackgroundTask(cleaned.append, "bg"),
+            )
+
+        async def check_fast_path_handoff_failure() -> None:
+            route, params, allowed = fast_app._match_route("/fast-stream", "GET")
+            assert route is not None
+            raw = {
+                "path": "/fast-stream",
+                "method": "GET",
+                "body": b"",
+                "raw_headers": [(b"host", b"localhost")],
+                "scheme": "http",
+                "query_string": "",
+                "client_addr": "127.0.0.1",
+                "root_path": "",
+                "path_params": params,
+                "route_pattern": route.rule,
+                "allowed_methods": allowed,
+            }
+
+            async def never_recv() -> dict[str, Any]:
+                return await asyncio.Future()
+
+            async def noop_send(_event: dict[str, Any]) -> None:
+                return None
+
+            async def failing_worker(_fn: Any, _recv: Any) -> None:
+                raise RuntimeError("worker unavailable")
+
+            with self.assertRaises(RuntimeError):
+                await run_fast_path(
+                    fast_app,
+                    route,
+                    raw,
+                    noop_send,
+                    never_recv,
+                    lambda _resp: None,
+                    failing_worker,
+                )
+
+        asyncio.run(check_fast_path_handoff_failure())
+        self.assertEqual(cleaned, ["closed", "bg"])
 
 
 if __name__ == "__main__":

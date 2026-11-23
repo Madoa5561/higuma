@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
+import stat as stat_module
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack
@@ -138,14 +140,35 @@ class _Body:
         self.file = None
         self.remaining = None
         if isinstance(response, FileResponse):
+            path_stat = os.stat(response.path)
+            if stat_module.S_ISDIR(path_stat.st_mode):
+                raise IsADirectoryError(f"response file path is a directory: {response.path}")
+            if not stat_module.S_ISREG(path_stat.st_mode):
+                raise OSError(f"response file is not a regular file: {response.path}")
             self.file = open(response.path, "rb")  # noqa: SIM115 - ownership ends in close()
             try:
+                fileno = getattr(self.file, "fileno", None)
+                file_stat = os.fstat(fileno()) if fileno is not None else path_stat
+                if not stat_module.S_ISREG(file_stat.st_mode):
+                    raise OSError(f"response file is not a regular file: {response.path}")
+                file_length = file_stat.st_size
+                if response.offset > file_length:
+                    raise OSError(
+                        f"response file {response.path} became shorter than offset {response.offset}"
+                    )
+                selected_length = (
+                    file_length - response.offset if response.length is None else response.length
+                )
+                if selected_length > file_length - response.offset:
+                    raise OSError(
+                        f"response file {response.path} became shorter than the selected range"
+                    )
                 self.file.seek(response.offset)
             except BaseException:
                 self.file.close()
                 raise
-            self.remaining = response.length
-            self.length = response.length
+            self.remaining = selected_length
+            self.length = selected_length
         elif isinstance(response, StreamingResponse):
             self.length = response.content_length
         else:

@@ -11,6 +11,16 @@ from .request import Request
 from .response import Response
 
 
+def _require_bytes_chunk(chunk: Any, label: str, *, allow_none: bool = False) -> bytes:
+    if allow_none and chunk is None:
+        return b""
+    if isinstance(chunk, bytes):
+        return chunk
+    if isinstance(chunk, (bytearray, memoryview)):
+        return bytes(chunk)
+    raise TypeError(f"{label} must be bytes-like")
+
+
 def wsgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request], Response]:
     if not callable(application):
         raise TypeError("mounted application must be callable")
@@ -23,7 +33,7 @@ def wsgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
 
         def write(chunk: bytes) -> None:
             nonlocal headers_sent
-            data = bytes(chunk)
+            data = _require_bytes_chunk(chunk, "mounted WSGI app chunks")
             if data:
                 if status is None:
                     raise RuntimeError("mounted WSGI app yielded body before start_response")
@@ -105,7 +115,11 @@ def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
             elif event_type == "http.response.body":
                 if not started:
                     raise RuntimeError("mounted ASGI app sent http.response.body before start")
-                chunk = bytes(event.get("body") or b"")
+                chunk = _require_bytes_chunk(
+                    event.get("body"),
+                    "mounted ASGI app body chunks",
+                    allow_none=True,
+                )
                 if response_remaining is not None:
                     response_remaining -= len(chunk)
                 if not event.get("more_body", False):
@@ -122,7 +136,11 @@ def asgi_view(application: Callable[..., Any], prefix: str) -> Callable[[Request
         if start is None:
             raise RuntimeError("mounted ASGI app did not send http.response.start")
         body = b"".join(
-            bytes(event.get("body") or b"")
+            _require_bytes_chunk(
+                event.get("body"),
+                "mounted ASGI app body chunks",
+                allow_none=True,
+            )
             for event in events
             if event.get("type") == "http.response.body"
         )

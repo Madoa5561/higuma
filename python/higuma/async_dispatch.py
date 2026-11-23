@@ -119,9 +119,11 @@ async def run(app, route, raw, send, receive, respond, worker):
                     isinstance(response, (FileResponse, StreamingResponse, TemplateResponse))
                     or response.background
                 ):
-                    prebuilt, response = response, None
+                    prebuilt = response
+                    handed_off = False
 
                     def serialize():
+                        nonlocal handed_off
                         bridge = await_bridge.get()
 
                         def bind(value):
@@ -143,9 +145,14 @@ async def run(app, route, raw, send, receive, respond, worker):
                                 prebuilt.background = BackgroundTask(prebuilt.background)
                             bind(prebuilt.background)
                         prepared = app._prepare_file_response(request, prebuilt)
+                        handed_off = True
                         respond(prepared)
 
-                    await worker(serialize, never_disconnect)
+                    try:
+                        await worker(serialize, never_disconnect)
+                    finally:
+                        if handed_off:
+                            response = None
                 else:
                     length = 0 if response.status_code == 205 else len(response.body)
                     try:

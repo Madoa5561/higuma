@@ -412,6 +412,12 @@ supervisor, streaming, and proxy changes.
   In 0.11.23+, `FileResponse` rejects directories and non-regular files across both Python and
   native Rust, `RedirectResponse` validates non-empty string `location`, and `Headers` /
   `response.headers` follow `Mapping`/`dict` contracts for non-string keys and `.copy()`.
+  In 0.11.24+, `Response`/`set_data`/`Request`/`receive_body`/`wsgi_view`/`asgi_view`/
+  `TestClient`/`ASGITestWebSocket` reject non-bytes-like bodies (avoiding `bytes(int)` zero
+  allocations), `set_cookie`/`delete_cookie` require string names/values, WSGI/ASGI/`TestClient`
+  validate `FileResponse` runtime regular-file and range bounds before sending headers (matching
+  native Rust), and the ASGI async fast path closes streams and runs background tasks if worker
+  handoff fails before `respond()`.
   Native disconnect finalization waits for pending iterator calls to return; it is not
   forced cancellation or durable task delivery.
 - 0.11+ has synchronous HTTP URL preprocessors/defaults and Blueprint application-wide

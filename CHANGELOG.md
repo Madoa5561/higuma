@@ -7,6 +7,25 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.24] - 2026-11-23
+
+### Fixed
+
+- Reject non-bytes-like values (such as `int`, `bool`, or `list[int]`) in `Response.__init__()`,
+  `Response.set_data()`, `Request.__init__()`, `receive_body()`, `wsgi_view()`, `asgi_view()`,
+  `TestClient` multipart uploads, and `ASGITestWebSocket.send_bytes()` instead of silently
+  allocating zero-filled buffers via `bytes(int)`. Also require `str` cookie names/values in
+  `Response.set_cookie()` / `delete_cookie()`, treat `None` ASGI request body chunks as `b""`,
+  and require `str` in `ASGITestWebSocket.send_text()`.
+- Align WSGI, ASGI (`_Body`), and `TestClient._materialize()` `FileResponse` handling with
+  native Rust `file_response_from_py()`: verify regular-file status, `offset <= file_size`,
+  and `length <= file_size - offset` before emitting headers (preventing truncated `200 OK`
+  responses on shrunk files and computing `Content-Length` if the file appeared after
+  `FileResponse` construction).
+- Track handoff ownership in the ASGI async fast path (`async_dispatch.run()`) so
+  `StreamingResponse._aclose()` and `response.background` still execute if worker handoff is
+  cancelled or fails before `respond()` takes ownership.
+
 ## [0.11.23] - 2026-11-23
 
 ### Fixed

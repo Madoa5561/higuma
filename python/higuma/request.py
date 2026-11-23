@@ -220,7 +220,18 @@ class Request:
         }
         self.headers = Headers(parsed_headers)
         self._body_file = raw.get("body_file")
-        self._body = None if self._body_file is not None else bytes(raw.get("body", b""))
+        if self._body_file is not None:
+            self._body = None
+        else:
+            raw_body = raw.get("body", b"")
+            if raw_body is None:
+                self._body = b""
+            elif isinstance(raw_body, bytes):
+                self._body = raw_body
+            elif isinstance(raw_body, (bytearray, memoryview)):
+                self._body = bytes(raw_body)
+            else:
+                raise TypeError("request body must be bytes-like or None")
         self.body_size = int(raw.get("body_size", len(self._body or b"")))
         self.max_form_memory_size = 1024 * 1024
         self.max_form_parts = 1000

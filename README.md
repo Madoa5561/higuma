@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.11.24** — `Response`/`set_data`/`Request`/`receive_body`/`wsgi_view`/`asgi_view`/
+> `TestClient`/`ASGITestWebSocket` での非 bytes-like 入力（`bytes(int)` による NUL バイト確保）
+> および `set_cookie`/`delete_cookie` 非文字列引数拒否、WSGI/ASGI/`TestClient` の `FileResponse`
+> 実行時サイズ・通常ファイル検証（native Rust 整合）、ASGI async fast-path の handoff 失敗・
+> キャンセル時 stream/background 解放を改善。必須 Python 依存は 0 のままです。
+>
 > **0.11.23** — `FileResponse`（Python／Rust 双方）でのディレクトリ・非通常ファイル拒否、
 > `RedirectResponse` の非空文字列 `location` 検証、`Headers` / `response.headers` の非文字列キー
 > `Mapping`/`dict` 契約準拠と `.copy()` 大文字小文字非区別保持を改善。必須 Python 依存は 0 のままです。

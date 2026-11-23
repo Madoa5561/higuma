@@ -241,6 +241,12 @@ def _exercise_flask_helpers() -> None:
     assert 123 not in Headers({"Content-Type": "text/plain"})
     copied_headers = Response("ok", headers={"X-Smoke": "1"}).headers.copy()
     assert copied_headers["x-smoke"] == "1" and copied_headers["X-SMOKE"] == "1"
+    try:
+        Response(16)  # type: ignore[arg-type]
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("Response(int) must raise TypeError")
     multi = app.make_response(("ok", 200, [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")]))
     assert [v for k, v in multi.header_items if k == "set-cookie"] == ["a=1", "b=2"]
     from higuma import PasswordHasher
