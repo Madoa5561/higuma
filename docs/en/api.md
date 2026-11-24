@@ -341,8 +341,9 @@ Version 0.12.0+ provides `EasyHiguma` (also available via `Higuma.easy()`), bund
 - Built-in auth routes: `auth_routes=True` or `app.mount_auth_routes()` mounts `/login`, `/register`, and `/logout` for both HTML forms and JSON clients with open-redirect protection
 - CSRF helpers: `app.csrf_token()`, `app.csrf_input()`
 - Dictionary table CRUD (`table = app.table("memos", user_scoped=True)`):
-  - `table.add(data=None, **fields) -> dict[str, Any]`
-  - `table.list(*, limit=None, offset=0, newest_first=True, **filters) -> list[dict[str, Any]]`
+  - Pre-existing SQLite tables created without `data_json` are automatically migrated in-place to the `EasyTable` schema (0.12.1+), and returned `EasyRecord` items (`dict` subclass) support both key access (`m["title"]`) and attribute access (`m.title`).
+  - `table.add(data=None, **fields) -> EasyRecord`
+  - `table.list(*, limit=None, offset=0, newest_first=True, **filters) -> list[EasyRecord]`
   - `table.count(**filters) -> int`
   - `table.get(record_id)` / `table.get_or_404(record_id)`
   - `table.update(record_id, data=None, **changes)` / `table.update_or_404(record_id, data=None, **changes)`

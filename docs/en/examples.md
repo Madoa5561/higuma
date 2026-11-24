@@ -34,6 +34,9 @@ cookie and token, then POST with `X-CSRF-Token` and JSON containing
 | File | Covers | Runtime note |
 | --- | --- | --- |
 | `easy_memo.py` | `EasyHiguma` 1-line login and per-user memo board (HTML + JSON API) | Creates `easy_memo.sqlite3` at startup |
+| `easy_todo.py` | `EasyHiguma` ToDo / assignment tracker with completion toggle and filters | Creates `easy_todo.sqlite3` at startup |
+| `easy_board.py` | `EasyHiguma` shared bulletin board / mini-SNS with likes and author-only delete | Creates `easy_board.sqlite3` at startup |
+| `easy_custom_auth.py` | `EasyHiguma` custom login/signup pages with extra user profile fields | Creates `easy_custom_auth.sqlite3` at startup |
 | `app.py` | Routing, JSON, SSR templates | None |
 | `blueprint_hooks.py` | Blueprints, config, request/lifecycle hooks | None |
 | `routing_async.py` | Converters, multiple methods, async handlers | None |

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import re
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 
 from higuma import (
     EasyHiguma,
+    EasyRecord,
     EasyTable,
     EasyUser,
     Higuma,
@@ -12,7 +16,10 @@ from higuma import (
     request,
 )
 
+from examples.easy_board import create_app as create_easy_board_app
+from examples.easy_custom_auth import create_app as create_easy_custom_auth_app
 from examples.easy_memo import create_app as create_easy_memo_app
+from examples.easy_todo import create_app as create_easy_todo_app
 
 _CSRF_RE = re.compile(r'name="_csrf_token" value="([^"]+)"')
 
@@ -299,6 +306,159 @@ class EasyModeTests(unittest.TestCase):
             items.list(limit=-1)
         with self.assertRaises(ValueError):
             items.list(offset=-1)
+
+    def test_legacy_sqlite_table_without_data_json_is_automatically_migrated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "memo.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    "CREATE TABLE memos ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "title TEXT NOT NULL, "
+                    "body TEXT NOT NULL"
+                    ")"
+                )
+                conn.execute(
+                    "INSERT INTO memos (title, body) VALUES (?, ?)",
+                    ("Old title", "Old body"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Opening the pre-existing memo.db as a global table migrates rows into data_json
+            app = EasyHiguma(__name__, db=db_path, csrf=False, hasher_n=2**12)
+            memos = app.table("memos", user_scoped=False)
+            existing = memos.list()
+            self.assertEqual(len(existing), 1)
+            self.assertIsInstance(existing[0], EasyRecord)
+            self.assertEqual(existing[0].title, "Old title")
+            self.assertEqual(existing[0]["body"], "Old body")
+
+            added = memos.add(title="New title", body="New body")
+            self.assertEqual(added.title, "New title")
+            self.assertEqual(memos.count(), 2)
+
+            # Also verify user_scoped=True on a pre-existing legacy table with incompatible columns
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    "CREATE TABLE private_memos ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "user_id INTEGER, "
+                    "legacy_text TEXT NOT NULL"
+                    ")"
+                )
+                conn.execute(
+                    "INSERT INTO private_memos (user_id, legacy_text) VALUES (1, 'old row')"
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            private_memos = app.table("private_memos", user_scoped=True)
+            user = app.register_user("student", "pass1234")
+            self.assertEqual(private_memos.list(user_id=user.id), [])
+            created = private_memos.add(title="Clean memo", body="Works", user_id=user.id)
+            self.assertEqual(created.title, "Clean memo")
+            self.assertEqual(len(private_memos.list(user_id=user.id)), 1)
+
+    def test_easy_todo_board_and_custom_auth_examples(self) -> None:
+        # 1. easy_todo.py
+        todo_app = create_easy_todo_app(":memory:")
+        todo_client = todo_app.test_client()
+        reg_html = todo_client.get("/register").text
+        todo_client.post(
+            "/register",
+            data={
+                "_csrf_token": _extract_csrf(reg_html),
+                "username": "taro",
+                "password": "password123",
+            },
+        )
+        home_html = todo_client.get("/").text
+        todo_client.post(
+            "/todos",
+            data={
+                "_csrf_token": _extract_csrf(home_html),
+                "task": "レポート提出",
+                "due": "明日",
+            },
+        )
+        after_add = todo_client.get("/")
+        self.assertIn("レポート提出", after_add.text)
+        todo_client.post(
+            "/todos/1/toggle",
+            data={"_csrf_token": _extract_csrf(after_add.text)},
+        )
+        self.assertIn("レポート提出", todo_client.get("/?filter=done").text)
+        self.assertNotIn("レポート提出", todo_client.get("/?filter=active").text)
+
+        # 2. easy_board.py
+        board_app = create_easy_board_app(":memory:")
+        c1 = board_app.test_client()
+        c2 = board_app.test_client()
+        c1.post(
+            "/register",
+            data={
+                "_csrf_token": _extract_csrf(c1.get("/register").text),
+                "username": "alice",
+                "password": "password123",
+            },
+        )
+        c2.post(
+            "/register",
+            data={
+                "_csrf_token": _extract_csrf(c2.get("/register").text),
+                "username": "bob",
+                "password": "password123",
+            },
+        )
+        c1.post(
+            "/posts",
+            data={
+                "_csrf_token": _extract_csrf(c1.get("/").text),
+                "message": "こんにちは！",
+            },
+        )
+        bob_view = c2.get("/")
+        self.assertIn("こんにちは！", bob_view.text)
+        # Bob likes Alice's post
+        c2.post("/posts/1/like", data={"_csrf_token": _extract_csrf(bob_view.text)})
+        self.assertIn("👍 1", c1.get("/").text)
+        # Bob cannot delete Alice's post
+        forbidden = c2.post(
+            "/posts/1/delete",
+            data={"_csrf_token": _extract_csrf(c2.get("/").text)},
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+        # 3. easy_custom_auth.py
+        custom_app = create_easy_custom_auth_app(":memory:")
+        cc = custom_app.test_client()
+        self.assertEqual(cc.get("/").headers["location"], "/login?next=/")
+        signup_html = cc.get("/signup").text
+        cc.post(
+            "/signup",
+            data={
+                "_csrf_token": _extract_csrf(signup_html),
+                "username": "hanako",
+                "password": "password123",
+                "nickname": "花子",
+                "department": "情報工学科 2年",
+            },
+        )
+        profile = cc.get("/")
+        self.assertIn("ようこそ、花子 さん（学部・クラス: 情報工学科 2年）", profile.text)
+        cc.post(
+            "/diaries",
+            data={
+                "_csrf_token": _extract_csrf(profile.text),
+                "entry": "Higumaでログイン機能を作った",
+            },
+        )
+        self.assertIn("Higumaでログイン機能を作った", cc.get("/").text)
 
 
 if __name__ == "__main__":

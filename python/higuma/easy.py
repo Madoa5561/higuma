@@ -4,6 +4,7 @@ import inspect
 import json
 import os
 import secrets
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,6 +30,18 @@ _RESERVED_COLUMNS = {"id", "user_id", "created_at", "updated_at"}
 
 class UserAlreadyExistsError(ValueError):
     """Raised when registering a username that already exists in EasyHiguma."""
+
+
+class EasyRecord(dict[str, Any]):
+    """Dictionary record returned by EasyTable supporting both dict and attribute access."""
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}"
+            ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,9 +146,45 @@ class EasyTable:
 
     def _ensure_table(self) -> None:
         index_name = quote_identifier(f"idx_{self.name}_user_id")
+        expected_columns = {"id", "user_id", "data_json", "created_at", "updated_at"}
         with self.app.db.session() as db_session:
+            info_rows = db_session.execute(
+                f"PRAGMA table_info({self._quoted})"  # nosec B608
+            ).fetchall()
+            if not info_rows:
+                db_session.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted} ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "user_id INTEGER, "
+                    "data_json TEXT NOT NULL, "
+                    "created_at TEXT NOT NULL, "
+                    "updated_at TEXT NOT NULL"
+                    ")"
+                )
+            else:
+                existing_columns = {str(row["name"]) for row in info_rows}
+                if existing_columns != expected_columns:
+                    self._migrate_legacy_table(db_session, existing_columns)
             db_session.execute(
-                f"CREATE TABLE IF NOT EXISTS {self._quoted} ("
+                f"CREATE INDEX IF NOT EXISTS {index_name} ON {self._quoted} (user_id)"
+            )
+
+    def _migrate_legacy_table(
+        self,
+        db_session: Any,
+        existing_columns: set[str],
+    ) -> None:
+        legacy_rows = db_session.execute(
+            f"SELECT * FROM {self._quoted}"  # nosec B608
+        ).fetchall()
+        temp_quoted = quote_identifier(f"_higuma_easy_tmp_{self.name}")
+        has_easy_json = "data_json" in existing_columns
+        now = _utc_now_iso()
+        db_session.execute("PRAGMA foreign_keys = OFF")
+        try:
+            db_session.execute(f"DROP TABLE IF EXISTS {temp_quoted}")
+            db_session.execute(
+                f"CREATE TABLE {temp_quoted} ("
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, "
                 "user_id INTEGER, "
                 "data_json TEXT NOT NULL, "
@@ -143,9 +192,65 @@ class EasyTable:
                 "updated_at TEXT NOT NULL"
                 ")"
             )
-            db_session.execute(
-                f"CREATE INDEX IF NOT EXISTS {index_name} ON {self._quoted} (user_id)"
-            )
+            for old_row in legacy_rows:
+                row_map = dict(old_row)
+                raw_id = row_map.pop("id", None)
+                record_id = (
+                    int(raw_id)
+                    if isinstance(raw_id, int) and not isinstance(raw_id, bool)
+                    else None
+                )
+                raw_user_id = row_map.pop("user_id", None)
+                owner_id: int | None = None
+                if (has_easy_json or not self.user_scoped) and (
+                    raw_user_id is not None and not isinstance(raw_user_id, bool)
+                ):
+                    try:
+                        owner_id = int(raw_user_id)
+                    except (TypeError, ValueError):
+                        owner_id = None
+                created_at = str(row_map.pop("created_at", None) or now)
+                updated_at = str(row_map.pop("updated_at", None) or created_at)
+                raw_data_json = row_map.pop("data_json", None)
+                payload: dict[str, Any] = {}
+                if isinstance(raw_data_json, str) and raw_data_json.strip():
+                    try:
+                        loaded = json.loads(raw_data_json)
+                        if isinstance(loaded, dict):
+                            payload.update(loaded)
+                    except ValueError:
+                        pass
+                for key, value in row_map.items():
+                    if isinstance(value, (bytes, bytearray, memoryview)):
+                        value = bytes(value).decode("utf-8", errors="replace")
+                    payload.setdefault(key, value)
+                encoded = json.dumps(payload, ensure_ascii=False, default=str)
+                if record_id is not None:
+                    db_session.execute(
+                        f"INSERT INTO {temp_quoted} (id, user_id, data_json, created_at, updated_at) "  # nosec B608
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (record_id, owner_id, encoded, created_at, updated_at),
+                    )
+                else:
+                    db_session.execute(
+                        f"INSERT INTO {temp_quoted} (user_id, data_json, created_at, updated_at) "  # nosec B608
+                        "VALUES (?, ?, ?, ?)",
+                        (owner_id, encoded, created_at, updated_at),
+                    )
+            db_session.execute(f"DROP TABLE {self._quoted}")
+            db_session.execute(f"ALTER TABLE {temp_quoted} RENAME TO {self._quoted}")
+        finally:
+            db_session.execute("PRAGMA foreign_keys = ON")
+
+    def _run_with_schema_repair(self, operation: Callable[[], Any]) -> Any:
+        try:
+            return operation()
+        except sqlite3.OperationalError as exc:
+            message = str(exc).lower()
+            if "no such column" in message or "no such table" in message:
+                self._ensure_table()
+                return operation()
+            raise
 
     def _resolve_user_id(self, explicit_user_id: Any) -> int | None:
         if explicit_user_id is not _AUTO:
@@ -164,14 +269,16 @@ class EasyTable:
             raise Unauthorized(detail="login required to access user-scoped data")
         return int(user_id)
 
-    def _row_to_dict(self, row: Any) -> dict[str, Any]:
+    def _row_to_dict(self, row: Any) -> EasyRecord:
         payload = json.loads(row["data_json"])
-        result: dict[str, Any] = {
-            **payload,
-            "id": int(row["id"]),
-            "created_at": str(row["created_at"]),
-            "updated_at": str(row["updated_at"]),
-        }
+        result = EasyRecord(
+            {
+                **payload,
+                "id": int(row["id"]),
+                "created_at": str(row["created_at"]),
+                "updated_at": str(row["updated_at"]),
+            }
+        )
         if self.user_scoped or row["user_id"] is not None:
             result["user_id"] = int(row["user_id"]) if row["user_id"] is not None else None
         return result
@@ -196,24 +303,30 @@ class EasyTable:
         *,
         user_id: Any = _AUTO,
         **fields: Any,
-    ) -> dict[str, Any]:
+    ) -> EasyRecord:
         owner_id = self._resolve_user_id(user_id)
         payload = self._clean_fields(data, fields)
         encoded = json.dumps(payload, ensure_ascii=False)
         now = _utc_now_iso()
-        with self.app.db.session() as db_session:
-            cursor = db_session.execute(
-                f"INSERT INTO {self._quoted} (user_id, data_json, created_at, updated_at) "  # nosec B608
-                "VALUES (?, ?, ?, ?)",
-                (owner_id, encoded, now, now),
-            )
-            record_id = int(cursor.lastrowid)
-        result: dict[str, Any] = {
-            **payload,
-            "id": record_id,
-            "created_at": now,
-            "updated_at": now,
-        }
+
+        def _insert() -> int:
+            with self.app.db.session() as db_session:
+                cursor = db_session.execute(
+                    f"INSERT INTO {self._quoted} (user_id, data_json, created_at, updated_at) "  # nosec B608
+                    "VALUES (?, ?, ?, ?)",
+                    (owner_id, encoded, now, now),
+                )
+                return int(cursor.lastrowid)
+
+        record_id = int(self._run_with_schema_repair(_insert))
+        result = EasyRecord(
+            {
+                **payload,
+                "id": record_id,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
         if self.user_scoped or owner_id is not None:
             result["user_id"] = owner_id
         return result
@@ -226,7 +339,7 @@ class EasyTable:
         newest_first: bool = True,
         user_id: Any = _AUTO,
         **filters: Any,
-    ) -> list[dict[str, Any]]:
+    ) -> list[EasyRecord]:
         if limit is not None and (
             isinstance(limit, bool) or not isinstance(limit, int) or limit < 0
         ):
@@ -239,12 +352,16 @@ class EasyTable:
         direction = "DESC" if newest_first else "ASC"
         where = " WHERE user_id = ?" if owner_id is not None else ""
         params: tuple[Any, ...] = (owner_id,) if owner_id is not None else ()
-        with self.app.db.session() as db_session:
-            rows = db_session.execute(
-                f"SELECT id, user_id, data_json, created_at, updated_at "  # nosec B608
-                f"FROM {self._quoted}{where} ORDER BY id {direction}",
-                params,
-            ).fetchall()
+
+        def _fetch() -> list[Any]:
+            with self.app.db.session() as db_session:
+                return db_session.execute(
+                    f"SELECT id, user_id, data_json, created_at, updated_at "  # nosec B608
+                    f"FROM {self._quoted}{where} ORDER BY id {direction}",
+                    params,
+                ).fetchall()
+
+        rows = self._run_with_schema_repair(_fetch)
         items = [self._row_to_dict(row) for row in rows]
         if filters:
             items = [
@@ -277,20 +394,24 @@ class EasyTable:
             raise ValueError("record_id must be an integer")
         raise TypeError("record_id must be an integer")
 
-    def get(self, record_id: int | str, *, user_id: Any = _AUTO) -> dict[str, Any] | None:
+    def get(self, record_id: int | str, *, user_id: Any = _AUTO) -> EasyRecord | None:
         parsed_id = self._coerce_record_id(record_id)
         owner_id = self._resolve_user_id(user_id)
         where = "WHERE id = ? AND user_id = ?" if owner_id is not None else "WHERE id = ?"
         params: tuple[Any, ...] = (parsed_id, owner_id) if owner_id is not None else (parsed_id,)
-        with self.app.db.session() as db_session:
-            row = db_session.execute(
-                f"SELECT id, user_id, data_json, created_at, updated_at "  # nosec B608
-                f"FROM {self._quoted} {where}",
-                params,
-            ).fetchone()
+
+        def _fetch_one() -> Any:
+            with self.app.db.session() as db_session:
+                return db_session.execute(
+                    f"SELECT id, user_id, data_json, created_at, updated_at "  # nosec B608
+                    f"FROM {self._quoted} {where}",
+                    params,
+                ).fetchone()
+
+        row = self._run_with_schema_repair(_fetch_one)
         return self._row_to_dict(row) if row is not None else None
 
-    def get_or_404(self, record_id: int | str, *, user_id: Any = _AUTO) -> dict[str, Any]:
+    def get_or_404(self, record_id: int | str, *, user_id: Any = _AUTO) -> EasyRecord:
         item = self.get(record_id, user_id=user_id)
         if item is None:
             raise NotFound(detail=f"{self.name} record {record_id} was not found")
@@ -303,38 +424,44 @@ class EasyTable:
         *,
         user_id: Any = _AUTO,
         **changes: Any,
-    ) -> dict[str, Any] | None:
+    ) -> EasyRecord | None:
         parsed_id = self._coerce_record_id(record_id)
         owner_id = self._resolve_user_id(user_id)
         updates = self._clean_fields(data, changes)
         where = "WHERE id = ? AND user_id = ?" if owner_id is not None else "WHERE id = ?"
         params: tuple[Any, ...] = (parsed_id, owner_id) if owner_id is not None else (parsed_id,)
         now = _utc_now_iso()
-        with self.app.db.session() as db_session:
-            row = db_session.execute(
-                f"SELECT id, user_id, data_json, created_at, updated_at "  # nosec B608
-                f"FROM {self._quoted} {where}",
-                params,
-            ).fetchone()
-            if row is None:
-                return None
-            payload = {**json.loads(row["data_json"]), **updates}
-            encoded = json.dumps(payload, ensure_ascii=False)
-            db_session.execute(
-                f"UPDATE {self._quoted} SET data_json = ?, updated_at = ? {where}",  # nosec B608
-                (encoded, now, *params),
+
+        def _do_update() -> EasyRecord | None:
+            with self.app.db.session() as db_session:
+                row = db_session.execute(
+                    f"SELECT id, user_id, data_json, created_at, updated_at "  # nosec B608
+                    f"FROM {self._quoted} {where}",
+                    params,
+                ).fetchone()
+                if row is None:
+                    return None
+                payload = {**json.loads(row["data_json"]), **updates}
+                encoded = json.dumps(payload, ensure_ascii=False)
+                db_session.execute(
+                    f"UPDATE {self._quoted} SET data_json = ?, updated_at = ? {where}",  # nosec B608
+                    (encoded, now, *params),
+                )
+                created_at = str(row["created_at"])
+                row_user_id = int(row["user_id"]) if row["user_id"] is not None else None
+            result = EasyRecord(
+                {
+                    **payload,
+                    "id": parsed_id,
+                    "created_at": created_at,
+                    "updated_at": now,
+                }
             )
-            created_at = str(row["created_at"])
-            row_user_id = int(row["user_id"]) if row["user_id"] is not None else None
-        result: dict[str, Any] = {
-            **payload,
-            "id": parsed_id,
-            "created_at": created_at,
-            "updated_at": now,
-        }
-        if self.user_scoped or row_user_id is not None:
-            result["user_id"] = row_user_id
-        return result
+            if self.user_scoped or row_user_id is not None:
+                result["user_id"] = row_user_id
+            return result
+
+        return self._run_with_schema_repair(_do_update)
 
     def update_or_404(
         self,
@@ -343,7 +470,7 @@ class EasyTable:
         *,
         user_id: Any = _AUTO,
         **changes: Any,
-    ) -> dict[str, Any]:
+    ) -> EasyRecord:
         updated = self.update(record_id, data, user_id=user_id, **changes)
         if updated is None:
             raise NotFound(detail=f"{self.name} record {record_id} was not found")
@@ -354,12 +481,16 @@ class EasyTable:
         owner_id = self._resolve_user_id(user_id)
         where = "WHERE id = ? AND user_id = ?" if owner_id is not None else "WHERE id = ?"
         params: tuple[Any, ...] = (parsed_id, owner_id) if owner_id is not None else (parsed_id,)
-        with self.app.db.session() as db_session:
-            cursor = db_session.execute(
-                f"DELETE FROM {self._quoted} {where}",  # nosec B608
-                params,
-            )
-            return cursor.rowcount > 0
+
+        def _do_delete() -> bool:
+            with self.app.db.session() as db_session:
+                cursor = db_session.execute(
+                    f"DELETE FROM {self._quoted} {where}",  # nosec B608
+                    params,
+                )
+                return cursor.rowcount > 0
+
+        return bool(self._run_with_schema_repair(_do_delete))
 
     def delete_or_404(self, record_id: int | str, *, user_id: Any = _AUTO) -> None:
         if not self.delete(record_id, user_id=user_id):
@@ -369,12 +500,16 @@ class EasyTable:
         owner_id = self._resolve_user_id(user_id)
         where = " WHERE user_id = ?" if owner_id is not None else ""
         params: tuple[Any, ...] = (owner_id,) if owner_id is not None else ()
-        with self.app.db.session() as db_session:
-            cursor = db_session.execute(
-                f"DELETE FROM {self._quoted}{where}",  # nosec B608
-                params,
-            )
-            return int(cursor.rowcount)
+
+        def _do_clear() -> int:
+            with self.app.db.session() as db_session:
+                cursor = db_session.execute(
+                    f"DELETE FROM {self._quoted}{where}",  # nosec B608
+                    params,
+                )
+                return int(cursor.rowcount)
+
+        return int(self._run_with_schema_repair(_do_clear))
 
 
 class EasyHiguma(Higuma):
@@ -530,7 +665,6 @@ class EasyHiguma(Higuma):
         extra_json = json.dumps(extra, ensure_ascii=False)
         now = _utc_now_iso()
         quoted = quote_identifier(_USERS_TABLE)
-        import sqlite3
 
         try:
             with self.db.session() as db_session:

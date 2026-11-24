@@ -40,7 +40,7 @@ from .database import (
 from .database import (
     Session as DatabaseSession,
 )
-from .easy import EasyHiguma, EasyTable, EasyUser, UserAlreadyExistsError
+from .easy import EasyHiguma, EasyRecord, EasyTable, EasyUser, UserAlreadyExistsError
 from .exceptions import (
     BadRequest,
     Conflict,
@@ -155,6 +155,7 @@ __all__ = [
     "DateTime",
     "Depends",
     "EasyHiguma",
+    "EasyRecord",
     "EasyTable",
     "EasyUser",
     "EventSourceResponse",

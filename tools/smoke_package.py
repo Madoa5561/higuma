@@ -257,6 +257,7 @@ def _exercise_flask_helpers() -> None:
         == 201
     )
     assert easy_client.post("/easy-memos", json={"title": "hello"}).json["title"] == "hello"
+    assert easy_memos.list(user_id=1)[0].title == "hello"
     try:
         app.before_request("not-callable")  # type: ignore[arg-type]
     except TypeError:

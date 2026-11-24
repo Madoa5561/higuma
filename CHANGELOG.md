@@ -7,6 +7,24 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-24
+
+### Fixed
+
+- Automatically inspect and migrate pre-existing SQLite tables that lack `EasyTable` columns
+  (`data_json`, `user_id`, `created_at`, `updated_at`) in `EasyTable._ensure_table()` and recover
+  on schema drift (`_run_with_schema_repair`), preventing `sqlite3.OperationalError: no such column: data_json`
+  when pointing `EasyHiguma` at an existing SQLite database file (`easy.py`).
+
+### Added
+
+- Return `EasyRecord` (`dict` subclass supporting both `record["field"]` and `record.field`
+  attribute access) from `EasyTable` CRUD methods (`easy.py`).
+- Add additional runnable Easy Mode examples in `examples/`:
+  - `examples/easy_todo.py` (ToDo & assignment checklist with completion toggling and filtering)
+  - `examples/easy_board.py` (shared multi-user bulletin board with likes and author-only deletion)
+  - `examples/easy_custom_auth.py` (custom HTML login/signup pages and extra user profile fields)
+
 ## [0.12.0] - 2026-11-24
 
 ### Added

@@ -14,20 +14,25 @@ def create_app(db: str | Path = ":memory:") -> EasyHiguma:
     @app.login_required
     def index() -> HTMLResponse:
         items = "".join(
-            f"<li><strong>{escape(str(m.get('title', '')))}</strong>: "
+            f"<li style='margin-bottom:0.5rem'>"
+            f"<strong>{escape(str(m.get('title', '')))}</strong>: "
             f"{escape(str(m.get('body', '')))} "
             f"<form method='post' action='/memos/{m['id']}/delete' style='display:inline'>"
             f"{app.csrf_input()}<button type='submit'>削除</button></form></li>"
             for m in memos.list()
         )
         return HTMLResponse(
+            "<!doctype html><html lang='ja'><head><meta charset='utf-8'>"
+            "<title>メモ帳 - EasyHiguma</title></head>"
+            "<body style='font-family:system-ui,sans-serif;max-width:680px;margin:2rem auto;padding:0 1rem'>"
             f"<h1>{escape(app.current_user.username)} さんのメモ帳</h1>"
-            f"<form method='post' action='/memos'>{app.csrf_input()}"
+            f"<form method='post' action='/memos' style='margin-bottom:1.5rem'>{app.csrf_input()}"
             "<input name='title' placeholder='タイトル' required> "
             "<input name='body' placeholder='内容'> "
             "<button type='submit'>追加</button></form>"
             f"<ul>{items}</ul>"
             "<p><a href='/logout'>ログアウト</a></p>"
+            "</body></html>"
         )
 
     @app.post("/memos")

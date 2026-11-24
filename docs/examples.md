@@ -19,6 +19,9 @@ factory・親子Blueprint・SQLAlchemy・login/CSRF/role・管理画面・独自
 | File | 内容 | 実行時の注意 |
 | --- | --- | --- |
 | `easy_memo.py` | `EasyHiguma` による1行ログイン・ユーザー別メモ帳（HTML＋JSON API） | 起動時に`easy_memo.sqlite3`を作成 |
+| `easy_todo.py` | `EasyHiguma` によるToDo・課題管理（完了切り替え・期限・状態フィルタ） | 起動時に`easy_todo.sqlite3`を作成 |
+| `easy_board.py` | `EasyHiguma` による全体共有の掲示板・ひとことSNS（いいね・本人削除制限） | 起動時に`easy_board.sqlite3`を作成 |
+| `easy_custom_auth.py` | `EasyHiguma` で自作ログイン／登録画面とプロフィール項目（学部・ニックネーム）を扱う例 | 起動時に`easy_custom_auth.sqlite3`を作成 |
 | `app.py` | routing、JSON、SSR template | なし |
 | `csr_app.py` | CSR、History API、API JSON、深いURLのreload | 0.6.0以降、`/app/`を開く。npm不要 |
 | `vite_ssr.py` | Python HTML＋Vite CSS/modulepreload | 自分のbuildと`.vite/manifest.json`が必要 |

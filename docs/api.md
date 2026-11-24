@@ -332,8 +332,9 @@ CLIから利用します。
 - 組み込み認証ルート: `auth_routes=True` または `app.mount_auth_routes()` で `/login`・`/register`・`/logout`（HTMLフォーム／JSON API両対応、オープンリダイレクト防止付き）を自動登録
 - フォームCSRF補助: `app.csrf_token()`、`app.csrf_input()`
 - 辞書テーブルCRUD (`table = app.table("memos", user_scoped=True)`):
-  - `table.add(data=None, **fields) -> dict[str, Any]`
-  - `table.list(*, limit=None, offset=0, newest_first=True, **filters) -> list[dict[str, Any]]`
+  - 既存の SQLite ファイルに旧形式の同名テーブル（`data_json` 列を持たないテーブル）が存在する場合も、自動で `EasyTable` スキーマへ安全に移行されます（0.12.1+）。また返却レコードは `EasyRecord`（`dict` サブクラス）として辞書アクセス `m["title"]` と属性アクセス `m.title` の両方に対応します。
+  - `table.add(data=None, **fields) -> EasyRecord`
+  - `table.list(*, limit=None, offset=0, newest_first=True, **filters) -> list[EasyRecord]`
   - `table.count(**filters) -> int`
   - `table.get(record_id)` / `table.get_or_404(record_id)`
   - `table.update(record_id, data=None, **changes)` / `table.update_or_404(record_id, data=None, **changes)`

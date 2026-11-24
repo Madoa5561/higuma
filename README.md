@@ -34,6 +34,12 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.12.1** — `EasyTable`（`app.table(...)`）で既存の SQLite ファイルに旧スキーマの同名テーブル
+> （`data_json` カラムを持たないテーブル）が存在する場合に `sqlite3.OperationalError: no such column: data_json`
+> が発生する問題を修正（既存テーブルを自動で `EasyTable` スキーマへ安全に移行）、返却レコード
+> `EasyRecord`（`dict` サブクラス）での属性アクセス（`m.title`）対応、およびイージーモードの実行例
+> （`examples/easy_memo.py`・`examples/easy_todo.py`・`examples/easy_board.py`・`examples/easy_custom_auth.py`）を拡充。必須 Python 依存は 0 のままです。
+>
 > **0.12.0** — 学習者・プロトタイプ向けの **イージーモード (`EasyHiguma` / `Higuma.easy()`)** を追加：
 > SQLite・ユーザー登録／ログイン（scrypt ハッシュ＋署名セッション）・CSRF 保護・組み込み認証画面
 > （`auth_routes=True` による `/register`・`/login`・`/logout` HTML/JSON 両対応）を 1 行で設定可能になり、
