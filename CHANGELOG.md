@@ -7,6 +7,26 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-24
+
+### Added
+
+- Add beginner- and prototype-friendly Easy Mode (`EasyHiguma`, `Higuma.easy()`, `EasyTable`,
+  `EasyUser`, `UserAlreadyExistsError`) in `higuma.easy`:
+  - Configure SQLite persistence, scrypt password hashing, signed cookie sessions, CSRF
+    protection (`app.csrf_input()`, `app.csrf_token()`), and user authentication in one line.
+  - Provide 1-line user management helpers (`app.register_user` / `create_user` / `signup_user`,
+    `app.authenticate_user`, `app.login`, `app.logout`, `app.get_user`, `app.get_user_by_id`,
+    `app.list_users`, `app.current_user`, and `@app.login_required`).
+  - Provide optional built-in `/login`, `/register`, and `/logout` routes (`auth_routes=True`
+    or `app.mount_auth_routes()`) supporting both HTML form views and JSON API clients with
+    open-redirect protection.
+  - Provide schema-free dictionary CRUD tables via `app.table("memos", user_scoped=True)` with
+    `add`, `list`, `count`, `get`, `get_or_404`, `update`, `update_or_404`, `delete`,
+    `delete_or_404`, and `clear`, automatically isolating records per authenticated user when
+    `user_scoped=True`.
+  - Add runnable example `examples/easy_memo.py` and test suite `tests/test_easy.py`.
+
 ## [0.11.30] - 2026-11-23
 
 ### Fixed

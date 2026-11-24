@@ -40,6 +40,7 @@ python app.py
 
 | Goal | Use |
 | --- | --- |
+| Beginner / zero-boilerplate SQLite + login + per-user CRUD | `EasyHiguma(__name__, auth_routes=True)` / `Higuma.easy()`, `app.table("memos", user_scoped=True)` (0.12+) |
 | Nested components / scoped static and templates | `Blueprint(..., template_folder=..., static_folder=...)`, `parent.register_blueprint(child)` (0.9+) |
 | Application commands | `@app.cli.command()`, `@blueprint.cli.command()`, `app.test_cli_runner()` (0.9+) |
 | Async HTTP/WS/lifespan tests | `async with app.test_async_client()` (0.9+) |

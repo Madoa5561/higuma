@@ -16,8 +16,11 @@ from html import escape
 from ipaddress import ip_address
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode, urlsplit
+
+if TYPE_CHECKING:
+    from .easy import EasyHiguma
 
 from . import signals
 from ._core import HigumaCore
@@ -63,7 +66,7 @@ from .routing import Rule, normalize_rule
 from .staticfiles import SPAFiles, StaticFiles, _prefixes
 from .websocket import WebSocket, WebSocketDisconnect
 
-__version__ = "0.11.30"
+__version__ = "0.12.0"
 
 ErrorHandler = Callable[..., ResponseValue]
 Middleware = Callable[[Request, Callable[[Request], ResponseValue]], ResponseValue]
@@ -210,6 +213,16 @@ class Higuma:
                 view_func=self._serve_static,
                 methods=("GET",),
             )
+
+    @classmethod
+    def easy(
+        cls,
+        import_name: str = "__main__",
+        **kwargs: Any,
+    ) -> EasyHiguma:
+        from .easy import EasyHiguma
+
+        return EasyHiguma(import_name, **kwargs)
 
     def route(
         self,

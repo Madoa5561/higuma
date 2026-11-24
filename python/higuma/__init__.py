@@ -40,6 +40,7 @@ from .database import (
 from .database import (
     Session as DatabaseSession,
 )
+from .easy import EasyHiguma, EasyTable, EasyUser, UserAlreadyExistsError
 from .exceptions import (
     BadRequest,
     Conflict,
@@ -153,6 +154,9 @@ __all__ = [
     "Date",
     "DateTime",
     "Depends",
+    "EasyHiguma",
+    "EasyTable",
+    "EasyUser",
     "EventSourceResponse",
     "Field",
     "File",
@@ -215,6 +219,7 @@ __all__ = [
     "Unauthorized",
     "UnsupportedMediaType",
     "UploadFile",
+    "UserAlreadyExistsError",
     "View",
     "ViteManifest",
     "WebSocket",

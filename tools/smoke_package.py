@@ -240,6 +240,23 @@ def _exercise_flask_helpers() -> None:
 
     assert client.post("/bare-dict-smoke", json={"k": 1}).json == {"ok": True}
     assert client.post("/bare-dict-smoke", json=[1, 2]).status_code == 422
+
+    from higuma import EasyHiguma
+
+    easy_app = EasyHiguma(__name__, db=":memory:", csrf=False, auth_routes=True, hasher_n=2**12)
+    easy_memos = easy_app.table("memos", user_scoped=True)
+
+    @easy_app.post("/easy-memos")
+    @easy_app.login_required
+    def easy_add_memo():
+        return easy_memos.add(title=request.json["title"]), 201
+
+    easy_client = easy_app.test_client()
+    assert (
+        easy_client.post("/register", json={"username": "smoke", "password": "secret"}).status_code
+        == 201
+    )
+    assert easy_client.post("/easy-memos", json={"title": "hello"}).json["title"] == "hello"
     try:
         app.before_request("not-callable")  # type: ignore[arg-type]
     except TypeError:

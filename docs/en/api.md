@@ -331,3 +331,19 @@ processes, health checks, and restart limits. It is normally used through
 
 See [Examples](examples.md) and the
 [repository examples](https://github.com/Madoa5561/higuma/tree/main/examples) for runnable code.
+
+## Easy Mode (`EasyHiguma` / `EasyTable`)
+
+Version 0.12.0+ provides `EasyHiguma` (also available via `Higuma.easy()`), bundling SQLite persistence, user registration/authentication, cookie sessions, CSRF protection, and schema-free dictionary CRUD for students and rapid prototypes.
+
+- `EasyHiguma(import_name="__main__", *, db="sqlite:///higuma.db", secret_key=None, csrf=True, auth_routes=False, login_url="/login", register_url="/register", logout_url="/logout", redirect_after_login="/", redirect_after_logout="/login", min_password_length=4)`
+- User helpers: `app.register_user(username, password, *, auto_login=False, **extra)` (aliases `create_user` / `signup_user`; raises `UserAlreadyExistsError` on duplicate usernames), `app.authenticate_user(username, password, *, login=True)`, `app.login(username, password)`, `app.logout()`, `app.get_user(username)`, `app.get_user_by_id(user_id)`, `app.list_users()`, `app.current_user` (`EasyUser` or `AnonymousUser`), `@app.login_required`
+- Built-in auth routes: `auth_routes=True` or `app.mount_auth_routes()` mounts `/login`, `/register`, and `/logout` for both HTML forms and JSON clients with open-redirect protection
+- CSRF helpers: `app.csrf_token()`, `app.csrf_input()`
+- Dictionary table CRUD (`table = app.table("memos", user_scoped=True)`):
+  - `table.add(data=None, **fields) -> dict[str, Any]`
+  - `table.list(*, limit=None, offset=0, newest_first=True, **filters) -> list[dict[str, Any]]`
+  - `table.count(**filters) -> int`
+  - `table.get(record_id)` / `table.get_or_404(record_id)`
+  - `table.update(record_id, data=None, **changes)` / `table.update_or_404(record_id, data=None, **changes)`
+  - `table.delete(record_id)` / `table.delete_or_404(record_id)` / `table.clear()`

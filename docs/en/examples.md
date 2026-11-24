@@ -33,6 +33,7 @@ cookie and token, then POST with `X-CSRF-Token` and JSON containing
 
 | File | Covers | Runtime note |
 | --- | --- | --- |
+| `easy_memo.py` | `EasyHiguma` 1-line login and per-user memo board (HTML + JSON API) | Creates `easy_memo.sqlite3` at startup |
 | `app.py` | Routing, JSON, SSR templates | None |
 | `blueprint_hooks.py` | Blueprints, config, request/lifecycle hooks | None |
 | `routing_async.py` | Converters, multiple methods, async handlers | None |

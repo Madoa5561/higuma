@@ -34,6 +34,13 @@ higumaは、書き慣れたPythonのdecorator APIに、axum / Tokioを使ったR
 Python側の必須runtime dependencyなしで構築できます。
 名前は日本の**ヒグマ**に由来します。
 
+> **0.12.0** — 学習者・プロトタイプ向けの **イージーモード (`EasyHiguma` / `Higuma.easy()`)** を追加：
+> SQLite・ユーザー登録／ログイン（scrypt ハッシュ＋署名セッション）・CSRF 保護・組み込み認証画面
+> （`auth_routes=True` による `/register`・`/login`・`/logout` HTML/JSON 両対応）を 1 行で設定可能になり、
+> SQL やモデルクラス定義なしでユーザー別データ分離 CRUD が書ける `app.table("memos", user_scoped=True)`
+> （`add`/`list`/`get`/`get_or_404`/`update`/`update_or_404`/`delete`/`delete_or_404`）と
+> `examples/easy_memo.py` を追加。必須 Python 依存は 0 のままです。
+>
 > **0.11.30** — 型付き入力・`response_model` 変換の厳格化：`list`/`set`/`frozenset`/`tuple`
 > への非配列値（文字列・数値・オブジェクト等）の暗黙ラップを廃止し 422 拒否、型引数なしの
 > `list`/`tuple`/`set`/`frozenset`/`dict`/`Mapping` 注釈に対する検証・複数取得に対応、`int`

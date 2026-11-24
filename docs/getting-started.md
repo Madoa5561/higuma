@@ -76,6 +76,33 @@ def created():
     return {"ok": True}, 201, {"x-example": "higuma"}
 ```
 
+## イージーモード（`EasyHiguma` / `Higuma.easy()`）
+
+ログイン・ユーザーDB・ユーザーごとのメモ（辞書CRUD）・CSRF保護を1行で有効化できる初心者・学習者向けのモードです（0.12.0+）。
+
+```python
+from higuma import EasyHiguma, request
+
+app = EasyHiguma(__name__, db="sqlite:///memo.db", auth_routes=True)
+memos = app.table("memos", user_scoped=True)
+
+
+@app.get("/api/memos")
+@app.login_required
+def list_memos():
+    return {"user": app.current_user.username, "memos": memos.list()}
+
+
+@app.post("/api/memos")
+@app.login_required
+def add_memo():
+    return memos.add(title=request.json["title"], body=request.json.get("body", "")), 201
+```
+
+- `auth_routes=True` を指定すると、HTMLフォームとJSON APIの両方に対応した `/register`・`/login`・`/logout` が自動で追加されます。
+- `app.table("memos", user_scoped=True)` はSQLやモデル定義なしで `add()`・`list()`・`get()`・`get_or_404()`・`update()`・`update_or_404()`・`delete()`・`delete_or_404()` を使え、ログイン中ユーザーのデータだけを自動分離します。
+- 完全な実行例は `python examples/easy_memo.py` を参照してください。
+
 ## Route converter
 
 | Syntax | Python value | 一致するpath |

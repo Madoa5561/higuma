@@ -77,6 +77,33 @@ def created():
     return {"ok": True}, 201, {"x-example": "higuma"}
 ```
 
+## Easy Mode (`EasyHiguma` / `Higuma.easy()`)
+
+Version 0.12.0+ includes a beginner- and classroom-friendly Easy Mode that configures SQLite, user accounts, sessions, CSRF protection, and dictionary-based CRUD in one line:
+
+```python
+from higuma import EasyHiguma, request
+
+app = EasyHiguma(__name__, db="sqlite:///memo.db", auth_routes=True)
+memos = app.table("memos", user_scoped=True)
+
+
+@app.get("/api/memos")
+@app.login_required
+def list_memos():
+    return {"user": app.current_user.username, "memos": memos.list()}
+
+
+@app.post("/api/memos")
+@app.login_required
+def add_memo():
+    return memos.add(title=request.json["title"], body=request.json.get("body", "")), 201
+```
+
+- `auth_routes=True` mounts ready-to-use `/register`, `/login`, and `/logout` routes supporting both HTML forms and JSON requests.
+- `app.table("memos", user_scoped=True)` provides zero-boilerplate dictionary CRUD (`add`, `list`, `get`, `get_or_404`, `update`, `update_or_404`, `delete`, `delete_or_404`) automatically isolated to `app.current_user`.
+- See `python examples/easy_memo.py` for a complete runnable application.
+
 ## Route converters
 
 | Syntax | Python value | Matching path |

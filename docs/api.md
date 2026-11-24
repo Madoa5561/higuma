@@ -322,3 +322,19 @@ CLIから利用します。
 
 実行コードは[Examples](examples.md)と
 [リポジトリのexamples](https://github.com/Madoa5561/higuma/tree/main/examples)を参照してください。
+
+## Easy Mode (`EasyHiguma` / `EasyTable`)
+
+0.12.0+では、学習や小規模プロトタイプ向けにSQLite・ユーザー管理・セッション・CSRF・辞書CRUDをまとめた `EasyHiguma`（または `Higuma.easy()`）を提供します。
+
+- `EasyHiguma(import_name="__main__", *, db="sqlite:///higuma.db", secret_key=None, csrf=True, auth_routes=False, login_url="/login", register_url="/register", logout_url="/logout", redirect_after_login="/", redirect_after_logout="/login", min_password_length=4)`
+- ユーザー管理: `app.register_user(username, password, *, auto_login=False, **extra)`（別名 `create_user` / `signup_user`、重複時は `UserAlreadyExistsError`）、`app.authenticate_user(username, password, *, login=True)`、`app.login(username, password)`、`app.logout()`、`app.get_user(username)`、`app.get_user_by_id(user_id)`、`app.list_users()`、`app.current_user`（`EasyUser` または `AnonymousUser`）、`@app.login_required`
+- 組み込み認証ルート: `auth_routes=True` または `app.mount_auth_routes()` で `/login`・`/register`・`/logout`（HTMLフォーム／JSON API両対応、オープンリダイレクト防止付き）を自動登録
+- フォームCSRF補助: `app.csrf_token()`、`app.csrf_input()`
+- 辞書テーブルCRUD (`table = app.table("memos", user_scoped=True)`):
+  - `table.add(data=None, **fields) -> dict[str, Any]`
+  - `table.list(*, limit=None, offset=0, newest_first=True, **filters) -> list[dict[str, Any]]`
+  - `table.count(**filters) -> int`
+  - `table.get(record_id)` / `table.get_or_404(record_id)`
+  - `table.update(record_id, data=None, **changes)` / `table.update_or_404(record_id, data=None, **changes)`
+  - `table.delete(record_id)` / `table.delete_or_404(record_id)` / `table.clear()`

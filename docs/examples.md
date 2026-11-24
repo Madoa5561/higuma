@@ -18,6 +18,7 @@ factory・親子Blueprint・SQLAlchemy・login/CSRF/role・管理画面・独自
 
 | File | 内容 | 実行時の注意 |
 | --- | --- | --- |
+| `easy_memo.py` | `EasyHiguma` による1行ログイン・ユーザー別メモ帳（HTML＋JSON API） | 起動時に`easy_memo.sqlite3`を作成 |
 | `app.py` | routing、JSON、SSR template | なし |
 | `csr_app.py` | CSR、History API、API JSON、深いURLのreload | 0.6.0以降、`/app/`を開く。npm不要 |
 | `vite_ssr.py` | Python HTML＋Vite CSS/modulepreload | 自分のbuildと`.vite/manifest.json`が必要 |
